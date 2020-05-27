@@ -159,3 +159,15 @@ class DataConfig(object):
 
     def copy(self):
         return self.__class__(**self.options)
+
+    def export_json(self, fp):
+        import json
+        j = {'output_names':self.label_value, 'input_names':self.input_names}
+        for k, v in self.input_dicts.items():
+            j[k] = {'var_names':v, 'var_infos':{}}
+            for var_name in v:
+                j[k]['var_length'] = self.preprocess_params[var_name]['length']
+                center, scale = self.preprocess_params[var_name]['center'], self.preprocess_params[var_name]['scale']
+                j[k]['var_infos'][var_name] = {'median':0 if center is None else center, 'norm_factor':scale}
+        with open(fp, 'w') as f:
+            json.dump(j, f, indent=2)
