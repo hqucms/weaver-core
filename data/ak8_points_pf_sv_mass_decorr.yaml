@@ -8,7 +8,6 @@ new_variables:
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: awkward.JaggedArray.ones_like(pfcand_etarel)
    sv_mask: awkward.JaggedArray.ones_like(sv_etarel)
-   label_QCD: fj_isQCD
 
 inputs:
    pf_points:
@@ -73,11 +72,10 @@ labels:
    ### type can be `simple`, `custom`
    ### [option 1] use `simple` for binary/multi-class classification, then `value` is a list of 0-1 labels
    type: simple
-   value:
-      - label_QCD
-      - label_H_bb
-      - label_H_cc
-      - label_H_qq
+   value: [
+      label_H_bb, label_H_cc, label_H_qq,
+      label_QCD_bb, label_QCD_cc, label_QCD_b, label_QCD_c, label_QCD_others,
+      ]
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    # type: custom
    # value: 
