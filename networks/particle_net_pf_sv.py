@@ -17,7 +17,7 @@ def get_model(data_config, **kwargs):
     model = ParticleNetTagger(pf_features_dims, sv_features_dims, num_classes,
                               conv_params, fc_params,
                               use_fusion=use_fusion,
-                              use_fts_bn=kwargs.get('use_fts_bn', True),
+                              use_fts_bn=kwargs.get('use_fts_bn', False),
                               use_counts=kwargs.get('use_counts', True),
                               for_inference=kwargs.get('for_inference', False)
                               )
