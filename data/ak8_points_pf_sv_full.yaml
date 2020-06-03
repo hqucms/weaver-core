@@ -9,6 +9,12 @@ new_variables:
    pfcand_mask: awkward.JaggedArray.ones_like(pfcand_etarel)
    sv_mask: awkward.JaggedArray.ones_like(sv_etarel)
 
+preprocess:
+  ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
+  method: manual
+  ### data_fraction: fraction of events to use when calculating the mean/scale for the standardization
+  data_fraction: 
+
 inputs:
    pf_points:
       length: 100
@@ -19,27 +25,32 @@ inputs:
       length: 100
       vars: 
       ### [format 1]: var_name (no transformation)
-      ### [format 2]: [var_name, subtract_by(optional, default=None, no transf.), multiply_by(optional, default=1), clip_min(optional, default=-5), clip_max(optional, default=5), pad_value(optional, default=0)]
-         - [pfcand_pt_log_nopuppi, 0.6, 0.6]
-         - [pfcand_e_log_nopuppi, 1, 0.6]
+      ### [format 2]: [var_name, 
+      ###              subtract_by(optional, default=None, no transf. if preprocess.method=manual, auto transf. if preprocess.method=auto), 
+      ###              multiply_by(optional, default=1), 
+      ###              clip_min(optional, default=-5), 
+      ###              clip_max(optional, default=5), 
+      ###              pad_value(optional, default=0)]
+         - [pfcand_pt_log_nopuppi, 1, 0.5]
+         - [pfcand_e_log_nopuppi, 1.3, 0.5]
          - pfcand_etarel
          - pfcand_phirel
-         - [pfcand_abseta, 0.7, 1.4]
+         - [pfcand_abseta, 0.6, 1.6]
          - pfcand_charge
          - [pfcand_VTX_ass, 4, 0.3]
          - pfcand_lostInnerHits
          - [pfcand_normchi2, 5, 0.2]
          - [pfcand_quality, 0, 0.2]
-         - [pfcand_dz, 0, 170]
-         - [pfcand_dzsig, 0, 1.2]
-         - [pfcand_dxy, 0.0, 250]
-         - [pfcand_dxysig, 0, 1.6]
-         - [pfcand_btagEtaRel, 2, 0.4]
+         - [pfcand_dz, 0, 180]
+         - [pfcand_dzsig, 0, 0.9]
+         - [pfcand_dxy, 0.0, 300]
+         - [pfcand_dxysig, 0, 1.0]
+         - [pfcand_btagEtaRel, 1.5, 0.5]
          - [pfcand_btagPtRatio, 0, 1]
          - [pfcand_btagPParRatio, 0, 1]
-         - [pfcand_btagSip3dVal, 0, 230]
-         - [pfcand_btagSip3dSig, 0, 1]
-         - [pfcand_btagJetDistVal, 0, 145]
+         - [pfcand_btagSip3dVal, 0, 100]
+         - [pfcand_btagSip3dSig, 0, 0.5]
+         - [pfcand_btagJetDistVal, 0, 40]
    pf_mask:
       length: 100
       vars: 
@@ -52,17 +63,17 @@ inputs:
    sv_features:
       length: 10
       vars:
-         - [sv_pt_log, 3, 0.6]
-         - [sv_mass, 3, 0.3]
+         - [sv_pt_log, 4, 0.6]
+         - [sv_mass, 1.2, 0.3]
          - sv_etarel
          - sv_phirel
-         - [sv_abseta, 0.7, 1.4]
+         - [sv_abseta, 0.5, 1.6]
          - [sv_ntracks, 3, 1]
-         - [sv_normchi2, 1, 0.5]
-         - [sv_dxy, 0.25, 0.4]
-         - [sv_dxysig, 5, 0.2]
-         - [sv_d3d, 0.4, 0.3]
-         - [sv_d3dsig, 5, 0.2]
+         - [sv_normchi2, 0.8, 0.6]
+         - [sv_dxy, 0.4, 0.25]
+         - [sv_dxysig, 7, 0.02]
+         - [sv_d3d, 0.5, 0.2]
+         - [sv_d3dsig, 7, 0.02]
    sv_mask:
       length: 10
       vars:
@@ -89,7 +100,7 @@ observers:
    - fj_pt
    - fj_eta
    - fj_phi
-   - fj_sdmass_fromsubjets
+   - fj_sdmass
    - npfcands
 
 weights:
@@ -101,7 +112,7 @@ weights:
    reweight_method: flat
    reweight_vars:
       fj_pt: [200, 251, 316, 398, 501, 630, 793, 997, 1255, 1579, 1987, 2500]
-      fj_sdmass_fromsubjets: [-10000, 10000]
+      fj_sdmass: [-10000, 10000]
    reweight_classes: [
       fj_isTop,
       fj_isW,
