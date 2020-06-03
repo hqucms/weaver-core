@@ -46,7 +46,7 @@ class AutoStandardizer(object):
     def __init__(self, filelist, data_config):
         self._filelist = filelist if isinstance(
             filelist, (list, tuple)) else glob.glob(filelist)
-        self._data_config = data_config
+        self._data_config = data_config.copy()
         self.partial_load = (0, data_config.preprocess.get('data_fraction', 0.1))
 
     def read_file(self, filelist):
@@ -93,6 +93,7 @@ class AutoStandardizer(object):
         table = self.read_file(self._filelist)
         preprocess_params = self.make_preprocess_params(table)
         self._data_config.preprocess_params = preprocess_params
+        # must also propogate the changes to `data_config.options` so it can be persisted
         self._data_config.options['preprocess']['params'] = preprocess_params
         if output:
             _logger.info(

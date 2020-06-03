@@ -22,7 +22,7 @@ class WeightMaker(object):
 
     def __init__(self, filelist, data_config):
         self._filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
-        self._data_config = data_config
+        self._data_config = data_config.copy()
 
     def read_file(self, filelist):
         branches = set(self._data_config.reweight_branches) | set(self._data_config.reweight_classes)
@@ -117,6 +117,7 @@ class WeightMaker(object):
         table = self.read_file(self._filelist)
         wgts = self.make_weights(table)
         self._data_config.reweight_hists = wgts
+        # must also propogate the changes to `data_config.options` so it can be persisted
         self._data_config.options['weights']['reweight_hists'] = {k:v.tolist() for k, v in wgts.items()}
         if output:
             _logger.info('Writing YAML file w/ reweighting info to %s' % output)
