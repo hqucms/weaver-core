@@ -11,6 +11,7 @@ from .data.tools import _pad, _clip, _eval_expr
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
 from .data.reweight import WeightMaker
+from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer
 
 
 class SimpleIterDataset(torch.utils.data.IterableDataset):
@@ -58,19 +59,24 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
 
         # discover auto-generated reweight file
         data_config_md5 = _md5(data_config_file)
-        data_config_reweight_file = data_config_file.replace('.yaml', '.%s.reweight.yaml' % data_config_md5)
-        if self._reweight and os.path.exists(data_config_reweight_file):
-            data_config_file = data_config_reweight_file
-            _logger.info('Found file %s w/ reweighting information, will use that instead!' % data_config_file)
+        data_config_autogen_file = data_config_file.replace('.yaml', '.%s.auto.yaml' % data_config_md5)
+        if os.path.exists(data_config_autogen_file):
+            data_config_file = data_config_autogen_file
+            _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' % data_config_file)
 
         # load data config
         self._data_config = DataConfig.load(data_config_file)
+
+        # produce variable standardization info if needed
+        if self._data_config._missing_standardization_info:
+            s = AutoStandardizer(filelist, self._data_config)
+            s.produce(data_config_autogen_file)
 
         # produce reweight info if needed
         if self._reweight and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
             if remake_weights or self._data_config.reweight_hists is None:
                 w = WeightMaker(filelist, self._data_config)
-                w.produce(data_config_reweight_file)
+                w.produce(data_config_autogen_file)
 
     @property
     def config(self):
@@ -165,21 +171,6 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
                 self._prefetch = self._load_next(filelist)
             self.ifile += self._files_per_fetch
 
-    def apply_selection(self, table, selection):
-        if selection is None:
-            return
-        selected = _eval_expr(selection, table).astype('bool')
-        for k in table.keys():
-            table[k] = table[k][selected]
-
-    def build_new_variables(self, table, funcs):
-        if funcs is None:
-            return
-        for k, expr in funcs.items():
-            if k in table:
-                continue
-            table[k] = _eval_expr(expr, table)
-
     def build_weights(self, table):
         if self._reweight and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
             x_var, y_var = self._data_config.reweight_branches
@@ -195,12 +186,10 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
                 wgt[pos] = hist[x_indices, y_indices]
             table[self._data_config.weight_name] = wgt
 
-    def clean_up(self, table, drop_branches):
-        for k in drop_branches:
-            del table[k]
-
     def finalize_inputs(self, table, preprocess_params):
         for k, params in preprocess_params.items():
+            if self._data_config._auto_standardization and params['center'] is None:
+                raise ValueError('No valid standardization params for %s' % k)
             if params['center'] is not None:
                 table[k] = _clip((table[k] - params['center']) * params['scale'], params['min'], params['max'])
             if params['length'] is not None:
@@ -234,13 +223,13 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
 
     def preprocess(self, table):
         # apply selection
-        self.apply_selection(table, self._data_config.selection)
+        _apply_selection(table, self._data_config.selection)
         # define new variables
-        self.build_new_variables(table, self._data_config.var_funcs)
+        _build_new_variables(table, self._data_config.var_funcs)
         # build weights
         self.build_weights(table)
         # drop unused variables
-        self.clean_up(table, self._data_config.drop_branches)
+        _clean_up(table, self._data_config.drop_branches)
         # perform input variable standardization, clipping, padding and stacking
         self.finalize_inputs(table, self._data_config.preprocess_params)
         # compute reweight indices

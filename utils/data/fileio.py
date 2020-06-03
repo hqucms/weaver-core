@@ -1,4 +1,5 @@
 import numpy as np
+import tqdm
 from .tools import _concat
 from ..logger import _logger
 
@@ -44,10 +45,12 @@ def _read_awkd(filepath, branches, partial_load=None):
     return outputs
 
 
-def _read_files(filelist, branches, partial_load, **kwargs):
+def _read_files(filelist, branches, partial_load, show_progressbar=False, **kwargs):
     import os
     from collections import defaultdict
     table = defaultdict(list)
+    if show_progressbar:
+        filelist = tqdm.tqdm(filelist)
     for filepath in filelist:
         ext = os.path.splitext(filepath)[1]
         if ext not in ('.h5', '.root', '.awkd'):

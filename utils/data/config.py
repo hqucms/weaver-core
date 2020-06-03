@@ -31,43 +31,55 @@ class DataConfig(object):
     def __init__(self, **kwargs):
 
         opts = {
-            'treename':None,
-            'selection':None,
-            'new_variables':{},
-            'inputs':{},
-            'labels':{},
-            'observers':[],
-            'weights':None,
-            }
+            'treename': None,
+            'selection': None,
+            'preprocess': {'method': 'manual', 'data_fraction': 0.1, 'params': None},
+            'new_variables': {},
+            'inputs': {},
+            'labels': {},
+            'observers': [],
+            'weights': None,
+        }
         for k, v in kwargs.items():
             if v is not None:
-                opts[k] = v
+                if isinstance(opts[k], dict):
+                    opts[k].update(v)
+                else:
+                    opts[k] = v
         self.options = opts
         _logger.debug(opts)
 
         self.selection = opts['selection']
         self.var_funcs = opts['new_variables']
+        # preprocessing config
+        self.preprocess = opts['preprocess']
+        self._auto_standardization = opts['preprocess']['method'].lower().startswith('auto')
+        self._missing_standardization_info = False
+        self.preprocess_params = opts['preprocess']['params'] if opts['preprocess']['params'] is not None else {}
         # inputs
         self.input_names = tuple(opts['inputs'].keys())
-        self.input_dicts = {k:[] for k in self.input_names}
+        self.input_dicts = {k: [] for k in self.input_names}
         self.input_shapes = {}
-        self.preprocess_params = {}
         for k, o in opts['inputs'].items():
             self.input_shapes[k] = (-1, len(o['vars']), o['length'])
             for v in o['vars']:
                 v = _as_list(v)
                 self.input_dicts[k].append(v[0])
 
-                def _get(idx, default):
-                    try:
-                        return v[idx]
-                    except IndexError:
-                        return default
+                if opts['preprocess']['params'] is None:
 
-                params = {'length':o['length'], 'center':_get(1, None), 'scale':_get(2, 1), 'min':_get(3, -5), 'max':_get(4, 5), 'pad_value':_get(5, 0)}
-                if v[0] in self.preprocess_params and params != self.preprocess_params[v[0]]:
-                    raise RuntimeError('Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' % (v[0], str(self.preprocess_params[k]), str(params)))
-                self.preprocess_params[v[0]] = params
+                    def _get(idx, default):
+                        try:
+                            return v[idx]
+                        except IndexError:
+                            return default
+
+                    params = {'length': o['length'], 'center': _get(1, None), 'scale': _get(2, 1), 'min': _get(3, -5), 'max': _get(4, 5), 'pad_value': _get(5, 0)}
+                    if v[0] in self.preprocess_params and params != self.preprocess_params[v[0]]:
+                        raise RuntimeError('Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' % (v[0], str(self.preprocess_params[k]), str(params)))
+                    if (self._auto_standardization and params['center'] is None) or params['center'] == 'auto':
+                        self._missing_standardization_info = True
+                    self.preprocess_params[v[0]] = params
         # labels
         self.label_type = opts['labels']['type']
         self.label_value = opts['labels']['value']
@@ -92,7 +104,7 @@ class DataConfig(object):
                 self.reweight_classes = tuple(opts['weights']['reweight_classes'])
                 self.class_weights = opts['weights'].get('class_weights', None)
                 if self.class_weights is None:
-                    self.class_weights = np.ones(len(self.class_weights))
+                    self.class_weights = np.ones(len(self.reweight_classes))
                 self.reweight_hists = opts['weights'].get('reweight_hists', None)
                 if self.reweight_hists is not None:
                     for k, v in self.reweight_hists.items():
@@ -105,6 +117,7 @@ class DataConfig(object):
             if k == v:
                 del self.var_funcs[k]
 
+        _logger.info('preprocess config: %s', str(self.preprocess))
         _logger.info('selection: %s', str(self.selection))
         _logger.info('var_funcs:\n - %s', '\n - '.join(str(it) for it in self.var_funcs.items()))
         _logger.info('input_names: %s', str(self.input_names))
