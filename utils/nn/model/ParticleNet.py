@@ -131,6 +131,7 @@ class ParticleNet(nn.Module):
                  use_fts_bn=True,
                  use_counts=True,
                  for_inference=False,
+                 for_segmentation=False,
                  **kwargs):
         super(ParticleNet, self).__init__(**kwargs)
 
@@ -152,6 +153,8 @@ class ParticleNet(nn.Module):
             out_chn = np.clip((in_chn // 128) * 128, 128, 1024)
             self.fusion_block = nn.Sequential(nn.Conv1d(in_chn, out_chn, kernel_size=1, bias=False), nn.BatchNorm1d(out_chn), nn.ReLU())
 
+        self.for_segmentation = for_segmentation
+
         fcs = []
         for idx, layer_param in enumerate(fc_params):
             channels, drop_rate = layer_param
@@ -159,8 +162,15 @@ class ParticleNet(nn.Module):
                 in_chn = out_chn if self.use_fusion else conv_params[-1][1][-1]
             else:
                 in_chn = fc_params[idx - 1][0]
-            fcs.append(nn.Sequential(nn.Linear(in_chn, channels), nn.ReLU(), nn.Dropout(drop_rate)))
-        fcs.append(nn.Linear(fc_params[-1][0], num_classes))
+            if self.for_segmentation:
+                fcs.append(nn.Sequential(nn.Conv1d(in_chn, channels, kernel_size=1, bias=False),
+                                         nn.BatchNorm1d(channels), nn.ReLU(), nn.Dropout(drop_rate)))
+            else:
+                fcs.append(nn.Sequential(nn.Linear(in_chn, channels), nn.ReLU(), nn.Dropout(drop_rate)))
+        if self.for_segmentation:
+            fcs.append(nn.Conv1d(fc_params[-1][0], num_classes, kernel_size=1))
+        else:
+            fcs.append(nn.Linear(fc_params[-1][0], num_classes))
         self.fc = nn.Sequential(*fcs)
 
         self.for_inference = for_inference
@@ -190,14 +200,18 @@ class ParticleNet(nn.Module):
 
 #         assert(((fts.abs().sum(dim=1, keepdim=True) != 0).float() - mask.float()).abs().sum().item() == 0)
         
-        if self.use_counts:
-            x = fts.sum(dim=-1) / counts  # divide by the real counts
+        if self.for_segmentation:
+            x = fts
         else:
-            x = fts.mean(dim=-1)
+            if self.use_counts:
+                x = fts.sum(dim=-1) / counts  # divide by the real counts
+            else:
+                x = fts.mean(dim=-1)
+
         output = self.fc(x)
         if self.for_inference:
             output = torch.softmax(output, dim=1)
-#         print('output:\n', output)
+        # print('output:\n', output)
         return output
 
 
@@ -205,7 +219,12 @@ class FeatureConv(nn.Module):
 
     def __init__(self, in_chn, out_chn, **kwargs):
         super(FeatureConv, self).__init__(**kwargs)
-        self.conv = nn.Sequential(nn.Conv1d(in_chn, out_chn, kernel_size=1, bias=False), nn.BatchNorm1d(out_chn), nn.ReLU())
+        self.conv = nn.Sequential(
+            nn.BatchNorm1d(in_chn),
+            nn.Conv1d(in_chn, out_chn, kernel_size=1, bias=False),
+            nn.BatchNorm1d(out_chn),
+            nn.ReLU()
+            )
 
     def forward(self, x):
         return self.conv(x)

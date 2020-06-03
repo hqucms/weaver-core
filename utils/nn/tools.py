@@ -8,6 +8,26 @@ from ..data.tools import _concat
 from ..logger import _logger
 
 
+def _flatten_label(label, mask=None):
+    if label.ndim > 1:
+        label = label.view(-1)
+        if mask is not None:
+            label = label[mask.view(-1)]
+    # print('label', label.shape, label)
+    return label
+
+
+def _flatten_preds(preds, mask=None, label_axis=1):
+    if preds.ndim > 2:
+        # assuming axis=1 corresponds to the classes
+        preds = preds.transpose(label_axis, -1).contiguous()
+        preds = preds.view((-1, preds.shape[-1]))
+        if mask is not None:
+            preds = preds[mask.view(-1)]
+    # print('preds', preds.shape, preds)
+    return preds
+
+
 def train(model, loss_func, opt, scheduler, train_loader, dev, use_amp=False):
     model.train()
 
@@ -24,12 +44,18 @@ def train(model, loss_func, opt, scheduler, train_loader, dev, use_amp=False):
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
             inputs = [X[k].to(dev) for k in data_config.input_names]
-            label = y[data_config.label_names[0]]
+            label = y[data_config.label_names[0]].long()
+            try:
+                label_mask = y[data_config.label_names[0] + '_mask'].bool()
+            except KeyError:
+                label_mask = None
+            label = _flatten_label(label, label_mask)
             num_examples = label.shape[0]
             label_counter.update(label.cpu().numpy())
             label = label.to(dev)
             opt.zero_grad()
             logits = model(*inputs)
+            logits = _flatten_preds(logits, label_mask)
             loss = loss_func(logits, label)
             if use_amp:
                 with amp.scale_loss(loss, opt) as scaled_loss:
@@ -73,11 +99,17 @@ def evaluate(model, test_loader, dev, for_training=True, loss_func=None, eval_me
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
                 inputs = [X[k].to(dev) for k in data_config.input_names]
-                label = y[data_config.label_names[0]]
+                label = y[data_config.label_names[0]].long()
+                try:
+                    label_mask = y[data_config.label_names[0] + '_mask'].bool()
+                except KeyError:
+                    label_mask = None
+                label = _flatten_label(label, label_mask)
                 num_examples = label.shape[0]
                 label_counter.update(label.cpu().numpy())
                 label = label.to(dev)
                 logits = model(*inputs)
+                logits = _flatten_preds(logits, label_mask)
 
                 scores.append(torch.softmax(logits, dim=1).cpu().detach().numpy())
                 for k, v in y.items():
