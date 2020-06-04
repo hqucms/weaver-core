@@ -113,7 +113,7 @@ def evaluate(model, test_loader, dev, for_training=True, loss_func=None, eval_me
 
                 scores.append(torch.softmax(logits, dim=1).cpu().detach().numpy())
                 for k, v in y.items():
-                    labels[k].append(v.cpu().numpy())
+                    labels[k].append(_flatten_label(v, label_mask).cpu().numpy())
                 if not for_training:
                     for k, v in Z.items():
                         observers[k].append(v.cpu().numpy())
