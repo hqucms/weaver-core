@@ -47,7 +47,7 @@ class AutoStandardizer(object):
         self._filelist = filelist if isinstance(
             filelist, (list, tuple)) else glob.glob(filelist)
         self._data_config = data_config.copy()
-        self.partial_load = (0, data_config.preprocess.get('data_fraction', 0.1))
+        self.load_range = (0, data_config.preprocess.get('data_fraction', 0.1))
 
     def read_file(self, filelist):
         self.keep_branches = set()
@@ -64,7 +64,7 @@ class AutoStandardizer(object):
             self.load_branches.update(_get_variable_names(self._data_config.selection))
         _logger.debug('[AutoStandardizer] self.keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[AutoStandardizer] self.load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, self.partial_load, show_progressbar=True, treename=self._data_config.treename)
+        table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True, treename=self._data_config.treename)
         _apply_selection(table, self._data_config.selection)
         _build_new_variables(table, {k:v for k in self._data_config.var_funcs.items() if k in self.keep_branches})
         _clean_up(table, self.load_branches - self.keep_branches)

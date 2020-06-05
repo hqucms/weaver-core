@@ -98,9 +98,9 @@ def main():
             _logger.info(filelist)
             args.data_fraction = 0.1
             args.files_per_fetch = 5
-        train_data = SimpleIterDataset(filelist, args.data_config, for_training=True, partial_load=((0, args.train_val_split), args.data_fraction),
+        train_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
                                        dilation=args.data_dilation, files_per_fetch=args.files_per_fetch)
-        val_data = SimpleIterDataset(filelist, args.data_config, for_training=True, partial_load=((args.train_val_split, 1), args.data_fraction),
+        val_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
                                      dilation=args.data_dilation, files_per_fetch=args.files_per_fetch)
         train_loader = DataLoader(train_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         val_loader = DataLoader(val_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)

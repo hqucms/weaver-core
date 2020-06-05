@@ -46,22 +46,22 @@ class _SimpleIter(object):
             filelist = filelist[::self._dilation]
         self.filelist = filelist
 
-        if self._init_partial_load is None:
-            self.partial_load = None
+        if self._init_load_range_and_fraction is None:
+            self.load_range_and_fraction = None
         else:
-            (start_pos, end_pos), load_frac = self._init_partial_load
+            (start_pos, end_pos), load_frac = self._init_load_range_and_fraction
             interval = (end_pos - start_pos) * load_frac
             if self._shuffle:
                 offset = np.random.uniform(start_pos, end_pos - interval)
-                self.partial_load = (offset, offset + interval)
+                self.load_range_and_fraction = (offset, offset + interval)
             else:
-                self.partial_load = (start_pos, start_pos + interval)
+                self.load_range_and_fraction = (start_pos, start_pos + interval)
 
-        _logger.debug('Init iter [%d], will load %d (out of %d) files with partial_load=%s:\n%s',
+        _logger.debug('Init iter [%d], will load %d (out of %d) files with load_range_and_fraction=%s:\n%s',
                       0 if worker_info is None else worker_info.id,
                       len(self.filelist),
                       len(self._init_filelist) // self._dilation,
-                      str(self.partial_load),
+                      str(self.load_range_and_fraction),
                       '\n'.join(self.filelist[:3]) + '\n...\n' + '\n'.join(self.filelist[-3:])
                       )
         # reset iter status
@@ -101,7 +101,7 @@ class _SimpleIter(object):
 
     def _load_next(self, filelist):
         table = _read_files(filelist, self._data_config.load_branches,
-                            self.partial_load, treename=self._data_config.treename)
+                            self.load_range_and_fraction, treename=self._data_config.treename)
         indices = self.preprocess(table)
         return table, indices
 
@@ -213,8 +213,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         for_training (bool): flag indicating whether the dataset is used for training or testing.
             When set to ``True``, will enable shuffling and sampling-based reweighting.
             When set to ``False``, will disable shuffling and reweighting, but will load the observer variables.
-        partial_load (tuple of tuples, ``((start_pos, end_pos), load_frac)``): fractional range of events to load from each file.
-            E.g., setting partial_load=((0, 0.8), 0.5) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file).
+        load_range_and_fraction (tuple of tuples, ``((start_pos, end_pos), load_frac)``): fractional range of events to load from each file.
+            E.g., setting load_range_and_fraction=((0, 0.8), 0.5) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file).
         files_per_fetch (int): number of files to load and process each time we fetch data from disk.
             Event shuffling and reweighting (sampling) is performed each time after we fetch data.
             Default is 1, set it to larger values if number of events in each input file is small (e.g., due to reweighting/sampling).
@@ -223,11 +223,11 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             Setting dilation=``d`` will load only ``1`` out of every ``d`` files.
     """
 
-    def __init__(self, filelist, data_config_file, for_training=True, partial_load=None, files_per_fetch=20, dilation=1,
+    def __init__(self, filelist, data_config_file, for_training=True, load_range_and_fraction=None, files_per_fetch=20, dilation=1,
                  remake_weights=False, up_sample=True, weight_scale=1, max_resample=10, async_load=True):
         _init_args = set(self.__dict__.keys())
         self._init_filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
-        self._init_partial_load = partial_load
+        self._init_load_range_and_fraction = load_range_and_fraction
         self._files_per_fetch = files_per_fetch if files_per_fetch > 0 else len(filelist)
         self._dilation = dilation
         self._async_load = async_load

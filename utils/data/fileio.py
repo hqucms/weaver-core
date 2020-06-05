@@ -4,19 +4,19 @@ from .tools import _concat
 from ..logger import _logger
 
 
-def _read_hdf5(filepath, branches, partial_load=None):
+def _read_hdf5(filepath, branches, load_range=None):
     import tables
     tables.set_blosc_max_threads(4)
     with tables.open_file(filepath) as f:
         outputs = {k:getattr(f.root, k) for k in branches}
-    if partial_load is not None and partial_load != (0, 1):
-        start, stop = np.trunc(np.asfarray(partial_load) * len(outputs[branches[0]]))
+    if load_range is not None and load_range != (0, 1):
+        start, stop = np.trunc(np.asfarray(load_range) * len(outputs[branches[0]]))
         for k, v in outputs.items():
             outputs[k] = v[start:stop]
     return outputs
 
 
-def _read_root(filepath, branches, partial_load=None, treename=None):
+def _read_root(filepath, branches, load_range=None, treename=None):
     import uproot
     with uproot.open(filepath) as f:
         if treename is None:
@@ -26,26 +26,26 @@ def _read_root(filepath, branches, partial_load=None, treename=None):
             else:
                 raise RuntimeError('Need to specify `treename` as more than one trees are found in file %s: %s' % (filepath, str(branches)))
         tree = f[treename]
-        if partial_load is not None and partial_load != (0, 1):
-            start, stop = np.trunc(np.asfarray(partial_load) * tree.numentries)
+        if load_range is not None and load_range != (0, 1):
+            start, stop = np.trunc(np.asfarray(load_range) * tree.numentries)
         else:
             start, stop = None, None
         outputs = tree.arrays(branches, namedecode='utf-8', entrystart=start, entrystop=stop)
     return outputs
 
 
-def _read_awkd(filepath, branches, partial_load=None):
+def _read_awkd(filepath, branches, load_range=None):
     import awkward
     with awkward.load(filepath) as f:
         outputs = {k:f[k] for k in branches}
-    if partial_load is not None and partial_load != (0, 1):
-        start, stop = np.trunc(np.asfarray(partial_load) * len(outputs[branches[0]]))
+    if load_range is not None and load_range != (0, 1):
+        start, stop = np.trunc(np.asfarray(load_range) * len(outputs[branches[0]]))
         for k, v in outputs.items():
             outputs[k] = v[start:stop]
     return outputs
 
 
-def _read_files(filelist, branches, partial_load, show_progressbar=False, **kwargs):
+def _read_files(filelist, branches, load_range, show_progressbar=False, **kwargs):
     import os
     from collections import defaultdict
     table = defaultdict(list)
@@ -57,11 +57,11 @@ def _read_files(filelist, branches, partial_load, show_progressbar=False, **kwar
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
         try:
             if ext == '.h5':
-                a = _read_hdf5(filepath, branches, partial_load=partial_load)
+                a = _read_hdf5(filepath, branches, load_range=load_range)
             elif ext == '.root':
-                a = _read_root(filepath, branches, partial_load=partial_load, treename=kwargs.get('treename', None))
+                a = _read_root(filepath, branches, load_range=load_range, treename=kwargs.get('treename', None))
             elif ext == '.awkd':
-                a = _read_awkd(filepath, branches, partial_load=partial_load)
+                a = _read_awkd(filepath, branches, load_range=load_range)
         except Exception as e:
             a = None
             _logger.error(str(e))
