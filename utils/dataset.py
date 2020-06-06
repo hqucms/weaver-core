@@ -11,8 +11,7 @@ from .logger import _logger
 from .data.tools import _pad, _clip, _eval_expr
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
-from .data.reweight import WeightMaker
-from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer
+from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer, WeightMaker
 
 class _SimpleIter(object):
     r"""_SimpleIter

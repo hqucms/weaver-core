@@ -45,7 +45,7 @@ def _read_awkd(filepath, branches, load_range=None):
     return outputs
 
 
-def _read_files(filelist, branches, load_range, show_progressbar=False, **kwargs):
+def _read_files(filelist, branches, load_range=None, show_progressbar=False, **kwargs):
     import os
     from collections import defaultdict
     table = defaultdict(list)
