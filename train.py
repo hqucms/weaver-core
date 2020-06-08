@@ -27,8 +27,12 @@ def main():
                         help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
     parser.add_argument('--data-dilation', type=int, default=1,
                         help='reduce number of file by a factor of `d` for training. NOT recommended in general - use `--data-fraction` instead.')
-    parser.add_argument('--files-per-fetch', type=int, default=20,
-                        help='number of files to load each time; shuffling is done within these events, so choose a number large enough to get events from all classes')
+    parser.add_argument('--fetch-by-files', action='store_true', default=False,
+                        help='When enabled, will load all events from a small number (set by ``--fetch-step``) of files for each data fetching. '
+                        'Otherwise (default), load a small fraction of events from all files each time, which helps reduce variations in the sample composition.')
+    parser.add_argument('--fetch-step', type=float, default=0.01,
+                        help='fraction of events to load each time from every file (when ``--fetch-by-files`` is disabled); '
+                        'Or: number of files to load each time (when ``--fetch-by-files`` is enabled). Shuffling & sampling is done within these events, so set a large enough value.')
     parser.add_argument('--train-val-split', type=float, default=0.8,
                         help='training/validation split fraction')
     parser.add_argument('--demo', action='store_true', default=False,
@@ -97,17 +101,17 @@ def main():
             filelist = filelist[:20]
             _logger.info(filelist)
             args.data_fraction = 0.1
-            args.files_per_fetch = 5
+            args.fetch_step = 0.002
         train_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
-                                       dilation=args.data_dilation, files_per_fetch=args.files_per_fetch)
+                                       dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
         val_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
-                                     dilation=args.data_dilation, files_per_fetch=args.files_per_fetch)
+                                     dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
         train_loader = DataLoader(train_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         val_loader = DataLoader(val_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         data_config = train_data.config
     else:
         filelist = sorted(sum([glob.glob(f) for f in args.data_test], []))
-        test_data = SimpleIterDataset(filelist, args.data_config, for_training=False, files_per_fetch=1)
+        test_data = SimpleIterDataset(filelist, args.data_config, for_training=False, fetch_by_files=True, fetch_step=1)
         test_loader = DataLoader(test_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=False, pin_memory=True)
         data_config = test_data.config
 

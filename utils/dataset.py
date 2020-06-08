@@ -28,12 +28,10 @@ class _SimpleIter(object):
 
         worker_info = torch.utils.data.get_worker_info()
         filelist = self._init_filelist.copy()
-        if worker_info is None:
-            # single-process data loading, return the full iterator
-            pass
-        else:
-            # in a worker process, split workload
+        if worker_info is not None:
+            # in a worker process
             np.random.seed(worker_info.seed & 0xFFFFFFFF)
+            # split workload by files
             per_worker = int(math.ceil(len(filelist) / float(worker_info.num_workers)))
             start = worker_info.id * per_worker
             stop = min(start + per_worker, len(filelist))
@@ -46,34 +44,34 @@ class _SimpleIter(object):
         self.filelist = filelist
 
         if self._init_load_range_and_fraction is None:
-            self.load_range_and_fraction = None
+            self.load_range = (0, 1)
         else:
             (start_pos, end_pos), load_frac = self._init_load_range_and_fraction
             interval = (end_pos - start_pos) * load_frac
             if self._shuffle:
                 offset = np.random.uniform(start_pos, end_pos - interval)
-                self.load_range_and_fraction = (offset, offset + interval)
+                self.load_range = (offset, offset + interval)
             else:
-                self.load_range_and_fraction = (start_pos, start_pos + interval)
+                self.load_range = (start_pos, start_pos + interval)
 
-        _logger.debug('Init iter [%d], will load %d (out of %d) files with load_range_and_fraction=%s:\n%s',
+        _logger.debug('Init iter [%d], will load %d (out of %d) files with load_range=%s:\n%s',
                       0 if worker_info is None else worker_info.id,
                       len(self.filelist),
                       len(self._init_filelist) // self._dilation,
-                      str(self.load_range_and_fraction),
-                      '\n'.join(self.filelist[:3]) + '\n...\n' + '\n'.join(self.filelist[-3:])
+                      str(self.load_range),
+                      '\n'.join(self.filelist[:3]) + '\n ... ' + self.filelist[-1],
                       )
         # reset iter status
         self.table = None
         self.prefetch = None
-        self.ifile = 0
+        self.ipos = 0 if self._fetch_by_files else self.load_range[0] # fetch cursor
         self.indices = []
         self.cursor = 0
         # prefetch the first entry asynchronously
         self._try_get_next()
 
     def __next__(self):
-        # print(self.ifile, self.cursor)
+        # print(self.ipos, self.cursor)
         if len(self.filelist) == 0:
             raise StopIteration
         try:
@@ -98,22 +96,32 @@ class _SimpleIter(object):
         self.cursor += 1
         return self.get_data(i)
 
-    def _load_next(self, filelist):
-        table = _read_files(filelist, self._data_config.load_branches,
-                            self.load_range_and_fraction, treename=self._data_config.treename)
+    def _load_next(self, filelist, load_range):
+        table = _read_files(filelist, self._data_config.load_branches, load_range, treename=self._data_config.treename)
         indices = self.preprocess(table)
         return table, indices
 
     def _try_get_next(self):
-        if self.ifile >= len(self.filelist):
-            self.prefetch = None
-        else:
-            filelist = self.filelist[self.ifile:self.ifile + self._files_per_fetch]
-            if self._async_load:
-                self.prefetch = self.executor.submit(self._load_next, filelist)
+        if self._fetch_by_files:
+            if self.ipos >= len(self.filelist):
+                self.prefetch = None
+                return
             else:
-                self.prefetch = self._load_next(filelist)
-            self.ifile += self._files_per_fetch
+                filelist = self.filelist[int(self.ipos) : int(self.ipos + self._fetch_step)]
+                load_range = self.load_range
+        else:
+            if self.ipos >= self.load_range[1]:
+                self.prefetch = None
+                return
+            else:
+                filelist = self.filelist
+                load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
+        # _logger.info('Start fetching next batch, len(filelist)=%d, load_range=%s'%(len(filelist), load_range))
+        if self._async_load:
+            self.prefetch = self.executor.submit(self._load_next, filelist, load_range)
+        else:
+            self.prefetch = self._load_next(filelist, load_range)
+        self.ipos += self._fetch_step
 
     def build_weights(self, table):
         if self._reweight and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
@@ -214,20 +222,28 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             When set to ``False``, will disable shuffling and reweighting, but will load the observer variables.
         load_range_and_fraction (tuple of tuples, ``((start_pos, end_pos), load_frac)``): fractional range of events to load from each file.
             E.g., setting load_range_and_fraction=((0, 0.8), 0.5) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file).
-        files_per_fetch (int): number of files to load and process each time we fetch data from disk.
+        fetch_by_files (bool): flag to control how events are retrieved each time we fetch data from disk.
+            When set to ``True``, will read only a small number (set by ``fetch_step``) of files each time, but load all the events in these files.
+            When set to ``False``, will read from all input files, but load only a small fraction (set by ``fetch_step``) of events each time.
+            Default is ``False``, which results in a more uniform sample distribution but reduces the data loading speed.
+        fetch_step (float or int): fraction of events (when ``fetch_by_files=False``) or number of files (when ``fetch_by_files=True``) to load each time we fetch data from disk.
             Event shuffling and reweighting (sampling) is performed each time after we fetch data.
-            Default is 1, set it to larger values if number of events in each input file is small (e.g., due to reweighting/sampling).
-            Will load all files at once if set to non-positive value.
+            So set this to a large enough value to avoid getting an imbalanced minibatch (due to reweighting/sampling), especially when ``fetch_by_files`` set to ``True``.
+            Will load all events (files) at once if set to non-positive value.
         dilation (int): file-level reduction factor for file loading.
             Setting dilation=``d`` will load only ``1`` out of every ``d`` files.
     """
 
-    def __init__(self, filelist, data_config_file, for_training=True, load_range_and_fraction=None, files_per_fetch=20, dilation=1,
+    def __init__(self, filelist, data_config_file, for_training=True, load_range_and_fraction=None, fetch_by_files=False, fetch_step=0.01, dilation=1,
                  remake_weights=False, up_sample=True, weight_scale=1, max_resample=10, async_load=True):
         _init_args = set(self.__dict__.keys())
         self._init_filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
         self._init_load_range_and_fraction = load_range_and_fraction
-        self._files_per_fetch = files_per_fetch if files_per_fetch > 0 else len(filelist)
+        self._fetch_by_files = fetch_by_files
+        if fetch_step <= 0:
+            self._fetch_step = len(filelist) if fetch_by_files else 1.
+        else:
+            self._fetch_step = fetch_step
         self._dilation = dilation
         self._async_load = async_load
 
