@@ -1,7 +1,7 @@
 selection:
    ### use `&`, `|`, `~` for logical operations on numpy arrays
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
-   (jet_tightId==1) & (jet_no<2) & (((sample_isQCD==0) & (fj_isQCD==0)) | ((sample_isQCD==1) & (fj_isQCD==1))) & (event_no%7!=0)
+   (jet_tightId==1) & (jet_no<2) & (fj_pt>200) & (fj_pt<2500) & (((sample_isQCD==0) & (fj_isQCD==0)) | ((sample_isQCD==1) & (fj_isQCD==1))) & (event_no%7!=0)
 
 new_variables:
    ### [format] name: formula
@@ -11,6 +11,7 @@ new_variables:
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
+  ### [note]: `[var]_mask` will not be transformed even if `method=auto`
   method: manual
   ### data_fraction: fraction of events to use when calculating the mean/scale for the standardization
   data_fraction: 
@@ -37,6 +38,11 @@ inputs:
          - pfcand_phirel
          - [pfcand_abseta, 0.6, 1.6]
          - pfcand_charge
+         - pfcand_isEl
+         - pfcand_isMu
+         - pfcand_isGamma
+         - pfcand_isChargedHad
+         - pfcand_isNeutralHad
          - [pfcand_VTX_ass, 4, 0.3]
          - pfcand_lostInnerHits
          - [pfcand_normchi2, 5, 0.2]
@@ -114,11 +120,18 @@ weights:
       fj_pt: [200, 251, 316, 398, 501, 630, 793, 997, 1255, 1579, 1987, 2500]
       fj_sdmass: [-10000, 10000]
    reweight_classes: [
+      fj_isQCD,
       fj_isTop,
       fj_isW,
-      label_Z_bb, label_Z_cc, label_Z_qq,
+      fj_isZ,
       label_H_bb, label_H_cc, label_H_qqqq,
-      fj_isQCD,
+      ]
+   class_weights: [
+      2,
+      1,
+      1,
+      1,
+      0.33, 0.33, 0.33,
       ]
    reweight_hists:
 
