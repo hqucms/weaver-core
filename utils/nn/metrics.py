@@ -1,4 +1,5 @@
 import numpy as np
+import traceback
 import sklearn.metrics as _m
 from functools import partial
 from ..logger import _logger
@@ -67,4 +68,5 @@ def evaluate_metrics(y_true, y_score, eval_metrics=[]):
         except Exception as e:
             results[metric] = None
             _logger.error(str(e))
+            _logger.debug(traceback.format_exc())
     return results

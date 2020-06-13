@@ -1,5 +1,6 @@
-import numpy as np
+import math
 import tqdm
+import traceback
 from .tools import _concat
 from ..logger import _logger
 
@@ -10,7 +11,8 @@ def _read_hdf5(filepath, branches, load_range=None):
     with tables.open_file(filepath) as f:
         outputs = {k:getattr(f.root, k) for k in branches}
     if load_range is not None:
-        start, stop = np.trunc(np.asfarray(load_range) * len(outputs[branches[0]])).astype('int64')
+        start = math.trunc(load_range[0] * len(outputs[branches[0]]))
+        stop = max(start + 1, math.trunc(load_range[1] * len(outputs[branches[0]])))
         for k, v in outputs.items():
             outputs[k] = v[start:stop]
     return outputs
@@ -27,7 +29,8 @@ def _read_root(filepath, branches, load_range=None, treename=None):
                 raise RuntimeError('Need to specify `treename` as more than one trees are found in file %s: %s' % (filepath, str(branches)))
         tree = f[treename]
         if load_range is not None:
-            start, stop = np.trunc(np.asfarray(load_range) * tree.numentries).astype('int64')
+            start = math.trunc(load_range[0] * tree.numentries)
+            stop = max(start + 1, math.trunc(load_range[1] * tree.numentries))
         else:
             start, stop = None, None
         outputs = tree.arrays(branches, namedecode='utf-8', entrystart=start, entrystop=stop)
@@ -39,7 +42,8 @@ def _read_awkd(filepath, branches, load_range=None):
     with awkward.load(filepath) as f:
         outputs = {k:f[k] for k in branches}
     if load_range is not None:
-        start, stop = np.trunc(np.asfarray(load_range) * len(outputs[branches[0]])).astype('int64')
+        start = math.trunc(load_range[0] * len(outputs[branches[0]]))
+        stop = max(start + 1, math.trunc(load_range[1] * len(outputs[branches[0]])))
         for k, v in outputs.items():
             outputs[k] = v[start:stop]
     return outputs
@@ -64,7 +68,8 @@ def _read_files(filelist, branches, load_range=None, show_progressbar=False, **k
                 a = _read_awkd(filepath, branches, load_range=load_range)
         except Exception as e:
             a = None
-            _logger.error('[fileio._read_files]' + str(e))
+            _logger.error('When reading file %s:', filepath)
+            _logger.error(traceback.format_exc())
         if a is not None:
             for name in branches:
                 table[name].append(a[name].astype('float32'))
