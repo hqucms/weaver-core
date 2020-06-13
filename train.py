@@ -102,17 +102,21 @@ def main():
             _logger.info(filelist)
             args.data_fraction = 0.1
             args.fetch_step = 0.002
+        num_workers = min(args.num_workers, len(filelist) // args.data_dilation)
         train_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
                                        dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
         val_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
                                      dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
-        train_loader = DataLoader(train_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
-        val_loader = DataLoader(val_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
+        train_loader = DataLoader(train_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
+        val_loader = DataLoader(val_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         data_config = train_data.config
     else:
         filelist = sorted(sum([glob.glob(f) for f in args.data_test], []))
-        test_data = SimpleIterDataset(filelist, args.data_config, for_training=False, fetch_by_files=True, fetch_step=1)
-        test_loader = DataLoader(test_data, num_workers=args.num_workers, batch_size=args.batch_size, drop_last=False, pin_memory=True)
+        num_workers = min(args.num_workers, len(filelist))
+        test_data = SimpleIterDataset(filelist, args.data_config, for_training=False,
+                                      load_range_and_fraction=((0, 1), args.data_fraction),
+                                      fetch_by_files=True, fetch_step=1)
+        test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=False, pin_memory=True)
         data_config = test_data.config
 
     # model
@@ -140,6 +144,10 @@ def main():
                           dynamic_axes=model_info.get('dynamic_axes', None),
                           opset_version=11)
         _logger.info('ONNX model saved to %s', args.export_onnx)
+
+        preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), 'preprocess.json')
+        data_config.export_json(preprocessing_json)
+        _logger.info('Preprocessing parameters saved to %s', preprocessing_json)
         return
 
     # note: we should always save/load the state_dict of the original model, not the one wrapped by nn.DataParallel
@@ -269,6 +277,18 @@ def main():
                 output = {'scores':scores}
                 output.update(labels)
                 output.update(observers)
+
+                name_remap = {}
+                arraynames = list(output)
+                for i in range(len(arraynames)):
+                    for j in range(i + 1, len(arraynames)):
+                        if arraynames[i].startswith(arraynames[j]):
+                            name_remap[arraynames[j]] = '%s_%d' % (arraynames[j], len(name_remap))
+                        if arraynames[j].startswith(arraynames[i]):
+                            name_remap[arraynames[i]] = '%s_%d' % (arraynames[i], len(name_remap))
+                _logger.info('Renamed the following variables in the output file: %s', str(name_remap))
+                output = {name_remap[k] if k in name_remap else k: v for k, v in output.items()}
+
                 awkward.save(args.predict_output, output, mode='w')
 
             _logger.info('Written output to %s' % args.predict_output)
