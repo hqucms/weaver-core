@@ -1,4 +1,5 @@
 import numpy as np
+import awkward
 import tqdm
 import torch
 
@@ -91,19 +92,24 @@ def evaluate(model, test_loader, dev, for_training=True, loss_func=None, eval_me
     label_counter = Counter()
     total_loss = 0
     total_correct = 0
+    entry_count = 0
     count = 0
     scores = []
     labels = defaultdict(list)
+    labels_counts = []
     observers = defaultdict(list)
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
                 inputs = [X[k].to(dev) for k in data_config.input_names]
                 label = y[data_config.label_names[0]].long()
+                entry_count += label.shape[0]
                 try:
                     label_mask = y[data_config.label_names[0] + '_mask'].bool()
                 except KeyError:
                     label_mask = None
+                if not for_training and label_mask is not None:
+                    labels_counts.append(np.squeeze(label_mask.numpy().sum(axis=-1)))
                 label = _flatten_label(label, label_mask)
                 num_examples = label.shape[0]
                 label_counter.update(label.cpu().numpy())
@@ -135,14 +141,26 @@ def evaluate(model, test_loader, dev, for_training=True, loss_func=None, eval_me
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     scores = np.concatenate(scores)
-    labels = {k:_concat(v) for k, v in labels.items()}
+    labels = {k: _concat(v) for k, v in labels.items()}
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
         return total_correct / count
     else:
-        observers = {k:_concat(v) for k, v in observers.items()}
+        # convert 2D labels/scores
+        if len(scores) != entry_count:
+            if len(labels_counts):
+                labels_counts = np.concatenate(labels_counts)
+                scores = awkward.JaggedArray.fromcounts(labels_counts, scores)
+                for k, v in labels.items():
+                    labels[k] = awkward.JaggedArray.fromcounts(labels_counts, v)
+            else:
+                assert(count % entry_count == 0)
+                scores = scores.reshape((entry_count, int(count / entry_count), -1)).transpose((1, 2))
+                for k, v in labels.items():
+                    labels[k] = v.reshape((entry_count, -1))
+        observers = {k: _concat(v) for k, v in observers.items()}
         return total_correct / count, scores, labels, observers
 
 
