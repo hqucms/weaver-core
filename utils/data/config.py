@@ -34,6 +34,7 @@ class DataConfig(object):
         opts = {
             'treename': None,
             'selection': None,
+            'test_time_selection': None,
             'preprocess': {'method': 'manual', 'data_fraction': 0.1, 'params': None},
             'new_variables': {},
             'inputs': {},
@@ -53,6 +54,7 @@ class DataConfig(object):
             _logger.debug(opts)
 
         self.selection = opts['selection']
+        self.test_time_selection = opts['test_time_selection'] if opts['test_time_selection'] else self.selection
         self.var_funcs = opts['new_variables']
         # preprocessing config
         self.preprocess = opts['preprocess']
@@ -123,6 +125,7 @@ class DataConfig(object):
         if print_info:
             _logger.info('preprocess config: %s', str(self.preprocess))
             _logger.info('selection: %s', str(self.selection))
+            _logger.info('test_time_selection: %s', str(self.test_time_selection))
             _logger.info('var_funcs:\n - %s', '\n - '.join(str(it) for it in self.var_funcs.items()))
             _logger.info('input_names: %s', str(self.input_names))
             _logger.info('input_dicts:\n - %s', '\n - '.join(str(it) for it in self.input_dicts.items()))
@@ -137,6 +140,9 @@ class DataConfig(object):
         # selection
         if self.selection:
             aux_branches.update(_get_variable_names(self.selection))
+        # test time selection
+        if self.test_time_selection:
+            aux_branches.update(_get_variable_names(self.test_time_selection))
         # var_funcs
         self.keep_branches.update(self.var_funcs.keys())
         for expr in self.var_funcs.values():

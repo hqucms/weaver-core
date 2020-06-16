@@ -98,7 +98,21 @@ observers:
    - fj_eta
    - fj_phi
    - fj_sdmass
+   - fj_sdmass_fromsubjets
    - npfcands
+   - pfDeepBoostedDiscriminatorsJetTags_TvsQCD
+   - pfDeepBoostedDiscriminatorsJetTags_WvsQCD
+   - pfDeepBoostedDiscriminatorsJetTags_HbbvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_TvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_WvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_ZHbbvsQCD
+   - pfParticleNetDiscriminatorsJetTags_TvsQCD
+   - pfParticleNetDiscriminatorsJetTags_WvsQCD
+   - pfParticleNetDiscriminatorsJetTags_HbbvsQCD
+   - pfMassDecorrelatedParticleNetDiscriminatorsJetTags_XbbvsQCD
+   - pfMassDecorrelatedParticleNetJetTags_probXbb
+   - pfMassDecorrelatedParticleNetJetTags_probXcc
+   - pfMassDecorrelatedParticleNetJetTags_probXqq
 
 weights:
    ### [option 1] use precomputed weights stored in the input files

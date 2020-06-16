@@ -3,6 +3,10 @@ selection:
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    (jet_tightId==1) & (jet_no<2) & (fj_pt>200) & (fj_pt<2500) & (((sample_isQCD==0) & (fj_isQCD==0)) | ((sample_isQCD==1) & (fj_isQCD==1))) & (event_no%7!=0)
 
+test_time_selection:
+   ### selection to apply at test time (i.e., when running w/ --predict)
+   (jet_tightId==1) & (jet_no<2) & (fj_pt>200) & (fj_pt<2500) & (((sample_isQCD==0) & (fj_isQCD==0)) | ((sample_isQCD==1) & (fj_isQCD==1))) & (event_no%7==0)
+
 new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
@@ -107,7 +111,21 @@ observers:
    - fj_eta
    - fj_phi
    - fj_sdmass
+   - fj_sdmass_fromsubjets
    - npfcands
+   - pfDeepBoostedDiscriminatorsJetTags_TvsQCD
+   - pfDeepBoostedDiscriminatorsJetTags_WvsQCD
+   - pfDeepBoostedDiscriminatorsJetTags_HbbvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_TvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_WvsQCD
+   - pfMassDecorrelatedDeepBoostedDiscriminatorsJetTags_ZHbbvsQCD
+   - pfParticleNetDiscriminatorsJetTags_TvsQCD
+   - pfParticleNetDiscriminatorsJetTags_WvsQCD
+   - pfParticleNetDiscriminatorsJetTags_HbbvsQCD
+   - pfMassDecorrelatedParticleNetDiscriminatorsJetTags_XbbvsQCD
+   - pfMassDecorrelatedParticleNetJetTags_probXbb
+   - pfMassDecorrelatedParticleNetJetTags_probXcc
+   - pfMassDecorrelatedParticleNetJetTags_probXqq
 
 weights:
    ### [option 1] use precomputed weights stored in the input files

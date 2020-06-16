@@ -180,7 +180,7 @@ class _SimpleIter(object):
 
     def preprocess(self, table):
         # apply selection
-        _apply_selection(table, self._data_config.selection)
+        _apply_selection(table, self._data_config.selection if self._training else self._data_config.test_time_selection)
         # define new variables
         _build_new_variables(table, self._data_config.var_funcs)
         # build weights
@@ -253,10 +253,12 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._max_resample = max_resample
 
         if for_training:
+            self._training = True
             self._shuffle = True
             self._reweight = True
             self._load_observers = False
         else:
+            self._training = False
             self._shuffle = False
             self._reweight = False
             self._load_observers = True
