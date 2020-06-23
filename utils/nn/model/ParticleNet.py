@@ -241,9 +241,13 @@ class ParticleNetTagger(nn.Module):
                  use_fusion=True,
                  use_fts_bn=True,
                  use_counts=True,
+                 pf_input_dropout=None,
+                 sv_input_dropout=None,
                  for_inference=False,
                  **kwargs):
         super(ParticleNetTagger, self).__init__(**kwargs)
+        self.pf_input_dropout = nn.Dropout(pf_input_dropout) if pf_input_dropout else None
+        self.sv_input_dropout = nn.Dropout(sv_input_dropout) if sv_input_dropout else None
         self.pf_conv = FeatureConv(pf_features_dims, 32)
         self.sv_conv = FeatureConv(sv_features_dims, 32)
         self.pn = ParticleNet(input_dims=32,
@@ -256,6 +260,15 @@ class ParticleNetTagger(nn.Module):
                               for_inference=for_inference)
 
     def forward(self, pf_points, pf_features, pf_mask, sv_points, sv_features, sv_mask):
+        if self.pf_input_dropout:
+            pf_mask = (self.pf_input_dropout(pf_mask) != 0).float()
+            pf_points *= pf_mask
+            pf_features *= pf_mask
+        if self.sv_input_dropout:
+            sv_mask = (self.sv_input_dropout(sv_mask) != 0).float()
+            sv_points *= sv_mask
+            sv_features *= sv_mask
+
         points = torch.cat((pf_points, sv_points), dim=2)
         features = torch.cat((self.pf_conv(pf_features) * pf_mask, self.sv_conv(sv_features) * sv_mask), dim=2)
         mask = torch.cat((pf_mask, sv_mask), dim=2)
