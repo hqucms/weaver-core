@@ -13,6 +13,93 @@ from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
 from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer, WeightMaker
 
+
+def _build_weights(table, data_config):
+    if data_config.weight_name and not data_config.use_precomputed_weights:
+        x_var, y_var = data_config.reweight_branches
+        x_bins, y_bins = data_config.reweight_bins
+        # init w/ wgt=0: events not belonging to any class in `reweight_classes` will get a weight of 0 at the end
+        wgt = np.zeros(len(table[x_var]), dtype='float32')
+        for label, hist in data_config.reweight_hists.items():
+            pos = table[label] == 1
+            rwgt_x_vals = table[x_var][pos]
+            rwgt_y_vals = table[y_var][pos]
+            x_indices = np.clip(np.digitize(
+                rwgt_x_vals, x_bins) - 1, a_min=0, a_max=len(x_bins) - 2)
+            y_indices = np.clip(np.digitize(
+                rwgt_y_vals, y_bins) - 1, a_min=0, a_max=len(y_bins) - 2)
+            wgt[pos] = hist[x_indices, y_indices]
+        table[data_config.weight_name] = wgt
+
+
+def _finalize_inputs(table, data_config):
+    for k, params in data_config.preprocess_params.items():
+        if data_config._auto_standardization and params['center'] is None:
+            raise ValueError('No valid standardization params for %s' % k)
+        if params['center'] is not None:
+            table[k] = _clip((table[k] - params['center']) * params['scale'], params['min'], params['max'])
+        if params['length'] is not None:
+            table[k] = _pad(table[k], params['length'], params['pad_value'])
+        # check for NaN
+        if np.any(np.isnan(table[k])):
+            _logger.warning(
+                'Found NaN in %s, silently converting it to 0.', k)
+            table[k] = np.nan_to_num(table[k])
+    # stack variables for each input group
+    for k, names in data_config.input_dicts.items():
+        table['_' + k] = np.stack([table[n] for n in names], axis=1)
+    # reduce memory usage
+    for n in set(chain(*data_config.input_dicts.values())):
+        if n not in data_config.label_names and n not in data_config.observer_names:
+            del table[n]
+
+
+def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale=1):
+    all_indices = np.arange(len(weights))
+    randwgt = np.random.uniform(low=0, high=weight_scale, size=len(weights))
+    keep_flags = randwgt < weights
+    if not up_sample:
+        keep_indices = all_indices[keep_flags]
+    else:
+        n_repeats = len(weights) // max(1, int(keep_flags.sum()))
+        if n_repeats > max_resample:
+            n_repeats = max_resample
+        all_indices = np.repeat(np.arange(len(weights)), n_repeats)
+        randwgt = np.random.uniform(low=0, high=weight_scale, size=len(weights) * n_repeats)
+        keep_indices = all_indices[randwgt < np.repeat(weights, n_repeats)]
+    return keep_indices.copy()
+
+
+def _preprocess(table, data_config, options):
+    # apply selection
+    _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
+    # define new variables
+    _build_new_variables(table, data_config.var_funcs)
+    # build weights
+    if options['reweight']:
+        _build_weights(table, data_config)
+    # drop unused variables
+    _clean_up(table, data_config.drop_branches)
+    # perform input variable standardization, clipping, padding and stacking
+    _finalize_inputs(table, data_config)
+    # compute reweight indices
+    if options['reweight'] and data_config.weight_name is not None:
+        indices = _get_reweight_indices(table[data_config.weight_name], up_sample=options['up_sample'],
+                                        weight_scale=options['weight_scale'], max_resample=options['max_resample'])
+    else:
+        indices = np.arange(len(table[data_config.label_names[0]]))
+    # shuffle
+    if options['shuffle']:
+        np.random.shuffle(indices)
+    return indices
+
+
+def _load_next(data_config, filelist, load_range, options):
+    table = _read_files(filelist, data_config.load_branches, load_range, treename=data_config.treename)
+    indices = _preprocess(table, data_config, options)
+    return table, indices
+
+
 class _SimpleIter(object):
     r"""_SimpleIter
 
@@ -37,7 +124,7 @@ class _SimpleIter(object):
             stop = min(start + per_worker, len(filelist))
             filelist = filelist[start:stop]
 
-        if self._shuffle:
+        if self._sampler_options['shuffle']:
             np.random.shuffle(filelist)
         if self._dilation > 1:
             filelist = filelist[::self._dilation]
@@ -48,7 +135,7 @@ class _SimpleIter(object):
         else:
             (start_pos, end_pos), load_frac = self._init_load_range_and_fraction
             interval = (end_pos - start_pos) * load_frac
-            if self._shuffle:
+            if self._sampler_options['shuffle']:
                 offset = np.random.uniform(start_pos, end_pos - interval)
                 self.load_range = (offset, offset + interval)
             else:
@@ -96,11 +183,6 @@ class _SimpleIter(object):
         self.cursor += 1
         return self.get_data(i)
 
-    def _load_next(self, filelist, load_range):
-        table = _read_files(filelist, self._data_config.load_branches, load_range, treename=self._data_config.treename)
-        indices = self.preprocess(table)
-        return table, indices
-
     def _try_get_next(self):
         if self._fetch_by_files:
             if self.ipos >= len(self.filelist):
@@ -118,94 +200,18 @@ class _SimpleIter(object):
                 load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
         # _logger.info('Start fetching next batch, len(filelist)=%d, load_range=%s'%(len(filelist), load_range))
         if self._async_load:
-            self.prefetch = self.executor.submit(self._load_next, filelist, load_range)
+            self.prefetch = self.executor.submit(_load_next, self._data_config, filelist, load_range, self._sampler_options)
         else:
-            self.prefetch = self._load_next(filelist, load_range)
+            self.prefetch = _load_next(self._data_config, filelist, load_range, self._sampler_options)
         self.ipos += self._fetch_step
-
-    def build_weights(self, table):
-        if self._reweight and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
-            x_var, y_var = self._data_config.reweight_branches
-            x_bins, y_bins = self._data_config.reweight_bins
-            # init w/ wgt=0: events not belonging to any class in `reweight_classes` will get a weight of 0 at the end
-            wgt = np.zeros(len(table[x_var]), dtype='float32')
-            for label, hist in self._data_config.reweight_hists.items():
-                pos = table[label] == 1
-                rwgt_x_vals = table[x_var][pos]
-                rwgt_y_vals = table[y_var][pos]
-                x_indices = np.clip(np.digitize(
-                    rwgt_x_vals, x_bins) - 1, a_min=0, a_max=len(x_bins) - 2)
-                y_indices = np.clip(np.digitize(
-                    rwgt_y_vals, y_bins) - 1, a_min=0, a_max=len(y_bins) - 2)
-                wgt[pos] = hist[x_indices, y_indices]
-            table[self._data_config.weight_name] = wgt
-
-    def finalize_inputs(self, table, preprocess_params):
-        for k, params in preprocess_params.items():
-            if self._data_config._auto_standardization and params['center'] is None:
-                raise ValueError('No valid standardization params for %s' % k)
-            if params['center'] is not None:
-                table[k] = _clip((table[k] - params['center']) * params['scale'], params['min'], params['max'])
-            if params['length'] is not None:
-                table[k] = _pad(table[k], params['length'], params['pad_value'])
-            # check for NaN
-            if np.any(np.isnan(table[k])):
-                _logger.warning(
-                    'Found NaN in %s, silently converting it to 0.', k)
-                table[k] = np.nan_to_num(table[k])
-        # stack variables for each input group
-        for k, names in self._data_config.input_dicts.items():
-            table['_' + k] = np.stack([table[n] for n in names], axis=1)
-        # reduce memory usage
-        for n in set(chain(*self._data_config.input_dicts.values())):
-            if n not in self._data_config.label_names and n not in self._data_config.observer_names:
-                del table[n]
-
-    def get_reweight_indices(self, weights):
-        all_indices = np.arange(len(weights))
-        randwgt = np.random.uniform(
-            low=0, high=self._weight_scale, size=len(weights))
-        keep_flags = randwgt < weights
-        if not self._up_sample:
-            keep_indices = all_indices[keep_flags]
-        else:
-            n_repeats = len(weights) // max(1, int(keep_flags.sum()))
-            if n_repeats > self._max_resample:
-                n_repeats = self._max_resample
-            all_indices = np.repeat(np.arange(len(weights)), n_repeats)
-            randwgt = np.random.uniform(
-                low=0, high=self._weight_scale, size=len(weights) * n_repeats)
-            keep_indices = all_indices[randwgt < np.repeat(weights, n_repeats)]
-        return keep_indices
-
-    def preprocess(self, table):
-        # apply selection
-        _apply_selection(table, self._data_config.selection if self._training else self._data_config.test_time_selection)
-        # define new variables
-        _build_new_variables(table, self._data_config.var_funcs)
-        # build weights
-        self.build_weights(table)
-        # drop unused variables
-        _clean_up(table, self._data_config.drop_branches)
-        # perform input variable standardization, clipping, padding and stacking
-        self.finalize_inputs(table, self._data_config.preprocess_params)
-        # compute reweight indices
-        if self._reweight and self._data_config.weight_name is not None:
-            indices = self.get_reweight_indices(table[self._data_config.weight_name])
-        else:
-            indices = np.arange(len(table[self._data_config.label_names[0]]))
-        # shuffle
-        if self._shuffle:
-            np.random.shuffle(indices)
-        return indices
 
     def get_data(self, i):
         # inputs
-        X = {k: self.table['_' + k][i] for k in self._data_config.input_names}
+        X = {k: self.table['_' + k][i].copy() for k in self._data_config.input_names}
         # labels
-        y = {k: self.table[k][i] for k in self._data_config.label_names}
+        y = {k: self.table[k][i].copy() for k in self._data_config.label_names}
         # observers
-        Z = {k: self.table[k][i] for k in self._data_config.observer_names}
+        Z = {k: self.table[k][i].copy() for k in self._data_config.observer_names}
         return X, y, Z
 
 
@@ -248,20 +254,16 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._async_load = async_load
 
         # ==== sampling parameters ====
-        self._up_sample = up_sample
-        self._weight_scale = weight_scale
-        self._max_resample = max_resample
+        self._sampler_options = {
+            'up_sample': up_sample,
+            'weight_scale': weight_scale,
+            'max_resample': max_resample,
+            }
 
         if for_training:
-            self._training = True
-            self._shuffle = True
-            self._reweight = True
-            self._load_observers = False
+            self._sampler_options.update(training=True, shuffle=True, reweight=True)
         else:
-            self._training = False
-            self._shuffle = False
-            self._reweight = False
-            self._load_observers = True
+            self._sampler_options.update(training=False, shuffle=False, reweight=False)
 
         # discover auto-generated reweight file
         data_config_md5 = _md5(data_config_file)
@@ -271,7 +273,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' % data_config_file)
 
         # load data config
-        self._data_config = DataConfig.load(data_config_file)
+        self._data_config = DataConfig.load(data_config_file, load_observers=(not for_training))
 
         # produce variable standardization info if needed
         if self._data_config._missing_standardization_info:
@@ -279,7 +281,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             self._data_config = s.produce(data_config_autogen_file)
 
         # produce reweight info if needed
-        if self._reweight and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
+        if self._sampler_options['reweight'] and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
             if remake_weights or self._data_config.reweight_hists is None:
                 w = WeightMaker(filelist, self._data_config)
                 self._data_config = w.produce(data_config_autogen_file)

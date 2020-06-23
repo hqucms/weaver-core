@@ -70,6 +70,8 @@ def main():
     parser.add_argument('--export-onnx', type=str, default=None,
                         help='export the PyTorch model to ONNX model and save it at the given path (path must ends w/ .onnx); '
                         'needs to set `--data-config`, `--network-config`, and `--model-prefix` (requires the full model path)')
+    parser.add_argument('--io-test', action='store_true', default=False,
+                        help='test throughput of the dataloader')
 
     args = parser.parse_args()
     _logger.info(args)
@@ -79,7 +81,7 @@ def main():
 #         from apex import amp
 
     if args.data_dilation > 1:
-        _logger.warning('Use of `data-dilation` is not recomended in general -- consider using `data-fraction` instead.')
+        _logger.warning('Use of `data-dilation` is not recommended in general -- consider using `data-fraction` instead.')
 
     # training/testing mode
     training_mode = not args.predict
@@ -119,6 +121,14 @@ def main():
         test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=False, pin_memory=True)
         data_config = test_data.config
 
+    if args.io_test:
+        from tqdm.auto import tqdm
+        _logger.info('Start running IO test')
+        data_loader = train_loader if training_mode else test_loader
+        for X, y, Z in tqdm(data_loader):
+            inputs = [X[k] for k in data_config.input_names]
+        return
+
     # model
     network_module = import_module(args.network_config.replace('.py', '').replace('/', '.'))
     network_options = {k:ast.literal_eval(v) for k, v in args.network_option}
@@ -154,15 +164,15 @@ def main():
     # so we do not convert it to nn.DataParallel now
     model = model.to(dev)
 
-    # loss function
-    try:
-        loss_func = network_module.get_loss(data_config, **network_options)
-        _logger.info(loss_func)
-    except AttributeError:
-        loss_func = torch.nn.CrossEntropyLoss()
-        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.', args.network_config)
-
     if training_mode:
+        # loss function
+        try:
+            loss_func = network_module.get_loss(data_config, **network_options)
+            _logger.info(loss_func)
+        except AttributeError:
+            loss_func = torch.nn.CrossEntropyLoss()
+            _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.', args.network_config)
+
         # optimizer & learning rate
         if args.optimizer == 'adam':
             opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
