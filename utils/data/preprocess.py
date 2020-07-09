@@ -53,7 +53,7 @@ class AutoStandardizer(object):
         self.keep_branches = set()
         self.load_branches = set()
         for k, params in self._data_config.preprocess_params.items():
-            if params['center'] in (None, 'auto'):
+            if params['center'] == 'auto':
                 self.keep_branches.add(k)
                 if k in self._data_config.var_funcs:
                     expr = self._data_config.var_funcs[k]
@@ -74,10 +74,9 @@ class AutoStandardizer(object):
         _logger.info('Using %d events to calculate standardization info', len(table[list(table.keys())[0]]))
         preprocess_params = copy.deepcopy(self._data_config.preprocess_params)
         for k, params in self._data_config.preprocess_params.items():
-            if params['center'] in (None, 'auto'):
+            if params['center'] == 'auto':
                 if k.endswith('_mask'):
-                    params['center'] = 0
-                    params['scale'] = 1
+                    params['center'] = None
                 else:
                     a = table[k]
                     try:

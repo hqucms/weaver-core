@@ -34,7 +34,7 @@ def _build_weights(table, data_config):
 
 def _finalize_inputs(table, data_config):
     for k, params in data_config.preprocess_params.items():
-        if data_config._auto_standardization and params['center'] is None:
+        if data_config._auto_standardization and params['center'] == 'auto':
             raise ValueError('No valid standardization params for %s' % k)
         if params['center'] is not None:
             table[k] = _clip((table[k] - params['center']) * params['scale'], params['min'], params['max'])
@@ -47,7 +47,10 @@ def _finalize_inputs(table, data_config):
             table[k] = np.nan_to_num(table[k])
     # stack variables for each input group
     for k, names in data_config.input_dicts.items():
-        table['_' + k] = np.stack([table[n] for n in names], axis=1)
+        if len(names) == 1 and data_config.preprocess_params[names[0]]['length'] is None:
+            table['_' + k] = table[names[0]]
+        else:
+            table['_' + k] = np.stack([table[n] for n in names], axis=1)
     # reduce memory usage
     for n in set(chain(*data_config.input_dicts.values())):
         if n not in data_config.label_names and n not in data_config.observer_names:

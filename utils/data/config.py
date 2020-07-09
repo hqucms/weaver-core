@@ -79,10 +79,11 @@ class DataConfig(object):
                         except IndexError:
                             return default
 
-                    params = {'length': o['length'], 'center': _get(1, None), 'scale': _get(2, 1), 'min': _get(3, -5), 'max': _get(4, 5), 'pad_value': _get(5, 0)}
+                    params = {'length': o['length'], 'center': _get(1, 'auto' if self._auto_standardization else None),
+                              'scale': _get(2, 1), 'min': _get(3, -5), 'max': _get(4, 5), 'pad_value': _get(5, 0)}
                     if v[0] in self.preprocess_params and params != self.preprocess_params[v[0]]:
                         raise RuntimeError('Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' % (v[0], str(self.preprocess_params[k]), str(params)))
-                    if (self._auto_standardization and params['center'] is None) or params['center'] == 'auto':
+                    if params['center'] == 'auto':
                         self._missing_standardization_info = True
                     self.preprocess_params[v[0]] = params
         # labels
