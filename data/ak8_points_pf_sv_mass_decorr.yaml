@@ -110,6 +110,7 @@ observers:
    - pfParticleNetDiscriminatorsJetTags_WvsQCD
    - pfParticleNetDiscriminatorsJetTags_HbbvsQCD
    - pfMassDecorrelatedParticleNetDiscriminatorsJetTags_XbbvsQCD
+   - pfMassDecorrelatedParticleNetDiscriminatorsJetTags_XccvsQCD
    - pfMassDecorrelatedParticleNetJetTags_probXbb
    - pfMassDecorrelatedParticleNetJetTags_probXcc
    - pfMassDecorrelatedParticleNetJetTags_probXqq
@@ -125,6 +126,6 @@ weights:
       fj_pt: [200, 251, 316, 398, 501, 630, 793, 997, 1255, 1579, 1987, 2500]
       fj_sdmass: [30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260]
    reweight_classes: [fj_isQCD, label_H_bb, label_H_cc, label_H_qq]
-   class_weights: [2, 1, 1, 1]
+   class_weights: [1, 1, 1, 1]
    reweight_hists:
 

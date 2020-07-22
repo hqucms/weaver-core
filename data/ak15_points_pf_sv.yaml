@@ -8,19 +8,29 @@ new_variables:
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: awkward.JaggedArray.ones_like(pfcand_etarel)
    sv_mask: awkward.JaggedArray.ones_like(sv_etarel)
-   label_QCD: fj_isQCD
+
+preprocess:
+  ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
+  method: manual
+  ### data_fraction: fraction of events to use when calculating the mean/scale for the standardization
+  data_fraction: 
 
 inputs:
    pf_points:
-      length: 150
+      length: 100
       vars: 
          - pfcand_etarel
          - pfcand_phirel
    pf_features:
-      length: 150
+      length: 100
       vars: 
       ### [format 1]: var_name (no transformation)
-      ### [format 2]: [var_name, subtract_by(optional, default=None, no transf.), multiply_by(optional, default=1), clip_min(optional, default=-5), clip_max(optional, default=5), pad_value(optional, default=0)]
+      ### [format 2]: [var_name, 
+      ###              subtract_by(optional, default=None, no transf. if preprocess.method=manual, auto transf. if preprocess.method=auto), 
+      ###              multiply_by(optional, default=1), 
+      ###              clip_min(optional, default=-5), 
+      ###              clip_max(optional, default=5), 
+      ###              pad_value(optional, default=0)]
          - [pfcand_pt_log_nopuppi, 0.6, 0.6]
          - [pfcand_e_log_nopuppi, 1, 0.6]
          - pfcand_etarel
@@ -42,7 +52,7 @@ inputs:
          - [pfcand_btagSip3dSig, 0, 1]
          - [pfcand_btagJetDistVal, 0, 145]
    pf_mask:
-      length: 150
+      length: 100
       vars: 
          - pfcand_mask
    sv_points:
@@ -61,9 +71,9 @@ inputs:
          - [sv_ntracks, 3, 1]
          - [sv_normchi2, 1, 0.5]
          - [sv_dxy, 0.25, 0.4]
-         - [sv_dxysig, 5, 0.2]
+         - [sv_dxysig, 6.7, 0.03]
          - [sv_d3d, 0.4, 0.3]
-         - [sv_d3dsig, 5, 0.2]
+         - [sv_d3dsig, 6.7, 0.03]
    sv_mask:
       length: 10
       vars:
@@ -73,11 +83,10 @@ labels:
    ### type can be `simple`, `custom`
    ### [option 1] use `simple` for binary/multi-class classification, then `value` is a list of 0-1 labels
    type: simple
-   value:
-      - label_QCD
-      - label_H_bb
-      - label_H_cc
-      - label_H_qq
+   value: [
+      label_H_bb, label_H_cc, label_H_qq,
+      label_QCD_bb, label_QCD_cc, label_QCD_b, label_QCD_c, label_QCD_others,
+      ]
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    # type: custom
    # value: 
@@ -102,6 +111,6 @@ weights:
       fj_pt: [170, 203, 242, 289, 346, 413, 493, 589, 704, 841, 1004, 1200]
       fj_sdmass_fromsubjets: [30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250, 260]
    reweight_classes: [fj_isQCD, label_H_bb, label_H_cc, label_H_qq]
-   class_weights: [2, 1, 1, 1]
+   class_weights: [1, 1, 1, 1]
    reweight_hists:
 
