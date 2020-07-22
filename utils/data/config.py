@@ -199,7 +199,14 @@ class DataConfig(object):
             j[k] = {'var_names':v, 'var_infos':{}}
             for var_name in v:
                 j[k]['var_length'] = self.preprocess_params[var_name]['length']
-                center, scale = self.preprocess_params[var_name]['center'], self.preprocess_params[var_name]['scale']
-                j[k]['var_infos'][var_name] = {'median':0 if center is None else center, 'norm_factor':scale}
+                info = self.preprocess_params[var_name]
+                j[k]['var_infos'][var_name] = {
+                    'median': 0 if info['center'] is None else info['center'],
+                    'norm_factor': info['scale'],
+                    'replace_inf_value': 0,
+                    'lower_bound': -1e32 if info['center'] is None else info['min'],
+                    'upper_bound': 1e32 if info['center'] is None else info['max'],
+                    'pad': info['pad_value']
+                    }
         with open(fp, 'w') as f:
             json.dump(j, f, indent=2)
