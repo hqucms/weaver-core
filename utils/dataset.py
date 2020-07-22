@@ -275,20 +275,27 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             data_config_file = data_config_autogen_file
             _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' % data_config_file)
 
-        # load data config
-        self._data_config = DataConfig.load(data_config_file, load_observers=(not for_training))
+        # load data config (w/ observers now -- so they will be included in the auto-generated yaml)
+        self._data_config = DataConfig.load(data_config_file)
 
-        # produce variable standardization info if needed
-        if self._data_config._missing_standardization_info:
-            s = AutoStandardizer(filelist, self._data_config)
-            self._data_config = s.produce(data_config_autogen_file)
+        if for_training:
+            # produce variable standardization info if needed
+            if self._data_config._missing_standardization_info:
+                s = AutoStandardizer(filelist, self._data_config)
+                self._data_config = s.produce(data_config_autogen_file)
 
-        # produce reweight info if needed
-        if self._sampler_options['reweight'] and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
-            if remake_weights or self._data_config.reweight_hists is None:
-                w = WeightMaker(filelist, self._data_config)
-                self._data_config = w.produce(data_config_autogen_file)
-        
+            # produce reweight info if needed
+            if self._sampler_options['reweight'] and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
+                if remake_weights or self._data_config.reweight_hists is None:
+                    w = WeightMaker(filelist, self._data_config)
+                    self._data_config = w.produce(data_config_autogen_file)
+
+            # reload data_config w/o observers for training
+            if os.path.exists(data_config_autogen_file) and data_config_file != data_config_autogen_file:
+                data_config_file = data_config_autogen_file
+                _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' % data_config_file)
+            self._data_config = DataConfig.load(data_config_file, load_observers=False)
+
         # derive all variables added to self.__dict__
         self._init_args = set(self.__dict__.keys()) - _init_args
 
