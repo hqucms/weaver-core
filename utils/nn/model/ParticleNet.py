@@ -180,6 +180,8 @@ class ParticleNet(nn.Module):
 #         print('features:\n', features)
         if mask is None:
             mask = (features.abs().sum(dim=1, keepdim=True) != 0)  # (N, 1, P)
+        points *= mask
+        features *= mask
         coord_shift = (mask == 0) * 1e9
         if self.use_counts:
             counts = mask.float().sum(dim=-1)
@@ -270,6 +272,6 @@ class ParticleNetTagger(nn.Module):
             sv_features *= sv_mask
 
         points = torch.cat((pf_points, sv_points), dim=2)
-        features = torch.cat((self.pf_conv(pf_features) * pf_mask, self.sv_conv(sv_features) * sv_mask), dim=2)
+        features = torch.cat((self.pf_conv(pf_features * pf_mask) * pf_mask, self.sv_conv(sv_features * sv_mask) * sv_mask), dim=2)
         mask = torch.cat((pf_mask, sv_mask), dim=2)
         return self.pn(points, features, mask)
