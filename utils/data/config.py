@@ -111,6 +111,7 @@ class DataConfig(object):
                 self.class_weights = opts['weights'].get('class_weights', None)
                 if self.class_weights is None:
                     self.class_weights = np.ones(len(self.reweight_classes))
+                self.reweight_threshold = opts['weights'].get('reweight_threshold', 10)
                 self.reweight_hists = opts['weights'].get('reweight_hists', None)
                 if self.reweight_hists is not None:
                     for k, v in self.reweight_hists.items():
