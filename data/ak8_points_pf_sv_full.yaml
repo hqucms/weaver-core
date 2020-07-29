@@ -107,6 +107,7 @@ labels:
 
 observers:
    - event_no
+   - fj_label
    - fj_pt
    - fj_eta
    - fj_phi

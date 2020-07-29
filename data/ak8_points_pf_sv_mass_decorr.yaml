@@ -94,6 +94,9 @@ labels:
 
 observers:
    - event_no
+   - fj_label
+   - label_W_cq
+   - label_W_qq
    - fj_pt
    - fj_eta
    - fj_phi
