@@ -117,7 +117,7 @@ def evaluate(model, test_loader, dev, for_training=True, loss_func=None, eval_me
                 logits = model(*inputs)
                 logits = _flatten_preds(logits, label_mask)
 
-                scores.append(torch.softmax(logits, dim=1).cpu().detach().numpy())
+                scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 for k, v in y.items():
                     labels[k].append(_flatten_label(v, label_mask).cpu().numpy())
                 if not for_training:

@@ -32,7 +32,7 @@ def roc_auc_score_ovo(y_true, y_score):
             for j in range(i + 1, num_classes):
                 weights = np.logical_or(y_true == i, y_true == j)
                 truth = y_true == j
-                score = y_score[:, j] / (y_score[:, i] + y_score[:, j])
+                score = y_score[:, j] / np.maximum(y_score[:, i] + y_score[:, j], 1e-6)
                 result[i, j] = _m.roc_auc_score(truth, score, sample_weight=weights)
     return result
 

@@ -23,7 +23,7 @@ def get_graph_feature_v1(x, k, idx):
 
     fts = x.transpose(2, 1).reshape(-1, num_dims)  # -> (batch_size, num_points, num_dims) -> (batch_size*num_points, num_dims)
     fts = fts[idx, :].view(batch_size, num_points, k, num_dims)  # neighbors: -> (batch_size*num_points*k, num_dims) -> ...
-    fts = fts.permute(0, 3, 1, 2)  # (batch_size, num_dims, num_points, k)
+    fts = fts.permute(0, 3, 1, 2).contiguous()  # (batch_size, num_dims, num_points, k)
     x = x.view(batch_size, num_dims, num_points, 1).repeat(1, 1, 1, k)
     fts = torch.cat((x, fts - x), dim=1)  # ->(batch_size, 2*num_dims, num_points, k)
     return fts
@@ -39,7 +39,7 @@ def get_graph_feature_v2(x, k, idx):
 
     fts = x.transpose(0, 1).reshape(num_dims, -1)  # -> (num_dims, batch_size, num_points) -> (num_dims, batch_size*num_points)
     fts = fts[:, idx].view(num_dims, batch_size, num_points, k)  # neighbors: -> (num_dims, batch_size*num_points*k) -> ...
-    fts = fts.transpose(1, 0)  # (batch_size, num_dims, num_points, k)
+    fts = fts.transpose(1, 0).contiguous()  # (batch_size, num_dims, num_points, k)
 
     x = x.view(batch_size, num_dims, num_points, 1).repeat(1, 1, 1, k)
     fts = torch.cat((x, fts - x), dim=1)  # ->(batch_size, 2*num_dims, num_points, k)
