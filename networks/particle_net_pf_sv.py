@@ -2,12 +2,6 @@ import torch
 from utils.nn.model.ParticleNet import ParticleNetTagger
 
 
-def weight_init(m):
-    import torch.nn as nn
-    if isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-        nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
-
-
 def get_model(data_config, **kwargs):
     conv_params = [
         (16, (64, 64, 64)),
@@ -29,7 +23,6 @@ def get_model(data_config, **kwargs):
                               sv_input_dropout=kwargs.get('sv_input_dropout', None),
                               for_inference=kwargs.get('for_inference', False)
                               )
-    model.apply(weight_init)
 
     model_info = {
         'input_names':list(data_config.input_names),
