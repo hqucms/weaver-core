@@ -1,26 +1,32 @@
 selection:
    ### use `&`, `|`, `~` for logical operations on numpy arrays
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
-   (jet_tightId==1) & (np.abs(jet_eta)<2.5) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
+   >-
+   (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
+   & ( (jet_hadronFlavour>0) | ((jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)!=4) & (np.abs(jet_partonFlavour)!=5)) )
+   & ( ~((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)) | ((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0) & (jet_pt<200)) )
+   & ( (jet_genjet_pt>0) | ((jet_genjet_pt<=0) & (jet_pt<60)) )
 
 test_time_selection:
-   ### selection to apply at test time (i.e., when running w/ --predict)
-   (jet_tightId==1) & (np.abs(jet_eta)<2.5) & (jet_pt>15) & (jet_pt<1000) & (event_no%7==0)
+   # (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7==0)
+   (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000)
 
 new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: awkward.JaggedArray.ones_like(pfcand_etarel)
    sv_mask: awkward.JaggedArray.ones_like(sv_etarel)
-   label_b: jet_nBHadrons==1
-   label_bb: jet_nBHadrons>1
-   label_c: (jet_nBHadrons==0) & (jet_nCHadrons==1)
-   label_cc: (jet_nBHadrons==0) & (jet_nCHadrons>1)
-   label_uds: (jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)>0) & ((np.abs(jet_partonFlavour)<4))
-   label_g: (jet_hadronFlavour==0) & (~label_uds)
-   label_allB: jet_hadronFlavour==5
-   label_allC: jet_hadronFlavour==4
-   label_allL: jet_hadronFlavour==0
+   label_b:     (jet_genjet_pt>0) & (jet_nBHadrons==1)
+   label_bb:    (jet_genjet_pt>0) & (jet_nBHadrons>1)
+   label_c:     (jet_genjet_pt>0) & (jet_nBHadrons==0) & (jet_nCHadrons==1)
+   label_cc:    (jet_genjet_pt>0) & (jet_nBHadrons==0) & (jet_nCHadrons>1)
+   label_uds:   (jet_genjet_pt>0) & (jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)>0) & (np.abs(jet_partonFlavour)<4)
+   label_g:     (jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==21)
+   label_undef: (jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)
+   label_pu:    (jet_genjet_pt<=0)
+   label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
+   label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
+
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
@@ -96,7 +102,7 @@ labels:
    ### type can be `simple`, `custom`
    ### [option 1] use `simple` for binary/multi-class classification, then `value` is a list of 0-1 labels
    type: simple
-   value: [label_b, label_bb, label_c, label_cc, label_uds, label_g]
+   value: [label_b, label_bb, label_c, label_cc, label_uds, label_g, label_undef, label_pu]
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    # type: custom
    # value: 
@@ -118,6 +124,7 @@ observers:
    - pfDeepFlavourJetTags_probc
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
+   - jet_qgl
 
 weights:
    ### [option 1] use precomputed weights stored in the input files
@@ -128,9 +135,12 @@ weights:
    reweight_method: flat
    reweight_vars:
       # np.round(np.exp(np.linspace(np.log(15), np.log(1000), 9))).astype('int').tolist()
-      jet_pt: [15, 25, 43, 72, 122, 207, 350, 592, 1000]
-      jet_eta: [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
-   reweight_classes: [label_allB, label_allC, label_allL]
-   class_weights: [1, 1, 1]
+      # jet_pt: [15, 25, 43, 72, 122, 207, 350, 592, 1000]
+      # np.round(np.exp(np.linspace(np.log(15), np.log(1000), 16))).astype('int').tolist()
+      jet_pt: [15, 20, 26, 35, 46, 61, 80, 106, 141, 186, 247, 326, 432, 571, 756, 1000]
+      jet_eta: [-4.7, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.7]
+   reweight_classes: [label_catB, label_catC, label_uds, label_g, label_undef, label_pu]
+   class_weights: [1, 1, 2.5, 5, 0.3, 0.2]
+   reweight_threshold: 25
    reweight_hists:
 
