@@ -29,13 +29,10 @@ def _flatten_preds(preds, mask=None, label_axis=1):
     return preds
 
 
-def train(model, loss_func, opt, scheduler, train_loader, dev, use_amp=False):
+def train(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=None):
     model.train()
 
     data_config = train_loader.dataset.config
-
-    if use_amp:
-        from apex import amp
 
     label_counter = Counter()
     total_loss = 0
@@ -58,12 +55,13 @@ def train(model, loss_func, opt, scheduler, train_loader, dev, use_amp=False):
             logits = model(*inputs)
             logits = _flatten_preds(logits, label_mask)
             loss = loss_func(logits, label)
-            if use_amp:
-                with amp.scale_loss(loss, opt) as scaled_loss:
-                    scaled_loss.backward()
-            else:
+            if grad_scaler is None:
                 loss.backward()
-            opt.step()
+                opt.step()
+            else:
+                grad_scaler.scale(loss).backward()
+                grad_scaler.step(opt)
+                grad_scaler.update()
 
             _, preds = logits.max(1)
             loss = loss.item()

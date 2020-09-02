@@ -76,10 +76,6 @@ def main():
     args = parser.parse_args()
     _logger.info(args)
 
-    if args.use_amp:
-        raise NotImplementedError
-#         from apex import amp
-
     if args.data_dilation > 1:
         _logger.warning('Use of `data-dilation` is not recommended in general -- consider using `data-fraction` instead.')
 
@@ -134,6 +130,8 @@ def main():
     network_options = {k:ast.literal_eval(v) for k, v in args.network_option}
     if args.export_onnx:
         network_options['for_inference'] = True
+    if args.use_amp:
+        network_options['use_amp'] = True
     model, model_info = network_module.get_model(data_config, **network_options)
     _logger.info(model)
 
@@ -187,17 +185,6 @@ def main():
                 lr_decay_rate = 0.01 ** (1. / lr_decay_epochs)
                 scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=list(range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate)
 
-        # TODO: mixed precision training
-        if args.use_amp:
-#             model, opt = amp.initialize(
-#                model, opt, opt_level="O2",
-#                keep_batchnorm_fp32=True, loss_scale="dynamic"
-#             )
-            model, opt = amp.initialize(
-               model, opt, opt_level="O1",
-               keep_batchnorm_fp32=None, loss_scale="dynamic"
-            )
-
         # load previous training and resume if `--load-epoch` is set
         if args.load_epoch is not None:
             _logger.info('Resume training from epoch %d' % args.load_epoch)
@@ -220,6 +207,12 @@ def main():
             lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
             return
 
+        if args.use_amp:
+            from torch.cuda.amp import GradScaler
+            scaler = GradScaler()
+        else:
+            scaler = None
+
         # training loop
         best_valid_acc = 0
         for epoch in range(args.num_epochs):
@@ -228,7 +221,7 @@ def main():
                     continue
             print('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev)
+            train(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=scaler)
             if args.model_prefix:
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
