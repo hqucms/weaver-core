@@ -40,6 +40,7 @@ class DataConfig(object):
             'inputs': {},
             'labels': {},
             'observers': [],
+            'monitor_variables': [],
             'weights': None,
         }
         for k, v in kwargs.items():
@@ -118,6 +119,10 @@ class DataConfig(object):
                         self.reweight_hists[k] = np.array(v, dtype='float32')
         # observers
         self.observer_names = tuple(opts['observers'])
+        # monitor variables
+        self.monitor_variables = tuple(opts['monitor_variables'])
+        # Z variables: returned as `Z` in the dataloader (use monitor_variables for training, observers for eval)
+        self.z_variables = self.observer_names if len(self.observer_names) > 0 else self.monitor_variables
 
         # remove self mapping from var_funcs
         for k, v in self.var_funcs.items():
@@ -135,6 +140,7 @@ class DataConfig(object):
             _logger.info('preprocess_params:\n - %s', '\n - '.join(str(it) for it in self.preprocess_params.items()))
             _logger.info('label_names: %s', str(self.label_names))
             _logger.info('observer_names: %s', str(self.observer_names))
+            _logger.info('monitor_variables: %s', str(self.monitor_variables))
 
         # parse config
         self.keep_branches = set()
@@ -162,6 +168,8 @@ class DataConfig(object):
                 aux_branches.update(self.reweight_classes)
         # observers
         self.keep_branches.update(self.observer_names)
+        # monitor variables
+        self.keep_branches.update(self.monitor_variables)
         # keep and drop
         self.drop_branches = (aux_branches - self.keep_branches)
         self.load_branches = (aux_branches | self.keep_branches) - set(self.var_funcs.keys()) - {self.weight_name, }

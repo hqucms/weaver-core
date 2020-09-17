@@ -25,8 +25,8 @@ def main():
                         help='testing files')
     parser.add_argument('--data-fraction', type=float, default=1,
                         help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
-    parser.add_argument('--data-dilation', type=int, default=1,
-                        help='reduce number of file by a factor of `d` for training. NOT recommended in general - use `--data-fraction` instead.')
+    parser.add_argument('--file-fraction', type=float, default=1,
+                        help='fraction of files to load; for training, the files are randomly selected for each epoch')
     parser.add_argument('--fetch-by-files', action='store_true', default=False,
                         help='When enabled, will load all events from a small number (set by ``--fetch-step``) of files for each data fetching. '
                         'Otherwise (default), load a small fraction of events from all files each time, which helps reduce variations in the sample composition.')
@@ -76,8 +76,8 @@ def main():
     args = parser.parse_args()
     _logger.info(args)
 
-    if args.data_dilation > 1:
-        _logger.warning('Use of `data-dilation` is not recommended in general -- consider using `data-fraction` instead.')
+    if args.file_fraction < 1:
+        _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
 
     # training/testing mode
     training_mode = not args.predict
@@ -100,11 +100,11 @@ def main():
             _logger.info(filelist)
             args.data_fraction = 0.1
             args.fetch_step = 0.002
-        num_workers = min(args.num_workers, len(filelist) // args.data_dilation)
+        num_workers = min(args.num_workers, int(len(filelist) * args.file_fraction))
         train_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
-                                       dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
+                                       file_fraction=args.file_fraction, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
         val_data = SimpleIterDataset(filelist, args.data_config, for_training=True, load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
-                                     dilation=args.data_dilation, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
+                                     file_fraction=args.file_fraction, fetch_by_files=args.fetch_by_files, fetch_step=args.fetch_step)
         train_loader = DataLoader(train_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         val_loader = DataLoader(val_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True, pin_memory=True)
         data_config = train_data.config
@@ -119,10 +119,22 @@ def main():
 
     if args.io_test:
         from tqdm.auto import tqdm
+        from collections import defaultdict
+        from utils.data.tools import _concat
         _logger.info('Start running IO test')
+        monitor_info = defaultdict(list)
         data_loader = train_loader if training_mode else test_loader
         for X, y, Z in tqdm(data_loader):
             inputs = [X[k] for k in data_config.input_names]
+            for k, v in Z.items():
+                monitor_info[k].append(v.cpu().numpy())
+        monitor_info = {k: _concat(v) for k, v in monitor_info.items()}
+        if monitor_info:
+            monitor_output_path = 'weaver_monitor_info.pkl'
+            import pickle
+            with open(monitor_output_path, 'wb') as f:
+                pickle.dump(monitor_info, f)
+            _logger.info('Monitor info written to %s' % monitor_output_path)
         return
 
     # model
