@@ -2,14 +2,15 @@ selection:
    ### use `&`, `|`, `~` for logical operations on numpy arrays
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    >-
-   (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
+   (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
    & ( (jet_hadronFlavour>0) | ((jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)!=4) & (np.abs(jet_partonFlavour)!=5)) )
-   & ( ~((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)) | ((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0) & (jet_pt<200)) )
-   & ( (jet_genjet_pt>0) | ((jet_genjet_pt<=0) & (jet_pt<60)) )
+   & ( ~((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)) | ((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0) & (jet_pt<186)) )
+   & ( (jet_genjet_pt>0) | ((jet_genjet_pt<=0) & (jet_pt<61)) )
 
 test_time_selection:
-   # (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7==0)
-   (jet_tightId==1) & (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000)
+   # (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7==0)
+   # (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000)
+   (np.abs(jet_eta)<4.7) & (jet_corr_pt>10) & (jet_corr_pt<1000)
 
 new_variables:
    ### [format] name: formula
@@ -111,14 +112,19 @@ labels:
 observers:
    - event_no
    - jet_no
+   - jet_corr_pt
    - jet_pt
    - jet_eta
    - jet_phi
    - jet_hadronFlavour
    - jet_partonFlavour
+   - jet_nBHadrons
+   - jet_nCHadrons
    - jet_genjet_pt
-   - jet_genjet_eta
-   - jet_genjet_phi
+   - jet_matched_genjet_pt
+   - jet_matched_genjet_eta
+   - jet_matched_genjet_phi
+   - jet_matched_genjet_deltaR
    - npfcands
    - pfDeepFlavourJetTags_probb
    - pfDeepFlavourJetTags_probbb
@@ -127,6 +133,16 @@ observers:
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
    - jet_qgl
+   - jet_puId
+
+monitor_variables:
+   # - jet_pt
+   # - jet_eta
+   # - jet_hadronFlavour
+   # - jet_partonFlavour
+   # - jet_nBHadrons
+   # - jet_nCHadrons
+   # - jet_genjet_pt
 
 weights:
    ### [option 1] use precomputed weights stored in the input files
@@ -143,6 +159,6 @@ weights:
       jet_eta: [-4.7, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.7]
    reweight_classes: [label_catB, label_catC, label_uds, label_g, label_undef, label_pu]
    class_weights: [1, 1, 2.5, 5, 0.15, 1]
-   reweight_threshold: 25
+   reweight_threshold: 15
    reweight_hists:
 
