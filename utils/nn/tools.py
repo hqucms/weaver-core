@@ -1,6 +1,7 @@
 import numpy as np
 import awkward
 import tqdm
+import time
 import torch
 
 from collections import defaultdict, Counter
@@ -39,6 +40,7 @@ def train(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=None)
     num_batches = 0
     total_correct = 0
     count = 0
+    start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
             inputs = [X[k].to(dev) for k in data_config.input_names]
@@ -78,6 +80,8 @@ def train(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=None)
                 'Acc': '%.5f' % (correct / num_examples),
                 'AvgAcc': '%.5f' % (total_correct / count)})
 
+    time_diff = time.time() - start_time
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     scheduler.step()
 
