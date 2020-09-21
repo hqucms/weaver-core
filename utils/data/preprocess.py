@@ -168,7 +168,8 @@ class WeightMaker(object):
         if self._data_config.reweight_method == 'flat':
             for label, classwgt in zip(self._data_config.reweight_classes, self._data_config.class_weights):
                 hist = result[label]
-                nonzero_vals = hist[hist > 0]
+                threshold_ = np.median(hist[hist > 0]) * 0.01
+                nonzero_vals = hist[hist > threshold_]
                 min_val, med_val = np.min(nonzero_vals), np.median(hist)  # not really used
                 ref_val = np.percentile(nonzero_vals, self._data_config.reweight_threshold)
                 _logger.debug('label:%s, median=%f, min=%f, ref=%f, ref/min=%f' %
