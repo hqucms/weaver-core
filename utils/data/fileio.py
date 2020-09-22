@@ -9,7 +9,7 @@ def _read_hdf5(filepath, branches, load_range=None):
     import tables
     tables.set_blosc_max_threads(4)
     with tables.open_file(filepath) as f:
-        outputs = {k:getattr(f.root, k) for k in branches}
+        outputs = {k:getattr(f.root, k)[:] for k in branches}
     if load_range is not None:
         start = math.trunc(load_range[0] * len(outputs[branches[0]]))
         stop = max(start + 1, math.trunc(load_range[1] * len(outputs[branches[0]])))
@@ -61,11 +61,11 @@ def _read_files(filelist, branches, load_range=None, show_progressbar=False, **k
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
         try:
             if ext == '.h5':
-                a = _read_hdf5(filepath, branches, load_range=load_range)
+                a = _read_hdf5(filepath, list(branches), load_range=load_range)
             elif ext == '.root':
                 a = _read_root(filepath, branches, load_range=load_range, treename=kwargs.get('treename', None))
             elif ext == '.awkd':
-                a = _read_awkd(filepath, branches, load_range=load_range)
+                a = _read_awkd(filepath, list(branches), load_range=load_range)
         except Exception as e:
             a = None
             _logger.error('When reading file %s:', filepath)

@@ -100,7 +100,7 @@ class DataConfig(object):
         # weights: TODO
         self.weight_name = None
         if opts['weights'] is not None:
-            self.weight_name = 'weight'
+            self.weight_name = 'weight_'
             self.use_precomputed_weights = opts['weights']['use_precomputed_weights']
             if self.use_precomputed_weights:
                 self.var_funcs[self.weight_name] = '*'.join(opts['weights']['weight_branches'])
