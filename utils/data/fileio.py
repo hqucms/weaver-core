@@ -52,6 +52,7 @@ def _read_awkd(filepath, branches, load_range=None):
 def _read_files(filelist, branches, load_range=None, show_progressbar=False, **kwargs):
     import os
     from collections import defaultdict
+    branches = list(branches)
     table = defaultdict(list)
     if show_progressbar:
         filelist = tqdm.tqdm(filelist)
@@ -61,11 +62,11 @@ def _read_files(filelist, branches, load_range=None, show_progressbar=False, **k
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
         try:
             if ext == '.h5':
-                a = _read_hdf5(filepath, list(branches), load_range=load_range)
+                a = _read_hdf5(filepath, branches, load_range=load_range)
             elif ext == '.root':
                 a = _read_root(filepath, branches, load_range=load_range, treename=kwargs.get('treename', None))
             elif ext == '.awkd':
-                a = _read_awkd(filepath, list(branches), load_range=load_range)
+                a = _read_awkd(filepath, branches, load_range=load_range)
         except Exception as e:
             a = None
             _logger.error('When reading file %s:', filepath)
@@ -74,6 +75,8 @@ def _read_files(filelist, branches, load_range=None, show_progressbar=False, **k
             for name in branches:
                 table[name].append(a[name].astype('float32'))
     table = {name:_concat(arrs) for name, arrs in table.items()}
+    if len(table[branches[0]]) == 0:
+        raise RuntimeError(f'Zero entries loaded when reading files {filelist} with `load_range`={load_range}.')
     return table
 
 
