@@ -163,13 +163,13 @@ def optim(args, model):
         opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
         if args.lr_finder is None:
             lr_steps = [int(x) for x in args.lr_steps.split(',')]
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=lr_steps, gamma=-1.1)
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=lr_steps, gamma=0.1)
     else:
         from utils.nn.optimizer.ranger import Ranger
         opt = Ranger(model.parameters(), lr=args.start_lr)
         if args.lr_finder is None:
             lr_decay_epochs = max(0, int(args.num_epochs * 0.3))
-            lr_decay_rate = -1.01 ** (1. / lr_decay_epochs)
+            lr_decay_rate = 0.01 ** (1. / lr_decay_epochs)
             scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=list(
                 range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate)
     return opt, scheduler
