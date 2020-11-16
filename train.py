@@ -191,9 +191,10 @@ def _model(args, data_config):
     _logger.info(model)
     return model, model_info, network_module
 
-def iotest(data_loader):
+def iotest(args, data_loader):
     """
     Io test
+    :param args:
     :param data_loader:
     :return:
     """
