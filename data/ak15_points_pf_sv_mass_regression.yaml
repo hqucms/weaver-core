@@ -3,6 +3,9 @@ selection:
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    (jet_tightId==1) & (jet_no<2) & (fj_pt>170) & (fj_pt<1200) & (fj_genjet_sdmass<260) & (((sample_isQCD==0) & (fj_isQCD==0)) | ((sample_isQCD==1) & (fj_isQCD==1) & (event_no%3==0)))
 
+test_time_selection:
+   (event_no%5==0) & (jet_tightId==1) & (jet_no<2) & (fj_pt>200) & (fj_pt<500) & (((fj_isH==1) & (fj_gen_mass==120)) | ((fj_isQCD==1) & (event_no%4==0)) | (fj_isTop==1))
+
 new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
@@ -37,6 +40,11 @@ inputs:
          - pfcand_phirel
          - [pfcand_abseta, 0.7, 1.4]
          - pfcand_charge
+         - pfcand_isEl
+         - pfcand_isMu
+         - pfcand_isGamma
+         - pfcand_isChargedHad
+         - pfcand_isNeutralHad
          - [pfcand_VTX_ass, 4, 0.3]
          - pfcand_lostInnerHits
          - [pfcand_normchi2, 5, 0.2]
@@ -90,7 +98,7 @@ labels:
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    type: custom
    value: 
-      target_mass: np.maximum(0.1, np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass))
+      target_mass: np.maximum(1, np.where(fj_isH, fj_gen_mass, fj_genjet_sdmass))
 
 observers:
    - event_no
@@ -101,8 +109,9 @@ observers:
    - npfcands
    - fj_genjet_sdmass
    - fj_gen_mass
-   - fj_target_mass
    - fj_isQCD
+   - fj_isTop
+   - fj_isW
    - label_H_bb
    - label_H_cc
    - label_H_qq
