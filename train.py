@@ -123,6 +123,7 @@ def test_load(args):
     data_config = test_data.config
     return test_loader, data_config
 
+
 def onnx(args, model, data_config, model_info):
     """
     Saving model as ONNX.
@@ -152,7 +153,8 @@ def onnx(args, model, data_config, model_info):
     preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), 'preprocess.json')
     data_config.export_json(preprocessing_json)
     _logger.info('Preprocessing parameters saved to %s', preprocessing_json)
-   
+
+
 def optim(args, model):
     """
     Optimizer and scheduler. Could try CosineAnnealing
@@ -169,18 +171,19 @@ def optim(args, model):
         from utils.nn.optimizer.ranger import Ranger
         opt = Ranger(model.parameters(), lr=args.start_lr)
         if args.lr_finder is None:
-            lr_decay_epochs = max(0, int(args.num_epochs * 0.3))
+            lr_decay_epochs = max(1, int(args.num_epochs * 0.3))
             lr_decay_rate = 0.01 ** (1. / lr_decay_epochs)
             scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=list(
                 range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate)
     return opt, scheduler
 
-def _model(args, data_config):
+
+def model_setup(args, data_config):
     """
     Loads the model
     :param args:
     :param data_config:
-    :return: model, model_info, network_module
+    :return: model, model_info, network_module, network_options
     """
     network_module = import_module(args.network_config.replace('.py', '').replace('/', '.'))
     network_options = {k: ast.literal_eval(v) for k, v in args.network_option}
@@ -190,7 +193,8 @@ def _model(args, data_config):
         network_options['use_amp'] = True
     model, model_info = network_module.get_model(data_config, **network_options)
     _logger.info(model)
-    return model, model_info, network_module
+    return model, model_info, network_module, network_options
+
 
 def iotest(args, data_loader):
     """
@@ -215,41 +219,7 @@ def iotest(args, data_loader):
         with open(monitor_output_path, 'wb') as f:
             pickle.dump(monitor_info, f)
         _logger.info('Monitor info written to %s' % monitor_output_path)
-        
-def predict_model(args, test_loader, model, dev, data_config, gpus):
-    """
-    Evaluates the model
-    :param args:
-    :param test_loader:
-    :param model:
-    :param dev:
-    :param data_config:
-    :param gpus:
-    :return:
-    """
-    if args.model_prefix.endswith('.onnx'):
-        _logger.info('Loading model %s for eval' % args.model_prefix)
-        from utils.nn.tools import evaluate_onnx
-        test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
-    else:
-        model_path = args.model_prefix if args.model_prefix.endswith(
-            '.pt') else args.model_prefix + '_best_epoch_state.pt'
-        _logger.info('Loading model %s for eval' % model_path)
-        model.load_state_dict(torch.load(model_path, map_location=dev))
-        if gpus is not None and len(gpus) > 1:
-            model = torch.nn.DataParallel(model, device_ids=gpus)
-        model = model.to(dev)
-        test_metric, scores, labels, observers = evaluate(model, test_loader, dev, for_training=False)
-    _logger.info('Test metric %.5f' % test_metric)
 
-    if args.predict_output:
-        os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
-        #Saves as .root, else as .awkd
-        if args.predict_output.endswith('.root'):
-            save_root(data_config, scores, labels, observers)
-        else:
-            save_awk(scores, labels, observers)
-        _logger.info('Written output to %s' % args.predict_output)
 
 def save_root(data_config, scores, labels, observers):
     """
@@ -282,6 +252,7 @@ def save_root(data_config, scores, labels, observers):
             continue
         output[k] = v
     _write_root(args.predict_output, output)
+
 
 def save_awk(scores, labels, observers):
     """
@@ -348,7 +319,7 @@ def main(args):
         iotest(args, data_loader)
         return
 
-    model, model_info, network_module = _model(args, data_config)
+    model, model_info, network_module, network_options = model_setup(args, data_config)
 
     # export to ONNX
     if args.export_onnx:
@@ -382,8 +353,8 @@ def main(args):
 
         # multi-gpu
         if gpus is not None and len(gpus) > 1:
-            model = torch.nn.DataParallel(model,
-                                          device_ids=gpus)  # model becomes `torch.nn.DataParallel` w/ model.module being the orignal `torch.nn.Module`
+            # model becomes `torch.nn.DataParallel` w/ model.module being the original `torch.nn.Module`
+            model = torch.nn.DataParallel(model, device_ids=gpus)
         model = model.to(dev)
 
         # lr finder: keep it after all other setups
@@ -415,8 +386,7 @@ def main(args):
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
-                state_dict = model.module.state_dict() if isinstance(model,
-                                                                     torch.nn.DataParallel) else model.state_dict()
+                state_dict = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
                 torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
                 torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
 
@@ -431,7 +401,27 @@ def main(args):
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' % (epoch, valid_metric, best_valid_metric))
     else:
         # run prediction
-        predict_model(args, test_loader, model, dev, data_config, gpus)
+        if args.model_prefix.endswith('.onnx'):
+            _logger.info('Loading model %s for eval' % args.model_prefix)
+            from utils.nn.tools import evaluate_onnx
+            test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
+        else:
+            model_path = args.model_prefix if args.model_prefix.endswith('.pt') else args.model_prefix + '_best_epoch_state.pt'
+            _logger.info('Loading model %s for eval' % model_path)
+            model.load_state_dict(torch.load(model_path, map_location=dev))
+            if gpus is not None and len(gpus) > 1:
+                model = torch.nn.DataParallel(model, device_ids=gpus)
+            model = model.to(dev)
+            test_metric, scores, labels, observers = evaluate(model, test_loader, dev, for_training=False)
+        _logger.info('Test metric %.5f' % test_metric)
+
+        if args.predict_output:
+            os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
+            if args.predict_output.endswith('.root'):
+                save_root(data_config, scores, labels, observers)
+            else:
+                save_awk(scores, labels, observers)
+            _logger.info('Written output to %s' % args.predict_output)
 
 
 if __name__ == '__main__':
