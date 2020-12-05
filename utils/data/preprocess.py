@@ -17,6 +17,7 @@ def _apply_selection(table, selection):
     selected = _eval_expr(selection, table).astype('bool')
     for k in table.keys():
         table[k] = table[k][selected]
+    return selected.sum()
 
 
 def _build_new_variables(table, funcs):
