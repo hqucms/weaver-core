@@ -75,7 +75,9 @@ def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale
 
 def _preprocess(table, data_config, options):
     # apply selection
-    _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
+    entries = _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
+    if entries == 0:
+        return []
     # define new variables
     _build_new_variables(table, data_config.var_funcs)
     # build weights
@@ -168,19 +170,23 @@ class _SimpleIter(object):
         try:
             i = self.indices[self.cursor]
         except IndexError:
-            if self.prefetch is None:
-                # reaching the end as prefetch got nothing
-                self.table = None
+            while True:
+                if self.prefetch is None:
+                    # reaching the end as prefetch got nothing
+                    self.table = None
+                    if self._async_load:
+                        self.executor.shutdown(wait=False)
+                    raise StopIteration
+                # get result from prefetch
                 if self._async_load:
-                    self.executor.shutdown(wait=False)
-                raise StopIteration
-            # get result from prefetch
-            if self._async_load:
-                self.table, self.indices = self.prefetch.result()
-            else:
-                self.table, self.indices = self.prefetch
-            # try to load the next ones asynchronously
-            self._try_get_next()
+                    self.table, self.indices = self.prefetch.result()
+                else:
+                    self.table, self.indices = self.prefetch
+                # try to load the next ones asynchronously
+                self._try_get_next()
+                # check if any entries are fetched (i.e., passing selection) -- if not, do another fetch
+                if len(self.indices) > 0:
+                    break
             # reset cursor
             self.cursor = 0
             i = self.indices[self.cursor]
