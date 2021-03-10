@@ -1,12 +1,11 @@
 import numpy as np
-import awkward
 import tqdm
 import time
 import torch
 
 from collections import defaultdict, Counter
 from .metrics import evaluate_metrics
-from ..data.tools import _concat
+from ..data.tools import awkward, _concat
 from ..logger import _logger
 
 

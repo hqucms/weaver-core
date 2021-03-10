@@ -1,6 +1,12 @@
 import numpy as np
-import awkward
 import math
+
+try:
+    import awkward0 as awkward
+except ImportError:
+    import awkward
+    if awkward.__version__[0] == '1':
+        raise ImportError('Please install awkward0 with `pip install awkward0`.')
 
 
 def _concat(arrays, axis=0):

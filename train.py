@@ -60,7 +60,7 @@ parser.add_argument('--use-amp', action='store_true', default=False,
                     help='use mixed precision training (fp16); NOT WORKING YET')
 parser.add_argument('--gpus', type=str, default='0',
                     help='device for the training/testing; to use CPU, set to empty string (''); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
-parser.add_argument('--num-workers', type=int, default=2,
+parser.add_argument('--num-workers', type=int, default=1,
                     help='number of threads to load the dataset; memory consumption and disk access load increases (~linearly) with this numbers')
 parser.add_argument('--predict', action='store_true', default=False,
                     help='run prediction instead of training')
@@ -162,6 +162,7 @@ def optim(args, model):
     :param model:
     :return:
     """
+    scheduler = None
     if args.optimizer == 'adam':
         opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
         if args.lr_finder is None:
@@ -262,7 +263,7 @@ def save_awk(scores, labels, observers):
     :param observers:
     :return:
     """
-    import awkward
+    from utils.data.tools import awkward
     output = {'scores': scores}
     output.update(labels)
     output.update(observers)
