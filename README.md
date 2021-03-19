@@ -6,7 +6,7 @@
 - providing a simple way to perform input processing *on-the-fly* (e.g., sample selections, new variable definition, inputs transformation/standardization, sample reweighting, etc.)
 - bridging the gap between development and production: neural networks are trained with [PyTorch](https://pytorch.org/) and exported to the [ONNX](http://onnx.ai/) format for fast inference (e.g., using [ONNXRuntime](https://github.com/microsoft/onnxruntime))
 
-> Compared to its predecessor [NNTools](https://github.com/hqucms/NNTools/), `Weaver` simplifies the data processing pipeline by running all the pre-processing on-the-fly, without the necessity of creating intermediate transformed dataset (though it still supports that). The neural network training now uses the more widely adopted `PyTorch` instead of `Apache MXNet`.
+> Compared to its predecessor [NNTools](https://github.com/hqucms/NNTools/), `Weaver` simplifies the data processing pipeline by running all the pre-processing on-the-fly, without the necessity of creating an intermediate transformed dataset (though it still supports that). The neural network training now uses the more widely adopted `PyTorch` instead of `Apache MXNet`.
 
 <!-- TOC -->
 
@@ -22,10 +22,11 @@
         - [Prediction/Inference](#predictioninference)
         - [Model exportation](#model-exportation)
     - [More about data loading and processing](#more-about-data-loading-and-processing)
+        - [Training mode](#training-mode)
+        - [Prediction/Inference mode](#predictioninference-mode)
     - [Performance consideration](#performance-consideration)
 
 <!-- /TOC -->
-
 ## Set up your environment
 
 The `Weaver` package requires Python 3.7+ and a number of packages like `numpy`, `scikit-learn`, `PyTorch`, etc.
@@ -92,7 +93,8 @@ To train a neural network using `Weaver`, you need to prepare:
 ### Data configuration file
 
 The data configuration file is a [YAML](https://yaml.org/) format file describing how to process the input data. It needs the following sections:
-  - `selection` (optional): event selection
+  - `selection` (optional): event selection for training
+  - `test_time_selection` (optional): event selection for testing; if not specified, use the same as `selection`
   - `new_variables` (optional): new variable definition
   - `inputs` (required): input groups, variables for each group, variable transformation (mean/scale/min/max for standardization, length/pad values for padding/clipping, etc.)
   - `labels` (required): label definition
@@ -139,7 +141,7 @@ python train.py --data-train '/path/to/train_files/*/*/*/*/output_*.root' \
  --data-config data/ak15_points_pf_sv.yaml \
  --network-config networks/particle_net_pf_sv.py \
  --model-prefix /path/to/models/prefix \
- --num-workers 3 --gpus 0,1,2,3 --batch-size 512 --start-lr 5e-3 --num-epochs 20 --optimizer ranger \
+ --gpus 0,1,2,3 --batch-size 512 --start-lr 5e-3 --num-epochs 20 --optimizer ranger \
  | tee logs/train.log
 ```
 
@@ -156,10 +158,10 @@ Once you have a trained model, you can load it to run prediction and test its pe
 
 ```bash
 python train.py --predict --data-test '/path/to/test_files/*/*/*/*/output_*.root' \
- --data-config data/ak15_points_pf_sv_forTesting.yaml \ 
+ --data-config data/ak15_points_pf_sv.yaml \
  --network-config networks/particle_net_pf_sv.py \
- --model-prefix /path/to/models/prefix_epoch-19_state.pt \
- --num-workers 3 --gpus 0,1,2,3 --batch-size 512 \
+ --model-prefix /path/to/models/prefix_best_epoch_state.pt \
+ --gpus 0,1,2,3 --batch-size 512 \
  --predict-output /path/to/output.root
 ```
 
@@ -175,14 +177,33 @@ Note:
 When you are satisfied with the trained model, you could export it from PyTorch to ONNX format for inference (e.g., using [ONNXRuntime](https://github.com/microsoft/onnxruntime)):
 
 ```bash
-python train.py -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path/to/models/prefix_epoch-19_state.pt --export-onnx model.onnx  
+python train.py -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path/to/models/prefix_best_epoch_state.pt --export-onnx model.onnx
 ```
 
 ## More about data loading and processing
 
-To come...
+To cope with large datasets, the data loader in `Weaver` does not read all input files into memory, but rather load the input events incrementally. The implementation follows the `PyTorch` [iterable-style datasets](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) interface. To speed up the data loading process, [multi-process data loading](https://pytorch.org/docs/stable/data.html#multi-process-data-loading) is also implemented. 
+ 
+The [data loader](utils/dataset.py) in `Weaver` operates in different ways for training and prediction/inference.
 
-Check also [utils/dataset.py](utils/dataset.py).
+### Training mode
+
+For training, properly mixing events of different types (e.g., signal/background processes, different kinematic phase space, etc.) and random shuffling are often helpful for improving the performance and stability of the training.
+
+To achieve this efficiently, `Weaver` divides all input files randomly into `N` groups and will load them concurrently with `N` worker threads (`N` is set by `--num-workers`). Then, two data loading strategies are available at the worker thread level:
+
+- [**Default**] The "event-based" strategy attempts to read all the input files (assigned to this worker thread) at each step in order to "maximally" mix events. To meet the memory constraint, for every step, only a small chunk of events is loaded from each input file, and then randomly shuffled before being fed to the training pipeline. The chunk size is set by `--fetch-step` (default is 0.01), corresponding to the fraction (i.e., 10% by default) of events to be loaded from each file in every step. This is the default strategy as, for typical HEP datasets, each individual input file originates from a specific physics process, thus contains events of only a particular type / limited phase space. Note that while this approach ensures a good mixing of events, it requires a high reading throughput of the data storage (thus a fast SSD is preferred), otherwise data loading can become a bottleneck in the training speed.
+  - Note: consider setting a smaller `--fetch-step` if the memory limit is exceeded.
+
+- An alternative approach is the "file-based" strategy, which can be enabled with `--fetch-by-files`. This approach will instead read all events from every file for each step, and it will read `m` input files (`m` is set by `--fetch-step`) before mixing and shuffling the loaded events. This strategy is more suitable when each input file is already a mixture of all types of events (e.g., pre-processed with [NNTools](https://github.com/hqucms/NNTools/)), otherwise it may lead to suboptimal training performance. However, a higher data loading speed can generally be achieved with this approach.
+
+**[Note]** If the dataset is stored on EOS and the size is not very large, it may be more efficient to transfer the files to the local storage of the worker node when submitting batch jobs.
+
+### Prediction/Inference mode
+
+Contrary to training, for prediction/inference, the events are not mixed/shuffled. Instead, the order of the events are preserved, exactly as in the input files. Therefore, only the "file-based" strategy described above is supported, and the `--fetch-step` is fixed to 1.
+
+For more details of the data loader, please check [utils/dataset.py](utils/dataset.py).
 
 
 ## Performance consideration
@@ -190,19 +211,13 @@ Check also [utils/dataset.py](utils/dataset.py).
 Loading data from disk can often become a bottleneck. Here are a few tips to get better data loading performance:
 
  - When using ROOT files as inputs, prepare the files w/ `LZ4` compression:
-
 ```C++
 f.SetCompressionAlgorithm(ROOT::kLZ4); 
 f.SetCompressionLevel(4);
 ```
-
-and use larger buffer sizes for the TTree branches:
-```C++
-tree->Branch("x", &var, "x/F", /*bufsize=32000*/1024000);
-```
- (e.g., here the buffer size is set to `1024000` instead of the default `32000`).
- - Copy files to faster disk (e.g., SSD) if possible.
- - Enable multiprocessing for data loading. Setting `--num-workers` to 2 or 3 generally gives a good performance. Setting this value too high could overload the disk and degrade the performance. 
+ - Copy files to a faster disk (e.g., SSD) if possible.
+ - Enable multiprocessing for data loading. Setting `--num-workers` to 2 or 3 generally gives a good performance. Setting this value too high could overload the disk and degrade the performance.
    - Note that the memory usage also increases with the number of workers. So if you are getting any memory-related errors, try reducing `--num-workers`.
-   - Note that the workload splitting is file-based, so make sure the number of input files is not too small (i.e., make sure each worker is able to load several files to get samples **from all classes**).
+   - Note that the workload splitting is file-based, so make sure the number of input files is not too small (i.e., make sure each worker is able to load several files to get samples *from all classes*). 
+      - **e.g., if each (signal/background) class is present in only one input file, please use `--num-workers 1` so that they are properly mixed for the training.**
 
