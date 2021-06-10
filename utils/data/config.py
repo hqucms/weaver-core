@@ -141,6 +141,12 @@ class DataConfig(object):
             _logger.info('label_names: %s', str(self.label_names))
             _logger.info('observer_names: %s', str(self.observer_names))
             _logger.info('monitor_variables: %s', str(self.monitor_variables))
+            if opts['weights'] is not None:
+                if self.use_precomputed_weights:
+                    _logger.info('weight: %s' % self.var_funcs[self.weight_name])
+                else:
+                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes', 'class_weights', 'reweight_threshold']:
+                        _logger.info('%s: %s' % (k, getattr(self, k)))
 
         # parse config
         self.keep_branches = set()
