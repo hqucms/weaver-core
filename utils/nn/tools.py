@@ -81,6 +81,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, gr
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     scheduler.step()
 
@@ -99,6 +100,7 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
     labels = defaultdict(list)
     labels_counts = []
     observers = defaultdict(list)
+    start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
@@ -139,6 +141,8 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
                     'Acc': '%.5f' % (correct / num_examples),
                     'AvgAcc': '%.5f' % (total_correct / count)})
 
+    time_diff = time.time() - start_time
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     scores = np.concatenate(scores)
@@ -177,6 +181,7 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
     scores = []
     labels = defaultdict(list)
     observers = defaultdict(list)
+    start_time = time.time()
     with tqdm.tqdm(test_loader) as tq:
         for X, y, Z in tq:
             inputs = {k:v.cpu().numpy() for k, v in X.items()}
@@ -200,7 +205,10 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
                 'Acc': '%.5f' % (correct / num_examples),
                 'AvgAcc': '%.5f' % (total_correct / count)})
 
+    time_diff = time.time() - start_time
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
+
     scores = np.concatenate(scores)
     labels = {k:_concat(v) for k, v in labels.items()}
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
@@ -259,7 +267,7 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, grad_s
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
-    _logger.info('AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
+    _logger.info('Train AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
                  (total_loss / num_batches, sum_sqr_err / count, sum_abs_err / count))
     scheduler.step()
 
@@ -276,6 +284,7 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
     scores = []
     labels = defaultdict(list)
     observers = defaultdict(list)
+    start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
@@ -310,6 +319,9 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
                     'MAE': '%.5f' % (abs_err / num_examples),
                     'AvgMAE': '%.5f' % (sum_abs_err / count),
                 })
+
+    time_diff = time.time() - start_time
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
