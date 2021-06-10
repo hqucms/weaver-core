@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader
 from importlib import import_module
 import ast
-from utils.logger import _logger
+from utils.logger import _logger, _configLogger
 from utils.dataset import SimpleIterDataset
 
 parser = argparse.ArgumentParser()
@@ -40,13 +40,18 @@ parser.add_argument('--lr-finder', type=str, default=None,
                     help='run learning rate finder instead of the actual training; format: ``start_lr, end_lr, num_iters``')
 parser.add_argument('-n', '--network-config', type=str, default='networks/particle_net_pfcand_sv.py',
                     help='network architecture configuration file; the path must be relative to the current dir')
-parser.add_argument('--network-option', nargs=2, action='append', default=[],
+parser.add_argument('-o', '--network-option', nargs=2, action='append', default=[],
                     help='options to pass to the model class constructor, e.g., `--network-option use_counts False`')
-parser.add_argument('-m', '--model-prefix', type=str, default='test_output/model_name',
-                    help='path to save or load the model; for training, this will be used as a prefix; for testing, this should be the full path including extension')
+parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/network',
+                    help='path to save or load the model; for training, this will be used as a prefix, so model snapshots '
+                         'will saved to `{model_prefix}_epoch-%d_state.pt` after each epoch, and the one with the best '
+                         'validation metric to `{model_prefix}_best_epoch_state.pt`; for testing, this should be the full path '
+                         'including the suffix, otherwise the one with the best validation metric will be used; '
+                         'for training, `{auto}` can be used as part of the path to auto-generate a name, '
+                         'based on the timestamp and network configuration')
 parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
-parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'ranger'],  # TODO: add more
+parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'ranger'],  # TODO: add more
                     help='optimizer for the training')
 parser.add_argument('--load-epoch', type=int, default=None,
                     help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%d_state.pt` and `epoch-%d_optimizer.pt` files')
@@ -59,7 +64,7 @@ parser.add_argument('--batch-size', type=int, default=128,
 parser.add_argument('--use-amp', action='store_true', default=False,
                     help='use mixed precision training (fp16); NOT WORKING YET')
 parser.add_argument('--gpus', type=str, default='0',
-                    help='device for the training/testing; to use CPU, set to empty string (''); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
+                    help='device for the training/testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
 parser.add_argument('--num-workers', type=int, default=1,
                     help='number of threads to load the dataset; memory consumption and disk access load increases (~linearly) with this numbers')
 parser.add_argument('--predict', action='store_true', default=False,
@@ -71,6 +76,12 @@ parser.add_argument('--export-onnx', type=str, default=None,
                          'needs to set `--data-config`, `--network-config`, and `--model-prefix` (requires the full model path)')
 parser.add_argument('--io-test', action='store_true', default=False,
                     help='test throughput of the dataloader')
+parser.add_argument('--copy-inputs', action='store_true', default=False,
+                    help='copy input files to the current dir (can help to speed up dataloading when running over remote files, e.g., from EOS)')
+parser.add_argument('--log', type=str, default='',
+                    help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
+parser.add_argument('--print', action='store_true', default=False,
+                    help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
 
 
 def train_load(args):
@@ -80,6 +91,21 @@ def train_load(args):
     :return: train_loader, val_loader, data_config, train_inputs
     """
     filelist = sorted(sum([glob.glob(f) for f in args.data_train], []))
+    if args.copy_inputs:
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        if os.path.exists(tmpdir):
+            shutil.rmtree(tmpdir)
+        new_filelist = []
+        for src in filelist:
+            dest = os.path.join(tmpdir, src.lstrip('/'))
+            if not os.path.exists(os.path.dirname(dest)):
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy2(src, dest)
+            _logger.info('Copied file %s to %s' % (src, dest))
+            new_filelist.append(dest)
+        filelist = new_filelist
+
     # np.random.seed(1)
     np.random.shuffle(filelist)
     if args.demo:
@@ -155,6 +181,28 @@ def onnx(args, model, data_config, model_info):
     _logger.info('Preprocessing parameters saved to %s', preprocessing_json)
 
 
+def flops(model, model_info):
+    """
+    Count FLOPs and params.
+    :param args:
+    :param model:
+    :param model_info:
+    :return:
+    """
+    from utils.flops_counter import get_model_complexity_info
+    import copy
+
+    model = copy.deepcopy(model).cpu()
+    model.eval()
+
+    inputs = tuple(
+        torch.ones(model_info['input_shapes'][k], dtype=torch.float32) for k in model_info['input_names'])
+
+    macs, params = get_model_complexity_info(model, inputs, as_strings=True, print_per_layer_stat=True, verbose=True)
+    _logger.info('{:<30}  {:<8}'.format('Computational complexity: ', macs))
+    _logger.info('{:<30}  {:<8}'.format('Number of parameters: ', params))
+
+
 def optim(args, model):
     """
     Optimizer and scheduler. Could try CosineAnnealing
@@ -163,12 +211,7 @@ def optim(args, model):
     :return:
     """
     scheduler = None
-    if args.optimizer == 'adam':
-        opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
-        if args.lr_finder is None:
-            lr_steps = [int(x) for x in args.lr_steps.split(',')]
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=lr_steps, gamma=0.1)
-    else:
+    if args.optimizer == 'ranger':
         from utils.nn.optimizer.ranger import Ranger
         opt = Ranger(model.parameters(), lr=args.start_lr)
         if args.lr_finder is None:
@@ -176,6 +219,14 @@ def optim(args, model):
             lr_decay_rate = 0.01 ** (1. / lr_decay_epochs)
             scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=list(
                 range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate)
+    else:
+        if args.optimizer == 'adam':
+            opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
+        elif args.optimizer == 'adamW':
+            opt = torch.optim.AdamW(model.parameters(), lr=args.start_lr)
+        if args.lr_finder is None:
+            lr_steps = [int(x) for x in args.lr_steps.split(',')]
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=lr_steps, gamma=0.1)
     return opt, scheduler
 
 
@@ -188,12 +239,14 @@ def model_setup(args, data_config):
     """
     network_module = import_module(args.network_config.replace('.py', '').replace('/', '.'))
     network_options = {k: ast.literal_eval(v) for k, v in args.network_option}
+    _logger.info('Network options: %s' % str(network_options))
     if args.export_onnx:
         network_options['for_inference'] = True
     if args.use_amp:
         network_options['use_amp'] = True
     model, model_info = network_module.get_model(data_config, **network_options)
-    _logger.info(model)
+    # _logger.info(model)
+    flops(model, model_info)
     return model, model_info, network_module, network_options
 
 
@@ -322,6 +375,9 @@ def main(args):
 
     model, model_info, network_module, network_options = model_setup(args, data_config)
 
+    if args.print:
+        return
+
     # export to ONNX
     if args.export_onnx:
         onnx(args, model, data_config, model_info)
@@ -329,9 +385,10 @@ def main(args):
 
     # note: we should always save/load the state_dict of the original model, not the one wrapped by nn.DataParallel
     # so we do not convert it to nn.DataParallel now
-    model = model.to(dev)
+    orig_model = model
 
     if training_mode:
+        model = orig_model.to(dev)
         # loss function
         try:
             loss_func = network_module.get_loss(data_config, **network_options)
@@ -393,21 +450,32 @@ def main(args):
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, loss_func=loss_func)
-            is_best_epoch = (valid_metric < best_valid_metric) if args.regression_mode else (valid_metric > best_valid_metric)
+            is_best_epoch = (
+                valid_metric < best_valid_metric) if args.regression_mode else(
+                valid_metric > best_valid_metric)
             if is_best_epoch:
                 best_valid_metric = valid_metric
                 if args.model_prefix:
-                    shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' % epoch, args.model_prefix + '_best_epoch_state.pt')
+                    shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
+                                 epoch, args.model_prefix + '_best_epoch_state.pt')
                     torch.save(model, args.model_prefix + '_best_epoch_full.pt')
-            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' % (epoch, valid_metric, best_valid_metric))
-    else:
+            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
+                         (epoch, valid_metric, best_valid_metric))
+
+    if args.data_test:
+        model = orig_model.to(dev)
+
+        if training_mode:
+            del train_loader, val_loader
+            test_loader, data_config = test_load(args)
         # run prediction
         if args.model_prefix.endswith('.onnx'):
             _logger.info('Loading model %s for eval' % args.model_prefix)
             from utils.nn.tools import evaluate_onnx
             test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
         else:
-            model_path = args.model_prefix if args.model_prefix.endswith('.pt') else args.model_prefix + '_best_epoch_state.pt'
+            model_path = args.model_prefix if args.model_prefix.endswith(
+                '.pt') else args.model_prefix + '_best_epoch_state.pt'
             _logger.info('Loading model %s for eval' % model_path)
             model.load_state_dict(torch.load(model_path, map_location=dev))
             if gpus is not None and len(gpus) > 1:
@@ -417,6 +485,10 @@ def main(args):
         _logger.info('Test metric %.5f' % test_metric)
 
         if args.predict_output:
+            if '/' not in args.predict_output:
+                args.predict_output = os.path.join(
+                    os.path.dirname(args.model_prefix),
+                    'predict_output', args.predict_output)
             os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
             if args.predict_output.endswith('.root'):
                 save_root(data_config, scores, labels, observers)
@@ -427,5 +499,17 @@ def main(args):
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    # maybe add args validation, or use @click instead
+    if '{auto}' in args.model_prefix or '{auto}' in args.log:
+        import hashlib
+        import time
+        model_name = time.strftime('%Y%m%d-%H%M%S') + "_" + os.path.basename(args.network_config).replace('.py', '')
+        if len(args.network_option):
+            model_name = model_name + "_" + hashlib.md5(str(args.network_option).encode('utf-8')).hexdigest()
+        model_name += '_{optim}_lr{lr}_batch{batch}'.format(lr=args.start_lr,
+                                                            optim=args.optimizer, batch=args.batch_size)
+        args._auto_model_name = model_name
+        args.model_prefix = args.model_prefix.replace('{auto}', model_name)
+        args.log = args.log.replace('{auto}', model_name)
+        print('Using auto-generated model prefix %s' % args.model_prefix)
+    _configLogger('weaver', filename=args.log)
     main(args)
