@@ -1,13 +1,10 @@
-import os
 import time
 import glob
 import copy
-import tqdm
 import numpy as np
 
-from collections import defaultdict
 from ..logger import _logger
-from .tools import _concat, _get_variable_names, _eval_expr
+from .tools import _get_variable_names, _eval_expr
 from .fileio import _read_files
 
 
@@ -65,9 +62,10 @@ class AutoStandardizer(object):
             self.load_branches.update(_get_variable_names(self._data_config.selection))
         _logger.debug('[AutoStandardizer] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True, treename=self._data_config.treename)
+        table = _read_files(filelist, self.load_branches, self.load_range,
+                            show_progressbar=True, treename=self._data_config.treename)
         _apply_selection(table, self._data_config.selection)
-        _build_new_variables(table, {k: v for k,v in self._data_config.var_funcs.items() if k in self.keep_branches})
+        _build_new_variables(table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
         _clean_up(table, self.load_branches - self.keep_branches)
         return table
 
@@ -142,9 +140,14 @@ class WeightMaker(object):
     def make_weights(self, table):
         x_var, y_var = self._data_config.reweight_branches
         x_bins, y_bins = self._data_config.reweight_bins
-        # clip variables to be within bin ranges
-        table[x_var] = np.clip(table[x_var], min(x_bins), max(x_bins))
-        table[y_var] = np.clip(table[y_var], min(y_bins), max(y_bins))
+        if not self._data_config.reweight_discard_under_overflow:
+            # clip variables to be within bin ranges
+            x_min, x_max = min(x_bins), max(x_bins)
+            y_min, y_max = min(y_bins), max(y_bins)
+            _logger.info(f'Clipping `{x_var}` to [{x_min}, {x_max}] to compute the shapes for reweighting.')
+            _logger.info(f'Clipping `{y_var}` to [{y_min}, {y_max}] to compute the shapes for reweighting.')
+            table[x_var] = np.clip(table[x_var], min(x_bins), max(x_bins))
+            table[y_var] = np.clip(table[y_var], min(y_bins), max(y_bins))
 
         _logger.info('Using %d events to make weights', len(table[x_var]))
 
@@ -163,8 +166,12 @@ class WeightMaker(object):
             raw_hists[label] = hist.astype('float32')
             result[label] = hist.astype('float32')
         if sum_evts != len(table[x_var]):
-            _logger.warning('Only %d (out of %d) events actually used to make weights. Check `reweight_classes` definition and `reweight_vars` binnings!', sum_evts, len(table[x_var]))
-            time.sleep(5)
+            _logger.warning(
+                'Only %d (out of %d) events actually used in the reweighting. '
+                'Check consistency between `selection` and `reweight_classes` definition, or with the `reweight_vars` binnings '
+                '(under- and overflow bins are discarded by default, unless `reweight_discard_under_overflow` is set to `False` in the `weights` section).',
+                sum_evts, len(table[x_var]))
+            time.sleep(10)
 
         if self._data_config.reweight_method == 'flat':
             for label, classwgt in zip(self._data_config.reweight_classes, self._data_config.class_weights):

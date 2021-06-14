@@ -113,6 +113,7 @@ class DataConfig(object):
                 if self.class_weights is None:
                     self.class_weights = np.ones(len(self.reweight_classes))
                 self.reweight_threshold = opts['weights'].get('reweight_threshold', 10)
+                self.reweight_discard_under_overflow = opts['weights'].get('reweight_discard_under_overflow', True)
                 self.reweight_hists = opts['weights'].get('reweight_hists', None)
                 if self.reweight_hists is not None:
                     for k, v in self.reweight_hists.items():
@@ -145,7 +146,7 @@ class DataConfig(object):
                 if self.use_precomputed_weights:
                     _logger.info('weight: %s' % self.var_funcs[self.weight_name])
                 else:
-                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes', 'class_weights', 'reweight_threshold']:
+                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes', 'class_weights', 'reweight_threshold', 'reweight_discard_under_overflow']:
                         _logger.info('%s: %s' % (k, getattr(self, k)))
 
         # parse config

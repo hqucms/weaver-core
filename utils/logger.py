@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+from functools import lru_cache
 
 
 def _configLogger(name, filename=None, loglevel=logging.INFO):
@@ -21,3 +22,9 @@ def _configLogger(name, filename=None, loglevel=logging.INFO):
 
 
 _logger = logging.getLogger('weaver')
+
+
+@lru_cache(10)
+def warn_once(msg, logger=_logger):
+    # Keep track of 10 different messages and then warn again
+    logger.warning(msg)
