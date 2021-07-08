@@ -6,9 +6,10 @@ import math
 import torch.utils.data
 
 from itertools import chain
+from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
 from .logger import _logger, warn_once
-from .data.tools import _pad, _clip
+from .data.tools import _pad, _repeat_pad, _clip
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
 from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer, WeightMaker
@@ -53,7 +54,8 @@ def _finalize_inputs(table, data_config):
         if params['center'] is not None:
             table[k] = _clip((table[k] - params['center']) * params['scale'], params['min'], params['max'])
         if params['length'] is not None:
-            table[k] = _pad(table[k], params['length'], params['pad_value'])
+            pad_fn = _repeat_pad if params['pad_mode'] == 'wrap' else partial(_pad, value=params['pad_value'])
+            table[k] = pad_fn(table[k], params['length'])
         # check for NaN
         if np.any(np.isnan(table[k])):
             _logger.warning(
@@ -132,6 +134,12 @@ class _SimpleIter(object):
         # executor to read files and run preprocessing asynchronously
         self.executor = ThreadPoolExecutor(max_workers=1) if self._async_load else None
 
+        # init: prefetch holds table and indices for the next fetch
+        self.prefetch = None
+        self.table = None
+        self.indices = []
+        self.cursor = 0
+
         worker_info = torch.utils.data.get_worker_info()
         filelist = self._init_filelist.copy()
         if worker_info is not None:
@@ -142,7 +150,13 @@ class _SimpleIter(object):
             start = worker_info.id * per_worker
             stop = min(start + per_worker, len(filelist))
             filelist = filelist[start:stop]
+        self.worker_filelist = filelist
+        self.worker_info = worker_info
+        self.restart()
 
+    def restart(self):
+        # re-shuffle filelist and load range if for training
+        filelist = self.worker_filelist.copy()
         if self._sampler_options['shuffle']:
             np.random.shuffle(filelist)
         if self._file_fraction < 1:
@@ -161,21 +175,18 @@ class _SimpleIter(object):
             else:
                 self.load_range = (start_pos, start_pos + interval)
 
-        _logger.debug('Init iter [%d], will load %d (out of %d*%s=%d) files with load_range=%s:\n%s',
-                      0 if worker_info is None else worker_info.id,
-                      len(self.filelist),
-                      len(self._init_filelist), self._file_fraction, int(len(self._init_filelist) * self._file_fraction),
-                      str(self.load_range),
-                      '\n'.join(self.filelist[:3]) + '\n ... ' + self.filelist[-1],
-                      )
-        # reset iter status
-        self.table = None
-        self.prefetch = None
-        self.ipos = 0 if self._fetch_by_files else self.load_range[0]  # fetch cursor
-        self.indices = []
-        self.cursor = 0
+        _logger.debug(
+            'Init iter [%d], will load %d (out of %d*%s=%d) files with load_range=%s:\n%s', 0
+            if self.worker_info is None else self.worker_info.id, len(self.filelist),
+            len(self._init_filelist),
+            self._file_fraction, int(len(self._init_filelist) * self._file_fraction),
+            str(self.load_range),
+            '\n'.join(self.filelist[: 3]) + '\n ... ' + self.filelist[-1],)
+
+        # reset file fetching cursor
+        self.ipos = 0 if self._fetch_by_files else self.load_range[0]
         # prefetch the first entry asynchronously
-        self._try_get_next()
+        self._try_get_next(init=True)
 
     def __next__(self):
         # print(self.ipos, self.cursor)
@@ -184,7 +195,14 @@ class _SimpleIter(object):
         try:
             i = self.indices[self.cursor]
         except IndexError:
+            # case 1: first entry, `self.indices` is still empty
+            # case 2: running out of entries, `self.indices` is not empty
             while True:
+                if self._in_memory and len(self.indices) > 0:
+                    # only need to re-shuffle the indices, if this is not the first entry
+                    if self._sampler_options['shuffle']:
+                        np.random.shuffle(self.indices)
+                    break
                 if self.prefetch is None:
                     # reaching the end as prefetch got nothing
                     self.table = None
@@ -207,21 +225,28 @@ class _SimpleIter(object):
         self.cursor += 1
         return self.get_data(i)
 
-    def _try_get_next(self):
+    def _try_get_next(self, init=False):
+        end_of_list = self.ipos >= len(self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1]
+        if end_of_list:
+            if init:
+                raise RuntimeError('Nothing to load for worker %d' %
+                                   0 if self.worker_info is None else self.worker_info.id)
+            if self._infinity_mode and not self._in_memory:
+                # infinity mode: re-start
+                self.restart()
+                return
+            else:
+                # finite mode: set prefetch to None, exit
+                self.prefetch = None
+                return
+
         if self._fetch_by_files:
-            if self.ipos >= len(self.filelist):
-                self.prefetch = None
-                return
-            else:
-                filelist = self.filelist[int(self.ipos): int(self.ipos + self._fetch_step)]
-                load_range = self.load_range
+            filelist = self.filelist[int(self.ipos): int(self.ipos + self._fetch_step)]
+            load_range = self.load_range
         else:
-            if self.ipos >= self.load_range[1]:
-                self.prefetch = None
-                return
-            else:
-                filelist = self.filelist
-                load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
+            filelist = self.filelist
+            load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
+
         # _logger.info('Start fetching next batch, len(filelist)=%d, load_range=%s'%(len(filelist), load_range))
         if self._async_load:
             self.prefetch = self.executor.submit(_load_next, self._data_config,
@@ -266,7 +291,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
 
     def __init__(self, filelist, data_config_file, for_training=True, load_range_and_fraction=None,
                  fetch_by_files=False, fetch_step=0.01, file_fraction=1, remake_weights=False, up_sample=True,
-                 weight_scale=1, max_resample=10, async_load=True):
+                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False):
+        self._iters = {} if infinity_mode or in_memory else None
         _init_args = set(self.__dict__.keys())
         self._init_filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
         self._init_load_range_and_fraction = load_range_and_fraction
@@ -277,6 +303,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             self._fetch_step = fetch_step
         self._file_fraction = file_fraction
         self._async_load = async_load
+        self._infinity_mode = infinity_mode
+        self._in_memory = in_memory
 
         # ==== sampling parameters ====
         self._sampler_options = {
@@ -329,5 +357,15 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         return self._data_config
 
     def __iter__(self):
-        kwargs = {k: copy.deepcopy(self.__dict__[k]) for k in self._init_args}
-        return _SimpleIter(**kwargs)
+        if self._iters is None:
+            kwargs = {k: copy.deepcopy(self.__dict__[k]) for k in self._init_args}
+            return _SimpleIter(**kwargs)
+        else:
+            worker_info = torch.utils.data.get_worker_info()
+            worker_id = worker_info.id if worker_info is not None else 0
+            try:
+                return self._iters[worker_id]
+            except KeyError:
+                kwargs = {k: copy.deepcopy(self.__dict__[k]) for k in self._init_args}
+                self._iters[worker_id] = _SimpleIter(**kwargs)
+                return self._iters[worker_id]

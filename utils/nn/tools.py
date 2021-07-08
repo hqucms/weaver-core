@@ -29,7 +29,7 @@ def _flatten_preds(preds, mask=None, label_axis=1):
     return preds
 
 
-def train_classification(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=None):
+def train_classification(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=None, grad_scaler=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -64,6 +64,9 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, gr
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
+            if scheduler and getattr(scheduler, '_update_per_step', False):
+                scheduler.step()
+
             _, preds = logits.max(1)
             loss = loss.item()
 
@@ -74,25 +77,32 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, gr
             total_correct += correct
 
             tq.set_postfix({
+                'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'Loss': '%.5f' % loss,
                 'AvgLoss': '%.5f' % (total_loss / num_batches),
                 'Acc': '%.5f' % (correct / num_examples),
                 'AvgAcc': '%.5f' % (total_correct / count)})
 
+            if steps_per_epoch is not None and num_batches >= steps_per_epoch:
+                break
+
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
-    scheduler.step()
+    if scheduler and not getattr(scheduler, '_update_per_step', False):
+        scheduler.step()
 
 
-def evaluate_classification(model, test_loader, dev, for_training=True, loss_func=None, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix']):
+def evaluate_classification(model, test_loader, dev, for_training=True, loss_func=None, steps_per_epoch=None,
+                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix']):
     model.eval()
 
     data_config = test_loader.dataset.config
 
     label_counter = Counter()
     total_loss = 0
+    num_batches = 0
     total_correct = 0
     entry_count = 0
     count = 0
@@ -130,6 +140,7 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
                 _, preds = logits.max(1)
                 loss = 0 if loss_func is None else loss_func(logits, label).item()
 
+                num_batches += 1
                 count += num_examples
                 correct = (preds == label).sum().item()
                 total_loss += loss * num_examples
@@ -141,6 +152,9 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
                     'Acc': '%.5f' % (correct / num_examples),
                     'AvgAcc': '%.5f' % (total_correct / count)})
 
+                if steps_per_epoch is not None and num_batches >= steps_per_epoch:
+                    break
+
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
@@ -148,7 +162,8 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
-    _logger.info('Evaluation metrics: \n%s', '\n'.join(['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
+    _logger.info('Evaluation metrics: \n%s', '\n'.join(
+        ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
         return total_correct / count
@@ -184,7 +199,7 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
     start_time = time.time()
     with tqdm.tqdm(test_loader) as tq:
         for X, y, Z in tq:
-            inputs = {k:v.cpu().numpy() for k, v in X.items()}
+            inputs = {k: v.cpu().numpy() for k, v in X.items()}
             label = y[data_config.label_names[0]].cpu().numpy()
             num_examples = label.shape[0]
             label_counter.update(label)
@@ -210,14 +225,15 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     scores = np.concatenate(scores)
-    labels = {k:_concat(v) for k, v in labels.items()}
+    labels = {k: _concat(v) for k, v in labels.items()}
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
-    _logger.info('Evaluation metrics: \n%s', '\n'.join(['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
-    observers = {k:_concat(v) for k, v in observers.items()}
+    _logger.info('Evaluation metrics: \n%s', '\n'.join(
+        ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
+    observers = {k: _concat(v) for k, v in observers.items()}
     return total_correct / count, scores, labels, observers
 
 
-def train_regression(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=None):
+def train_regression(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=None, grad_scaler=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -245,6 +261,9 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, grad_s
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
+            if scheduler and getattr(scheduler, '_update_per_step', False):
+                scheduler.step()
+
             loss = loss.item()
 
             num_batches += 1
@@ -257,6 +276,7 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, grad_s
             sum_sqr_err += sqr_err
 
             tq.set_postfix({
+                'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'Loss': '%.5f' % loss,
                 'AvgLoss': '%.5f' % (total_loss / num_batches),
                 'MSE': '%.5f' % (sqr_err / num_examples),
@@ -265,19 +285,26 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, grad_s
                 'AvgMAE': '%.5f' % (sum_abs_err / count),
             })
 
+            if steps_per_epoch is not None and num_batches >= steps_per_epoch:
+                break
+
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
                  (total_loss / num_batches, sum_sqr_err / count, sum_abs_err / count))
-    scheduler.step()
+    if scheduler and not getattr(scheduler, '_update_per_step', False):
+        scheduler.step()
 
 
-def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=None, eval_metrics=['mean_squared_error', 'mean_absolute_error', 'median_absolute_error', 'mean_gamma_deviance']):
+def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=None, steps_per_epoch=None,
+                        eval_metrics=['mean_squared_error', 'mean_absolute_error', 'median_absolute_error',
+                                      'mean_gamma_deviance']):
     model.eval()
 
     data_config = test_loader.dataset.config
 
     total_loss = 0
+    num_batches = 0
     sum_sqr_err = 0
     sum_abs_err = 0
     count = 0
@@ -303,6 +330,7 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
 
                 loss = 0 if loss_func is None else loss_func(preds, label).item()
 
+                num_batches += 1
                 count += num_examples
                 total_loss += loss * num_examples
                 e = preds - label
@@ -320,13 +348,17 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
                     'AvgMAE': '%.5f' % (sum_abs_err / count),
                 })
 
+                if steps_per_epoch is not None and num_batches >= steps_per_epoch:
+                    break
+
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
-    _logger.info('Evaluation metrics: \n%s', '\n'.join(['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
+    _logger.info('Evaluation metrics: \n%s', '\n'.join(
+        ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
         return total_loss / count

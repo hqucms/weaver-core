@@ -156,7 +156,9 @@ Note:
   At the end of each epoch, the model parameters will be saved to `/path/to/models/prefix_epoch-%d_state.pt`,
   and the optimizer states will be saved to `/path/to/models/prefix_epoch-%d_optimizer.pt` in case the training is interrupted and needed to be resumed from a certain epoch.
   - One can also uses a auto-generated path by including `{auto}` as part of the `--model-prefix`, then `{auto}` will be replaced by a string based on timestamp and the hash of the network configuration.
+- for small datasets, it's more efficient to use `--in-memory` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
 - when training on remote files (e.g., from EOS filesystem), one could consider adding `--copy-inputs` so the files are copied to the local workdir to speed up data loading.
+- training can be resumed by adding `--load-epoch [last_epoch]`: with this option, the training will continue at `last_epoch + 1`, and the optimizer states and the learning rate will be properly restored.
 
 ### Prediction/Inference
 
@@ -191,6 +193,8 @@ python train.py -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py
 
 To cope with large datasets, the data loader in `Weaver` does not read all input files into memory, but rather load the input events incrementally. The implementation follows the `PyTorch` [iterable-style datasets](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) interface. To speed up the data loading process, [multi-process data loading](https://pytorch.org/docs/stable/data.html#multi-process-data-loading) is also implemented.
 
+**[Note]** For small dataset that actually fits into the memory, use `--in-memory` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
+
 The [data loader](utils/dataset.py) in `Weaver` operates in different ways for training and prediction/inference.
 
 ### Training mode
@@ -205,7 +209,7 @@ To achieve this efficiently, `Weaver` divides all input files randomly into `N` 
 
 - An alternative approach is the "file-based" strategy, which can be enabled with `--fetch-by-files`. This approach will instead read all events from every file for each step, and it will read `m` input files (`m` is set by `--fetch-step`) before mixing and shuffling the loaded events. This strategy is more suitable when each input file is already a mixture of all types of events (e.g., pre-processed with [NNTools](https://github.com/hqucms/NNTools/)), otherwise it may lead to suboptimal training performance. However, a higher data loading speed can generally be achieved with this approach.
 
-**[Note]** If the dataset is stored on EOS and the size is not very large, it may be more efficient to transfer the files to the local storage of the worker node when submitting batch jobs.
+**[Note]** If the dataset is stored on EOS and the size is not very large, it may be more efficient to transfer the files to the local storage of the worker node when submitting batch jobs. This can be done on-the-fly by adding the `--copy-inputs` option.
 
 ### Prediction/Inference mode
 

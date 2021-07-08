@@ -5,6 +5,7 @@ import shutil
 import glob
 import argparse
 import numpy as np
+import math
 import torch
 
 from torch.utils.data import DataLoader
@@ -32,6 +33,8 @@ parser.add_argument('--fetch-by-files', action='store_true', default=False,
 parser.add_argument('--fetch-step', type=float, default=0.01,
                     help='fraction of events to load each time from every file (when ``--fetch-by-files`` is disabled); '
                          'Or: number of files to load each time (when ``--fetch-by-files`` is enabled). Shuffling & sampling is done within these events, so set a large enough value.')
+parser.add_argument('--in-memory', action='store_true', default=False,
+                    help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
 parser.add_argument('--train-val-split', type=float, default=0.8,
                     help='training/validation split fraction')
 parser.add_argument('--demo', action='store_true', default=False,
@@ -51,14 +54,19 @@ parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/net
                          'based on the timestamp and network configuration')
 parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
+parser.add_argument('--steps-per-epoch', type=int, default=None,
+                    help='number of steps (iterations) per epochs; if not set, each epoch will run over all loaded samples')
 parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'ranger'],  # TODO: add more
                     help='optimizer for the training')
+parser.add_argument('--optimizer-option', nargs=2, action='append', default=[],
+                    help='options to pass to the optimizer class constructor, e.g., `--optimizer-option weight_decay 1e-4`')
+parser.add_argument('--lr-scheduler', type=str, default='flat+decay',
+                    choices=['none', 'steps', 'flat+decay', 'flat+linear', 'flat+cos', 'one-cycle'],
+                    help='learning rate scheduler')
 parser.add_argument('--load-epoch', type=int, default=None,
                     help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%d_state.pt` and `epoch-%d_optimizer.pt` files')
 parser.add_argument('--start-lr', type=float, default=5e-3,
                     help='start learning rate')
-parser.add_argument('--lr-steps', type=str, default='10,20',
-                    help='steps to reduce the lr; currently only used when setting `--optimizer` to adam')
 parser.add_argument('--batch-size', type=int, default=128,
                     help='batch size')
 parser.add_argument('--use-amp', action='store_true', default=False,
@@ -82,6 +90,8 @@ parser.add_argument('--log', type=str, default='',
                     help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
 parser.add_argument('--print', action='store_true', default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
+parser.add_argument('--profile', action='store_true', default=False,
+                    help='run the profiler')
 
 
 def train_load(args):
@@ -116,16 +126,23 @@ def train_load(args):
     num_workers = min(args.num_workers, int(len(filelist) * args.file_fraction))
     train_data = SimpleIterDataset(filelist, args.data_config, for_training=True,
                                    load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
-                                   file_fraction=args.file_fraction, fetch_by_files=args.fetch_by_files,
-                                   fetch_step=args.fetch_step)
+                                   file_fraction=args.file_fraction,
+                                   fetch_by_files=args.fetch_by_files,
+                                   fetch_step=args.fetch_step,
+                                   infinity_mode=args.steps_per_epoch is not None,
+                                   in_memory=args.in_memory)
     val_data = SimpleIterDataset(filelist, args.data_config, for_training=True,
                                  load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
-                                 file_fraction=args.file_fraction, fetch_by_files=args.fetch_by_files,
-                                 fetch_step=args.fetch_step)
+                                 file_fraction=args.file_fraction,
+                                 fetch_by_files=args.fetch_by_files,
+                                 fetch_step=args.fetch_step,
+                                 infinity_mode=args.steps_per_epoch is not None,
+                                 in_memory=args.in_memory)
+    persistent_workers = num_workers > 0 and args.steps_per_epoch is not None
     train_loader = DataLoader(train_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True,
-                              pin_memory=True)
+                              pin_memory=True, persistent_workers=persistent_workers)
     val_loader = DataLoader(val_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True,
-                            pin_memory=True)
+                            pin_memory=True, persistent_workers=persistent_workers)
     data_config = train_data.config
     train_input_names = train_data.config.input_names
     train_label_names = train_data.config.label_names
@@ -173,7 +190,7 @@ def onnx(args, model, data_config, model_info):
                       input_names=model_info['input_names'],
                       output_names=model_info['output_names'],
                       dynamic_axes=model_info.get('dynamic_axes', None),
-                      opset_version=11)
+                      opset_version=13)
     _logger.info('ONNX model saved to %s', args.export_onnx)
 
     preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), 'preprocess.json')
@@ -203,30 +220,107 @@ def flops(model, model_info):
     _logger.info('{:<30}  {:<8}'.format('Number of parameters: ', params))
 
 
-def optim(args, model):
+def profile(args, model, model_info, device):
     """
-    Optimizer and scheduler. Could try CosineAnnealing
+    Profile.
+    :param model:
+    :param model_info:
+    :return:
+    """
+    import copy
+    from torch.profiler import profile, record_function, ProfilerActivity
+
+    model = copy.deepcopy(model)
+    model = model.to(device)
+    model.eval()
+
+    inputs = tuple(torch.ones((args.batch_size,) + model_info['input_shapes'][k][1:], dtype=torch.float32).to(device) for k in model_info['input_names'])
+    for x in inputs:
+        print(x.shape, x.device)
+
+    def trace_handler(p):
+        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=50)
+        print(output)
+        p.export_chrome_trace("/tmp/trace_" + str(p.step_num) + ".json")
+
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=torch.profiler.schedule(
+            wait=2,
+            warmup=2,
+            active=6,
+            repeat=2),
+        on_trace_ready=trace_handler
+    ) as p:
+        for idx in range(100):
+            model(*inputs)
+            p.step()
+
+
+def optim(args, model, device):
+    """
+    Optimizer and scheduler.
     :param args:
     :param model:
     :return:
     """
-    scheduler = None
+    optimizer_options = {k: ast.literal_eval(v) for k, v in args.optimizer_option}
+    _logger.info('Optimizer options: %s' % str(optimizer_options))
     if args.optimizer == 'ranger':
         from utils.nn.optimizer.ranger import Ranger
-        opt = Ranger(model.parameters(), lr=args.start_lr)
-        if args.lr_finder is None:
+        opt = Ranger(model.parameters(), lr=args.start_lr, **optimizer_options)
+    elif args.optimizer == 'adam':
+        opt = torch.optim.Adam(model.parameters(), lr=args.start_lr, **optimizer_options)
+    elif args.optimizer == 'adamW':
+        opt = torch.optim.AdamW(model.parameters(), lr=args.start_lr, **optimizer_options)
+
+    # load previous training and resume if `--load-epoch` is set
+    if args.load_epoch is not None:
+        _logger.info('Resume training from epoch %d' % args.load_epoch)
+        model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location=device)
+        model.load_state_dict(model_state)
+        opt_state = torch.load(args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch, map_location=device)
+        opt.load_state_dict(opt_state)
+
+    scheduler = None
+    if args.lr_finder is None:
+        if args.lr_scheduler == 'steps':
+            lr_step = round(args.num_epochs / 3)
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                opt, milestones=[lr_step, 2 * lr_step], gamma=0.1,
+                last_epoch=-1 if args.load_epoch is None else args.load_epoch)
+        elif args.lr_scheduler == 'flat+decay':
             lr_decay_epochs = max(1, int(args.num_epochs * 0.3))
             lr_decay_rate = 0.01 ** (1. / lr_decay_epochs)
             scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=list(
-                range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate)
-    else:
-        if args.optimizer == 'adam':
-            opt = torch.optim.Adam(model.parameters(), lr=args.start_lr)
-        elif args.optimizer == 'adamW':
-            opt = torch.optim.AdamW(model.parameters(), lr=args.start_lr)
-        if args.lr_finder is None:
-            lr_steps = [int(x) for x in args.lr_steps.split(',')]
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=lr_steps, gamma=0.1)
+                range(args.num_epochs - lr_decay_epochs, args.num_epochs)), gamma=lr_decay_rate,
+                last_epoch=-1 if args.load_epoch is None else args.load_epoch)
+        elif args.lr_scheduler == 'flat+linear' or args.lr_scheduler == 'flat+cos':
+            total_steps = args.num_epochs * args.steps_per_epoch
+            flat_steps = total_steps * 0.7 - 1
+            min_factor = 0.001
+
+            def lr_fn(step_num):
+                if step_num > total_steps:
+                    raise ValueError(
+                        "Tried to step {} times. The specified number of total steps is {}".format(
+                            step_num + 1, total_steps))
+                if step_num <= flat_steps:
+                    return 1.0
+                pct = (step_num - flat_steps) / (total_steps - flat_steps)
+                if args.lr_scheduler == 'flat+linear':
+                    return max(min_factor, 1 - pct)
+                else:
+                    return max(min_factor, 0.5 * (math.cos(math.pi * pct) + 1))
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                opt, lr_fn, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch)
+            scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
+        elif args.lr_scheduler == 'one-cycle':
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                opt, max_lr=args.start_lr, epochs=args.num_epochs, steps_per_epoch=args.steps_per_epoch, pct_start=0.3,
+                anneal_strategy='cos', div_factor=25.0, last_epoch=-1 if args.load_epoch is None else args.load_epoch)
+            scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
     return opt, scheduler
 
 
@@ -378,6 +472,10 @@ def main(args):
     if args.print:
         return
 
+    if args.profile:
+        profile(args, model, model_info, device=dev)
+        return
+
     # export to ONNX
     if args.export_onnx:
         onnx(args, model, data_config, model_info)
@@ -399,15 +497,7 @@ def main(args):
                             args.network_config)
 
         # optimizer & learning rate
-        opt, scheduler = optim(args, model)
-
-        # load previous training and resume if `--load-epoch` is set
-        if args.load_epoch is not None:
-            _logger.info('Resume training from epoch %d' % args.load_epoch)
-            model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location=dev)
-            model.load_state_dict(model_state)
-            opt_state = torch.load(args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch, map_location=dev)
-            opt.load_state_dict(opt_state)
+        opt, scheduler = optim(args, model, dev)
 
         # multi-gpu
         if gpus is not None and len(gpus) > 1:
@@ -439,7 +529,7 @@ def main(args):
                     continue
             print('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev, grad_scaler=scaler)
+            train(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler)
             if args.model_prefix:
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
@@ -449,7 +539,9 @@ def main(args):
                 torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric = evaluate(model, val_loader, dev, loss_func=loss_func)
+            valid_metric = evaluate(model, val_loader, dev, loss_func=loss_func,
+                                    steps_per_epoch=None if args.steps_per_epoch is None else
+                                    round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split))
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)

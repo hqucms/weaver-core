@@ -24,12 +24,15 @@ class Lookahead(Optimizer):
         if not 1 <= k:
             raise ValueError(f'Invalid lookahead steps: {k}')
         self.optimizer = optimizer
-        self.param_groups = self.optimizer.param_groups
         self.alpha = alpha
         self.k = k
         self.step_counter = 0
         assert pullback_momentum in ["reset", "pullback", "none"]
         self.pullback_momentum = pullback_momentum
+        self.reset()
+
+    def reset(self):
+        self.param_groups = self.optimizer.param_groups
         self.state = defaultdict(dict)
 
         # Cache the current optimizer parameters
@@ -45,7 +48,7 @@ class Lookahead(Optimizer):
             'optimizer': self.optimizer,
             'alpha': self.alpha,
             'step_counter': self.step_counter,
-            'k':self.k,
+            'k': self.k,
             'pullback_momentum': self.pullback_momentum
         }
 
@@ -57,6 +60,7 @@ class Lookahead(Optimizer):
 
     def load_state_dict(self, state_dict):
         self.optimizer.load_state_dict(state_dict)
+        self.reset()
 
     def _backup_and_load_cache(self):
         """Useful for performing evaluation on the slow weights (which typically generalize better)
