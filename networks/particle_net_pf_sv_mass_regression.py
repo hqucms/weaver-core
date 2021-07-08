@@ -116,11 +116,11 @@ class LogCoshLoss(torch.nn.L1Loss):
 
 
 def get_loss(data_config, **kwargs):
-    if kwargs.get('loss_mode', 0) == 1:
+    if kwargs.get('loss_mode', 3) == 1:
         return RatioSmoothL1Loss(beta=kwargs.get('loss_beta', 0.3), cutoff=kwargs.get('loss_cutoff', 1), sine_weight_max=kwargs.get('loss_sine_weight_max', None))
-    elif kwargs.get('loss_mode', 0) == 2:
+    elif kwargs.get('loss_mode', 3) == 2:
         return SymmetricRatioSmoothL1Loss(beta=kwargs.get('loss_beta', 0.3), cutoff=kwargs.get('loss_cutoff', 1), sine_weight_max=kwargs.get('loss_sine_weight_max', None))
-    elif kwargs.get('loss_mode', 0) == 3:
+    elif kwargs.get('loss_mode', 3) == 3:
         return LogCoshLoss()
     else:
         return torch.nn.SmoothL1Loss(beta=kwargs.get('loss_beta', 10))
