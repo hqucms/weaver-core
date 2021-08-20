@@ -4,6 +4,7 @@ import os
 import shutil
 import glob
 import argparse
+import functools
 import numpy as np
 import math
 import torch
@@ -21,8 +22,13 @@ parser.add_argument('-c', '--data-config', type=str, default='data/ak15_points_p
                     help='data config YAML file')
 parser.add_argument('-i', '--data-train', nargs='*', default=[],
                     help='training files')
+parser.add_argument('-l', '--data-val', nargs='*', default=[],
+                    help='validation files; when not set, will use training files and split by `--train-val-split`')
 parser.add_argument('-t', '--data-test', nargs='*', default=[],
-                    help='testing files')
+                    help='testing files; supported syntax:'
+                         ' (a) plain list, `--data-test /path/to/a/* /path/to/b/*`;'
+                         ' (b) keyword-based, `--data-test: a:/path/to/a/* b:/path/to/b/*`, will produce output_a, output_b;'
+                         ' (c) split output per N input files, `--data-test: a%10:/path/to/a/*`, will split per 10 input files')
 parser.add_argument('--data-fraction', type=float, default=1,
                     help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
 parser.add_argument('--file-fraction', type=float, default=1,
@@ -56,6 +62,8 @@ parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
 parser.add_argument('--steps-per-epoch', type=int, default=None,
                     help='number of steps (iterations) per epochs; if not set, each epoch will run over all loaded samples')
+parser.add_argument('--steps-per-epoch-val', type=int, default=None,
+                    help='number of steps (iterations) per epochs for validation; if not set, each epoch will run over all loaded samples')
 parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'ranger'],  # TODO: add more
                     help='optimizer for the training')
 parser.add_argument('--optimizer-option', nargs=2, action='append', default=[],
@@ -94,13 +102,17 @@ parser.add_argument('--profile', action='store_true', default=False,
                     help='run the profiler')
 
 
-def train_load(args):
-    """
-    Loads the training data.
-    :param args:
-    :return: train_loader, val_loader, data_config, train_inputs
-    """
-    filelist = sorted(sum([glob.glob(f) for f in args.data_train], []))
+def to_filelist(args, mode='train'):
+    if mode == 'train':
+        flist = args.data_train
+    elif mode == 'val':
+        flist = args.data_val
+    else:
+        raise NotImplementedError('Invalid mode %s' % mode)
+
+    filelist = sum([glob.glob(f) for f in flist], [])
+    np.random.shuffle(filelist)
+
     if args.copy_inputs:
         import tempfile
         tmpdir = tempfile.mkdtemp()
@@ -116,33 +128,58 @@ def train_load(args):
             new_filelist.append(dest)
         filelist = new_filelist
 
-    # np.random.seed(1)
-    np.random.shuffle(filelist)
+    return filelist
+
+
+def train_load(args):
+    """
+    Loads the training data.
+    :param args:
+    :return: train_loader, val_loader, data_config, train_inputs
+    """
+
+    train_files = to_filelist(args, 'train')
+    if args.data_val:
+        val_files = to_filelist(args, 'val')
+        train_range = val_range = (0, 1)
+    else:
+        val_files = train_files
+        train_range = (0, args.train_val_split)
+        val_range = (args.train_val_split, 1)
+    _logger.info('Using %d files for training, range: %s' % (len(train_files), str(train_range)))
+    _logger.info('Using %d files for validation, range: %s' % (len(val_files), str(val_range)))
+
     if args.demo:
-        filelist = filelist[:20]
-        _logger.info(filelist)
+        train_files = train_files[:20]
+        val_files = val_files[:20]
+        _logger.info(train_files)
+        _logger.info(val_files)
         args.data_fraction = 0.1
         args.fetch_step = 0.002
-    num_workers = min(args.num_workers, int(len(filelist) * args.file_fraction))
-    train_data = SimpleIterDataset(filelist, args.data_config, for_training=True,
-                                   load_range_and_fraction=((0, args.train_val_split), args.data_fraction),
+
+    if args.in_memory and (args.steps_per_epoch is None or args.steps_per_epoch_val is None):
+        raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+
+    train_data = SimpleIterDataset(train_files, args.data_config, for_training=True,
+                                   load_range_and_fraction=(train_range, args.data_fraction),
                                    file_fraction=args.file_fraction,
                                    fetch_by_files=args.fetch_by_files,
                                    fetch_step=args.fetch_step,
                                    infinity_mode=args.steps_per_epoch is not None,
                                    in_memory=args.in_memory)
-    val_data = SimpleIterDataset(filelist, args.data_config, for_training=True,
-                                 load_range_and_fraction=((args.train_val_split, 1), args.data_fraction),
+    val_data = SimpleIterDataset(val_files, args.data_config, for_training=True,
+                                 load_range_and_fraction=(val_range, args.data_fraction),
                                  file_fraction=args.file_fraction,
                                  fetch_by_files=args.fetch_by_files,
                                  fetch_step=args.fetch_step,
-                                 infinity_mode=args.steps_per_epoch is not None,
+                                 infinity_mode=args.steps_per_epoch_val is not None,
                                  in_memory=args.in_memory)
-    persistent_workers = num_workers > 0 and args.steps_per_epoch is not None
-    train_loader = DataLoader(train_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True,
-                              pin_memory=True, persistent_workers=persistent_workers)
-    val_loader = DataLoader(val_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=True,
-                            pin_memory=True, persistent_workers=persistent_workers)
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
+                              num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
+                              persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
+                            num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
+                            persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
     data_config = train_data.config
     train_input_names = train_data.config.input_names
     train_label_names = train_data.config.label_names
@@ -154,17 +191,50 @@ def test_load(args):
     """
     Loads the test data.
     :param args:
-    :return: test_loader, data_config
+    :return: test_loaders, data_config
     """
-    filelist = sorted(sum([glob.glob(f) for f in args.data_test], []))
-    num_workers = min(args.num_workers, len(filelist))
-    test_data = SimpleIterDataset(filelist, args.data_config, for_training=False,
-                                  load_range_and_fraction=((0, 1), args.data_fraction),
-                                  fetch_by_files=True, fetch_step=1)
-    test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=False,
-                             pin_memory=True)
-    data_config = test_data.config
-    return test_loader, data_config
+    # keyword-based --data-test: 'a:/path/to/a b:/path/to/b'
+    # split --data-test: 'a%10:/path/to/a/*'
+    file_dict = {}
+    split_dict = {}
+    for f in args.data_test:
+        if ':' in f:
+            name, fp = f.split(':')
+            if '%' in name:
+                name, split = name.split('%')
+                split_dict[name] = int(split)
+        else:
+            name, fp = '', f
+        files = glob.glob(fp)
+        if name in file_dict:
+            file_dict[name] += files
+        else:
+            file_dict[name] = files
+
+    # sort files
+    for name, files in file_dict.items():
+        file_dict[name] = sorted(files)
+
+    # apply splitting
+    for name, split in split_dict.items():
+        files = file_dict.pop(name)
+        for i in range((len(files) + split - 1) // split):
+            file_dict[f'{name}_{i}'] = files[i * split:(i + 1) * split]
+
+    def get_test_loader(name):
+        filelist = file_dict[name]
+        _logger.info('Running on test file group %s with %d files:\n...%s', name, len(filelist), '\n...'.join(filelist))
+        num_workers = min(args.num_workers, len(filelist))
+        test_data = SimpleIterDataset(filelist, args.data_config, for_training=False,
+                                      load_range_and_fraction=((0, 1), args.data_fraction),
+                                      fetch_by_files=True, fetch_step=1)
+        test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=False,
+                                 pin_memory=True)
+        return test_loader
+
+    test_loaders = {name: functools.partial(get_test_loader, name) for name in file_dict}
+    data_config = SimpleIterDataset([], args.data_config, for_training=False).config
+    return test_loaders, data_config
 
 
 def onnx(args, model, data_config, model_info):
@@ -369,7 +439,7 @@ def iotest(args, data_loader):
         _logger.info('Monitor info written to %s' % monitor_output_path)
 
 
-def save_root(data_config, scores, labels, observers):
+def save_root(args, output_path, data_config, scores, labels, observers):
     """
     Saves as .root
     :param data_config:
@@ -399,10 +469,10 @@ def save_root(data_config, scores, labels, observers):
             _logger.warning('Ignoring %s, not a 1d array.', k)
             continue
         output[k] = v
-    _write_root(args.predict_output, output)
+    _write_root(output_path, output)
 
 
-def save_awk(scores, labels, observers):
+def save_awk(args, output_path, scores, labels, observers):
     """
     Saves as .awkd
     :param scores:
@@ -426,11 +496,11 @@ def save_awk(scores, labels, observers):
     _logger.info('Renamed the following variables in the output file: %s', str(name_remap))
     output = {name_remap[k] if k in name_remap else k: v for k, v in output.items()}
 
-    awkward.save(args.predict_output, output, mode='w')
+    awkward.save(output_path, output, mode='w')
 
 
 def main(args):
-    _logger.info(args)
+    _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
 
     if args.file_fraction < 1:
         _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
@@ -460,10 +530,10 @@ def main(args):
     if training_mode:
         train_loader, val_loader, data_config, train_input_names, train_label_names = train_load(args)
     else:
-        test_loader, data_config = test_load(args)
+        test_loaders, data_config = test_load(args)
 
     if args.io_test:
-        data_loader = train_loader if training_mode else test_loader
+        data_loader = train_loader if training_mode else list(test_loaders.values())[0]()
         iotest(args, data_loader)
         return
 
@@ -529,7 +599,8 @@ def main(args):
                     continue
             print('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler)
+            train(model, loss_func, opt, scheduler, train_loader, dev,
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler)
             if args.model_prefix:
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
@@ -540,8 +611,7 @@ def main(args):
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, loss_func=loss_func,
-                                    steps_per_epoch=None if args.steps_per_epoch is None else
-                                    round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split))
+                                    steps_per_epoch=args.steps_per_epoch_val)
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)
@@ -552,20 +622,15 @@ def main(args):
                                  epoch, args.model_prefix + '_best_epoch_state.pt')
                     torch.save(model, args.model_prefix + '_best_epoch_full.pt')
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
-                         (epoch, valid_metric, best_valid_metric))
+                         (epoch, valid_metric, best_valid_metric), color='bold')
 
     if args.data_test:
-        model = orig_model.to(dev)
-
         if training_mode:
             del train_loader, val_loader
-            test_loader, data_config = test_load(args)
-        # run prediction
-        if args.model_prefix.endswith('.onnx'):
-            _logger.info('Loading model %s for eval' % args.model_prefix)
-            from utils.nn.tools import evaluate_onnx
-            test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
-        else:
+            test_loaders, data_config = test_load(args)
+
+        if not args.model_prefix.endswith('.onnx'):
+            model = orig_model.to(dev)
             model_path = args.model_prefix if args.model_prefix.endswith(
                 '.pt') else args.model_prefix + '_best_epoch_state.pt'
             _logger.info('Loading model %s for eval' % model_path)
@@ -573,24 +638,45 @@ def main(args):
             if gpus is not None and len(gpus) > 1:
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             model = model.to(dev)
-            test_metric, scores, labels, observers = evaluate(model, test_loader, dev, for_training=False)
-        _logger.info('Test metric %.5f' % test_metric)
 
-        if args.predict_output:
-            if '/' not in args.predict_output:
-                args.predict_output = os.path.join(
-                    os.path.dirname(args.model_prefix),
-                    'predict_output', args.predict_output)
-            os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
-            if args.predict_output.endswith('.root'):
-                save_root(data_config, scores, labels, observers)
+        for name, get_test_loader in test_loaders.items():
+            test_loader = get_test_loader()
+            # run prediction
+            if args.model_prefix.endswith('.onnx'):
+                _logger.info('Loading model %s for eval' % args.model_prefix)
+                from utils.nn.tools import evaluate_onnx
+                test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
             else:
-                save_awk(scores, labels, observers)
-            _logger.info('Written output to %s' % args.predict_output)
+                test_metric, scores, labels, observers = evaluate(model, test_loader, dev, for_training=False)
+            _logger.info('Test metric %.5f' % test_metric, color='bold')
+            del test_loader
+
+            if args.predict_output:
+                if '/' not in args.predict_output:
+                    args.predict_output = os.path.join(
+                        os.path.dirname(args.model_prefix),
+                        'predict_output', args.predict_output)
+                os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
+                if name == '':
+                    output_path = args.predict_output
+                else:
+                    base, ext = os.path.splitext(args.predict_output)
+                    output_path = base + '_' + name + ext
+                if output_path.endswith('.root'):
+                    save_root(args, output_path, data_config, scores, labels, observers)
+                else:
+                    save_awk(args, output_path, scores, labels, observers)
+                _logger.info('Written output to %s' % output_path, color='bold')
 
 
 if __name__ == '__main__':
     args = parser.parse_args()
+
+    if args.steps_per_epoch_val is None and args.steps_per_epoch is not None:
+        args.steps_per_epoch_val = round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split)
+    if args.steps_per_epoch_val is not None and args.steps_per_epoch_val < 0:
+        args.steps_per_epoch_val = None
+
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
         import time
@@ -603,5 +689,6 @@ if __name__ == '__main__':
         args.model_prefix = args.model_prefix.replace('{auto}', model_name)
         args.log = args.log.replace('{auto}', model_name)
         print('Using auto-generated model prefix %s' % args.model_prefix)
+
     _configLogger('weaver', filename=args.log)
     main(args)
