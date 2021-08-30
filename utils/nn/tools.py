@@ -29,7 +29,7 @@ def _flatten_preds(preds, mask=None, label_axis=1):
     return preds
 
 
-def train_classification(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=None, grad_scaler=None):
+def train_classification(model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None, tb_helper=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -53,8 +53,8 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, st
             label_counter.update(label.cpu().numpy())
             label = label.to(dev)
             opt.zero_grad()
-            logits = model(*inputs)
-            logits = _flatten_preds(logits, label_mask)
+            model_output = model(*inputs)
+            logits = _flatten_preds(model_output, label_mask)
             loss = loss_func(logits, label)
             if grad_scaler is None:
                 loss.backward()
@@ -83,6 +83,15 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, st
                 'Acc': '%.5f' % (correct / num_examples),
                 'AvgAcc': '%.5f' % (total_correct / count)})
 
+            if tb_helper:
+                tb_helper.write_scalars([
+                    ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
+                    ("Acc/train", correct / num_examples, tb_helper.batch_train_count + num_batches),
+                    ])
+                if tb_helper.custom_fn:
+                    with torch.no_grad():
+                        tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
+
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                 break
 
@@ -90,12 +99,25 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, st
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
+
+    if tb_helper:
+        tb_helper.write_scalars([
+            ("Loss/train (epoch)", total_loss / num_batches, epoch),
+            ("Acc/train (epoch)", total_correct / count, epoch),
+            ])
+        if tb_helper.custom_fn:
+            with torch.no_grad():
+                tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode='train')
+        # update the batch state
+        tb_helper.batch_train_count += num_batches
+
     if scheduler and not getattr(scheduler, '_update_per_step', False):
         scheduler.step()
 
 
-def evaluate_classification(model, test_loader, dev, for_training=True, loss_func=None, steps_per_epoch=None,
-                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix']):
+def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
+                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
+                            tb_helper=None):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -127,8 +149,8 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
                 num_examples = label.shape[0]
                 label_counter.update(label.cpu().numpy())
                 label = label.to(dev)
-                logits = model(*inputs)
-                logits = _flatten_preds(logits, label_mask)
+                model_output = model(*inputs)
+                logits = _flatten_preds(model_output, label_mask)
 
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 for k, v in y.items():
@@ -152,12 +174,28 @@ def evaluate_classification(model, test_loader, dev, for_training=True, loss_fun
                     'Acc': '%.5f' % (correct / num_examples),
                     'AvgAcc': '%.5f' % (total_correct / count)})
 
+                if tb_helper:
+                    if tb_helper.custom_fn:
+                        with torch.no_grad():
+                            tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches,
+                                                mode='eval' if for_training else 'test')
+
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
+
+    if tb_helper:
+        tb_mode = 'eval' if for_training else 'test'
+        tb_helper.write_scalars([
+            ("Loss/%s (epoch)" % tb_mode, total_loss / count, epoch),
+            ("Acc/%s (epoch)" % tb_mode, total_correct / count, epoch),
+            ])
+        if tb_helper.custom_fn:
+            with torch.no_grad():
+                tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode=tb_mode)
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
@@ -233,7 +271,7 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
     return total_correct / count, scores, labels, observers
 
 
-def train_regression(model, loss_func, opt, scheduler, train_loader, dev, steps_per_epoch=None, grad_scaler=None):
+def train_regression(model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None, tb_helper=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -251,7 +289,8 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, steps_
             num_examples = label.shape[0]
             label = label.to(dev)
             opt.zero_grad()
-            preds = model(*inputs).squeeze()
+            model_output = model(*inputs)
+            preds = model_output.squeeze()
             loss = loss_func(preds, label)
             if grad_scaler is None:
                 loss.backward()
@@ -285,6 +324,16 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, steps_
                 'AvgMAE': '%.5f' % (sum_abs_err / count),
             })
 
+            if tb_helper:
+                tb_helper.write_scalars([
+                    ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
+                    ("MSE/train", sqr_err / num_examples, tb_helper.batch_train_count + num_batches),
+                    ("MAE/train", abs_err / num_examples, tb_helper.batch_train_count + num_batches),
+                    ])
+                if tb_helper.custom_fn:
+                    with torch.no_grad():
+                        tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
+
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                 break
 
@@ -292,13 +341,27 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, steps_
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
                  (total_loss / num_batches, sum_sqr_err / count, sum_abs_err / count))
+
+    if tb_helper:
+        tb_helper.write_scalars([
+            ("Loss/train (epoch)", total_loss / num_batches, epoch),
+            ("MSE/train (epoch)", sum_sqr_err / count, epoch),
+            ("MAE/train (epoch)", sum_abs_err / count, epoch),
+            ])
+        if tb_helper.custom_fn:
+            with torch.no_grad():
+                tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode='train')
+        # update the batch state
+        tb_helper.batch_train_count += num_batches
+
     if scheduler and not getattr(scheduler, '_update_per_step', False):
         scheduler.step()
 
 
-def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=None, steps_per_epoch=None,
+def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
                         eval_metrics=['mean_squared_error', 'mean_absolute_error', 'median_absolute_error',
-                                      'mean_gamma_deviance']):
+                                      'mean_gamma_deviance'],
+                        tb_helper=None):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -319,7 +382,8 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
                 label = y[data_config.label_names[0]].float()
                 num_examples = label.shape[0]
                 label = label.to(dev)
-                preds = model(*inputs).squeeze()
+                model_output = model(*inputs)
+                preds = model_output.squeeze()
 
                 scores.append(preds.detach().cpu().numpy())
                 for k, v in y.items():
@@ -348,11 +412,28 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
                     'AvgMAE': '%.5f' % (sum_abs_err / count),
                 })
 
+                if tb_helper:
+                    if tb_helper.custom_fn:
+                        with torch.no_grad():
+                            tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches,
+                                                mode='eval' if for_training else 'test')
+
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+
+    if tb_helper:
+        tb_mode = 'eval' if for_training else 'test'
+        tb_helper.write_scalars([
+            ("Loss/%s (epoch)" % tb_mode, total_loss / count, epoch),
+            ("MSE/%s (epoch)" % tb_mode, sum_sqr_err / count, epoch),
+            ("MAE/%s (epoch)" % tb_mode, sum_abs_err / count, epoch),
+            ])
+        if tb_helper.custom_fn:
+            with torch.no_grad():
+                tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode=tb_mode)
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
@@ -366,3 +447,30 @@ def evaluate_regression(model, test_loader, dev, for_training=True, loss_func=No
         # convert 2D labels/scores
         observers = {k: _concat(v) for k, v in observers.items()}
         return total_loss / count, scores, labels, observers
+
+
+class TensorboardHelper(object):
+
+    def __init__(self, tb_comment, tb_custom_fn):
+        self.tb_comment = tb_comment
+        from torch.utils.tensorboard import SummaryWriter
+        self.writer = SummaryWriter(comment=self.tb_comment)
+        _logger.info('Create Tensorboard summary writer with comment %s' % self.tb_comment)
+
+        # initiate the batch state
+        self.batch_train_count = 0
+
+        # load custom function
+        self.custom_fn = tb_custom_fn
+        if self.custom_fn is not None:
+            from importlib import import_module
+            from functools import partial
+            self.custom_fn = import_module(self.custom_fn.replace('.py', '').replace('/', '.'))
+            self.custom_fn = partial(self.custom_fn.get_tensorboard_custom_fn, tb_writer=self.writer)
+
+    def __del__(self):
+        self.writer.close()
+
+    def write_scalars(self, write_info):
+        for tag, scalar_value, global_step in write_info:
+            self.writer.add_scalar(tag, scalar_value, global_step)
