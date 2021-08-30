@@ -47,6 +47,11 @@ parser.add_argument('--demo', action='store_true', default=False,
                     help='quickly test the setup by running over only a small number of events')
 parser.add_argument('--lr-finder', type=str, default=None,
                     help='run learning rate finder instead of the actual training; format: ``start_lr, end_lr, num_iters``')
+parser.add_argument('--tensorboard', type=str, default=None,
+                    help='create a tensorboard summary writer with the given comment')
+parser.add_argument('--tensorboard-custom-fn', type=str, default=None,
+                    help='the path of the python script containing a user-specified function `get_tensorboard_custom_fn`, '
+                         'to display custom information per mini-batch or per epoch, during the training, validation or test.')
 parser.add_argument('-n', '--network-config', type=str, default='networks/particle_net_pfcand_sv.py',
                     help='network architecture configuration file; the path must be relative to the current dir')
 parser.add_argument('-o', '--network-option', nargs=2, action='append', default=[],
@@ -551,6 +556,12 @@ def main(args):
         onnx(args, model, data_config, model_info)
         return
 
+    if args.tensorboard:
+        from utils.nn.tools import TensorboardHelper
+        tb = TensorboardHelper(args, tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
+    else:
+        tb = None
+
     # note: we should always save/load the state_dict of the original model, not the one wrapped by nn.DataParallel
     # so we do not convert it to nn.DataParallel now
     orig_model = model
@@ -599,8 +610,8 @@ def main(args):
                     continue
             print('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler)
+            train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler, tb_helper=tb)
             if args.model_prefix:
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
@@ -610,8 +621,8 @@ def main(args):
                 torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric = evaluate(model, val_loader, dev, loss_func=loss_func,
-                                    steps_per_epoch=args.steps_per_epoch_val)
+            valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb)
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)
@@ -647,7 +658,7 @@ def main(args):
                 from utils.nn.tools import evaluate_onnx
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
             else:
-                test_metric, scores, labels, observers = evaluate(model, test_loader, dev, for_training=False)
+                test_metric, scores, labels, observers = evaluate(model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb)
             _logger.info('Test metric %.5f' % test_metric, color='bold')
             del test_loader
 
