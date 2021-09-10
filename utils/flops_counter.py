@@ -135,7 +135,7 @@ def print_model_with_flops(model, total_flops, total_params, units='GMac',
             del m.accumulate_flops
 
     model.apply(add_extra_repr)
-    _logger.info(repr(model))
+    _logger.info(repr(model), color='lightgray')
     model.apply(del_extra_repr)
 
 
@@ -212,7 +212,7 @@ def start_flops_count(self, **kwargs):
             if verbose and not type(module) in (nn.Sequential, nn.ModuleList) and \
                not type(module) in seen_types:
                 _logger.info('Warning: module ' + type(module).__name__ +
-                             ' is treated as a zero-op.')
+                             ' is treated as a zero-op.', color='lightgray')
             seen_types.add(type(module))
 
     self.apply(partial(add_flops_counter_hook_function, **kwargs))
