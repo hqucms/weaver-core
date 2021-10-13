@@ -558,7 +558,7 @@ def main(args):
 
     if args.tensorboard:
         from utils.nn.tools import TensorboardHelper
-        tb = TensorboardHelper(args, tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
+        tb = TensorboardHelper(tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
     else:
         tb = None
 
