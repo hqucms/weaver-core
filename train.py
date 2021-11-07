@@ -69,13 +69,15 @@ parser.add_argument('--steps-per-epoch', type=int, default=None,
                     help='number of steps (iterations) per epochs; if not set, each epoch will run over all loaded samples')
 parser.add_argument('--steps-per-epoch-val', type=int, default=None,
                     help='number of steps (iterations) per epochs for validation; if not set, each epoch will run over all loaded samples')
-parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'ranger'],  # TODO: add more
+parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'radam', 'ranger'],  # TODO: add more
                     help='optimizer for the training')
 parser.add_argument('--optimizer-option', nargs=2, action='append', default=[],
                     help='options to pass to the optimizer class constructor, e.g., `--optimizer-option weight_decay 1e-4`')
 parser.add_argument('--lr-scheduler', type=str, default='flat+decay',
                     choices=['none', 'steps', 'flat+decay', 'flat+linear', 'flat+cos', 'one-cycle'],
                     help='learning rate scheduler')
+parser.add_argument('--warmup-steps', type=int, default=0,
+                    help='number of warm-up steps, only valid for `flat+linear` and `flat+cos` lr schedulers')
 parser.add_argument('--load-epoch', type=int, default=None,
                     help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%d_state.pt` and `epoch-%d_optimizer.pt` files')
 parser.add_argument('--start-lr', type=float, default=5e-3,
@@ -83,7 +85,7 @@ parser.add_argument('--start-lr', type=float, default=5e-3,
 parser.add_argument('--batch-size', type=int, default=128,
                     help='batch size')
 parser.add_argument('--use-amp', action='store_true', default=False,
-                    help='use mixed precision training (fp16); NOT WORKING YET')
+                    help='use mixed precision training (fp16)')
 parser.add_argument('--gpus', type=str, default='0',
                     help='device for the training/testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
 parser.add_argument('--num-workers', type=int, default=1,
@@ -348,6 +350,8 @@ def optim(args, model, device):
         opt = torch.optim.Adam(model.parameters(), lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'adamW':
         opt = torch.optim.AdamW(model.parameters(), lr=args.start_lr, **optimizer_options)
+    elif args.optimizer == 'radam':
+        opt = torch.optim.RAdam(model.parameters(), lr=args.start_lr, **optimizer_options)
 
     # load previous training and resume if `--load-epoch` is set
     if args.load_epoch is not None:
@@ -372,6 +376,7 @@ def optim(args, model, device):
                 last_epoch=-1 if args.load_epoch is None else args.load_epoch)
         elif args.lr_scheduler == 'flat+linear' or args.lr_scheduler == 'flat+cos':
             total_steps = args.num_epochs * args.steps_per_epoch
+            warmup_steps = args.warmup_steps
             flat_steps = total_steps * 0.7 - 1
             min_factor = 0.001
 
@@ -380,6 +385,8 @@ def optim(args, model, device):
                     raise ValueError(
                         "Tried to step {} times. The specified number of total steps is {}".format(
                             step_num + 1, total_steps))
+                if step_num < warmup_steps:
+                    return 1. * step_num / warmup_steps
                 if step_num <= flat_steps:
                     return 1.0
                 pct = (step_num - flat_steps) / (total_steps - flat_steps)
@@ -596,14 +603,9 @@ def main(args):
             lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
             return
 
-        if args.use_amp:
-            from torch.cuda.amp import GradScaler
-            scaler = GradScaler()
-        else:
-            scaler = None
-
         # training loop
         best_valid_metric = np.inf if args.regression_mode else 0
+        grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
@@ -611,7 +613,7 @@ def main(args):
             print('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=scaler, tb_helper=tb)
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
             if args.model_prefix:
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):

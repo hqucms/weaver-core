@@ -53,9 +53,10 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
             label_counter.update(label.cpu().numpy())
             label = label.to(dev)
             opt.zero_grad()
-            model_output = model(*inputs)
-            logits = _flatten_preds(model_output, label_mask)
-            loss = loss_func(logits, label)
+            with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+                model_output = model(*inputs)
+                logits = _flatten_preds(model_output, label_mask)
+                loss = loss_func(logits, label)
             if grad_scaler is None:
                 loss.backward()
                 opt.step()
@@ -150,7 +151,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 label_counter.update(label.cpu().numpy())
                 label = label.to(dev)
                 model_output = model(*inputs)
-                logits = _flatten_preds(model_output, label_mask)
+                logits = _flatten_preds(model_output, label_mask).float()
 
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 for k, v in y.items():
@@ -289,9 +290,10 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, epoch,
             num_examples = label.shape[0]
             label = label.to(dev)
             opt.zero_grad()
-            model_output = model(*inputs)
-            preds = model_output.squeeze()
-            loss = loss_func(preds, label)
+            with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+                model_output = model(*inputs)
+                preds = model_output.squeeze()
+                loss = loss_func(preds, label)
             if grad_scaler is None:
                 loss.backward()
                 opt.step()
@@ -383,7 +385,7 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
                 num_examples = label.shape[0]
                 label = label.to(dev)
                 model_output = model(*inputs)
-                preds = model_output.squeeze()
+                preds = model_output.squeeze().float()
 
                 scores.append(preds.detach().cpu().numpy())
                 for k, v in y.items():
