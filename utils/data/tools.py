@@ -101,6 +101,16 @@ def _batch_gather(array, indices):
     return out
 
 
+def _p4_from_xyzt(*args):
+    from uproot3_methods import TLorentzVectorArray
+    return TLorentzVectorArray.from_cartesian(*args)
+
+
+def _p4_from_ptetaphie(*args):
+    from uproot3_methods import TLorentzVectorArray
+    return TLorentzVectorArray.from_ptetaphie(*args)
+
+
 def _get_variable_names(expr, exclude=['awkward', 'np', 'numpy', 'math']):
     import ast
     root = ast.parse(expr)
@@ -114,5 +124,5 @@ def _eval_expr(expr, table):
         {'math': math, 'np': np, 'awkward': awkward, '_concat': _concat, '_stack': _stack, '_pad': _pad,
          '_repeat_pad': _repeat_pad, '_clip': _clip, '_batch_knn': _batch_knn,
          '_batch_permute_indices': _batch_permute_indices, '_batch_argsort': _batch_argsort,
-         '_batch_gather': _batch_gather})
+         '_batch_gather': _batch_gather, '_p4_from_xyzt': _p4_from_xyzt, '_p4_from_ptetaphie': _p4_from_ptetaphie})
     return eval(expr, tmp)
