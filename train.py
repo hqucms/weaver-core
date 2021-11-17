@@ -115,6 +115,8 @@ parser.add_argument('--print', action='store_true', default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
 parser.add_argument('--profile', action='store_true', default=False,
                     help='run the profiler')
+parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], default=None,
+                    help='backend for distributed training')
 
 
 def to_filelist(args, mode='train'):
@@ -540,8 +542,17 @@ def main(args):
 
     # device
     if args.gpus:
-        gpus = [int(i) for i in args.gpus.split(',')]
-        dev = torch.device(gpus[0])
+        # distributed training
+        if args.backend is not None:
+            _logger.info(f'Using distributed PyTorch with {args.backend} backend')
+            torch.distributed.init_process_group(backend=args.backend)
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            gpus = [local_rank]
+            dev = torch.device(local_rank)
+        else:
+            gpus = [int(i) for i in args.gpus.split(',')]
+            dev = torch.device(gpus[0])
+        torch.cuda.set_device(dev)
     else:
         gpus = None
         dev = torch.device('cpu')
@@ -558,6 +569,10 @@ def main(args):
         return
 
     model, model_info, network_module, network_options = model_setup(args, data_config)
+
+    # TODO: load checkpoint
+    # if args.backend is not None:
+    #     load_checkpoint()
 
     if args.print:
         return
@@ -596,10 +611,13 @@ def main(args):
         opt, scheduler = optim(args, model, dev)
 
         # multi-gpu
-        if gpus is not None and len(gpus) > 1:
-            # model becomes `torch.nn.DataParallel` w/ model.module being the original `torch.nn.Module`
-            model = torch.nn.DataParallel(model, device_ids=gpus)
-        model = model.to(dev)
+        if args.backend is not None:
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=gpus, output_device=local_rank)
+        else:
+            if gpus is not None and len(gpus) > 1:
+                # model becomes `torch.nn.DataParallel` w/ model.module being the original `torch.nn.Module`
+                model = torch.nn.DataParallel(model, device_ids=gpus)
+            model = model.to(dev)
 
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
@@ -618,17 +636,21 @@ def main(args):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
                     continue
-            print('-' * 50)
+            _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
                   steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
-            if args.model_prefix:
+            if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
-                state_dict = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+                state_dict = model.module.state_dict() if isinstance(
+                    model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
                 torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
                 torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
+            # if args.backend is not None and local_rank == 0:
+            # TODO: save checkpoint
+            #     save_checkpoint()
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
@@ -638,7 +660,7 @@ def main(args):
                 valid_metric > best_valid_metric)
             if is_best_epoch:
                 best_valid_metric = valid_metric
-                if args.model_prefix:
+                if args.model_prefix and (args.backend is None or local_rank == 0):
                     shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
                                  epoch, args.model_prefix + '_best_epoch_state.pt')
                     torch.save(model, args.model_prefix + '_best_epoch_full.pt')

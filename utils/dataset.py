@@ -157,7 +157,7 @@ class _SimpleIter(object):
         filelist = self._init_filelist.copy()
         if worker_info is not None:
             # in a worker process
-            np.random.seed(worker_info.seed & 0xFFFFFFFF)
+            np.random.seed((int(os.environ.get("LOCAL_RANK", "0")) + worker_info.seed) & 0xFFFFFFFF)
             # split workload by files
             per_worker = int(math.ceil(len(filelist) / float(worker_info.num_workers)))
             start = worker_info.id * per_worker

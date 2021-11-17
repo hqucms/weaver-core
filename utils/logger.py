@@ -21,6 +21,20 @@ def _configLogger(name, filename=None, loglevel=logging.INFO):
         logger.addHandler(logfile)
 
 
+class _LoggerNoOp():
+    def debug(msg, *args, **kwargs):
+        pass
+
+    def info(msg, *args, **kwargs):
+        pass
+
+    def warning(msg, *args, **kwargs):
+        pass
+
+    def error(msg, *args, **kwargs):
+        pass
+
+
 class ColoredLogger():
     color_dict = {
         'black': '\033[0;30m',
@@ -46,7 +60,7 @@ class ColoredLogger():
     }
 
     def __init__(self, name):
-        self.logger = logging.getLogger(name)
+        self.logger = logging.getLogger(name) if int(os.environ.get("LOCAL_RANK", "0")) == 0 else _LoggerNoOp()
 
     def colorize(self, msg, color):
         return self.color_dict[color] + msg + self.color_dict['endcolor']
