@@ -66,9 +66,17 @@ parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/net
 parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
 parser.add_argument('--steps-per-epoch', type=int, default=None,
-                    help='number of steps (iterations) per epochs; if not set, each epoch will run over all loaded samples')
+                    help='number of steps (iterations) per epochs; '
+                         'if neither of `--steps-per-epoch` or `--samples-per-epoch` is set, each epoch will run over all loaded samples')
 parser.add_argument('--steps-per-epoch-val', type=int, default=None,
-                    help='number of steps (iterations) per epochs for validation; if not set, each epoch will run over all loaded samples')
+                    help='number of steps (iterations) per epochs for validation; '
+                         'if neither of `--steps-per-epoch-val` or `--samples-per-epoch-val` is set, each epoch will run over all loaded samples')
+parser.add_argument('--samples-per-epoch', type=int, default=None,
+                    help='number of samples per epochs; '
+                         'if neither of `--steps-per-epoch` or `--samples-per-epoch` is set, each epoch will run over all loaded samples')
+parser.add_argument('--samples-per-epoch-val', type=int, default=None,
+                    help='number of samples per epochs for validation; '
+                         'if neither of `--steps-per-epoch-val` or `--samples-per-epoch-val` is set, each epoch will run over all loaded samples')
 parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'radam', 'ranger'],  # TODO: add more
                     help='optimizer for the training')
 parser.add_argument('--optimizer-option', nargs=2, action='append', default=[],
@@ -684,6 +692,18 @@ def main(args):
 
 if __name__ == '__main__':
     args = parser.parse_args()
+
+    if args.samples_per_epoch is not None:
+        if args.steps_per_epoch is None:
+            args.steps_per_epoch = args.samples_per_epoch // args.batch_size
+        else:
+            raise RuntimeError('Please use either `--steps-per-epoch` or `--samples-per-epoch`, but not both!')
+
+    if args.samples_per_epoch_val is not None:
+        if args.steps_per_epoch_val is None:
+            args.steps_per_epoch_val = args.samples_per_epoch_val // args.batch_size
+        else:
+            raise RuntimeError('Please use either `--steps-per-epoch-val` or `--samples-per-epoch-val`, but not both!')
 
     if args.steps_per_epoch_val is None and args.steps_per_epoch is not None:
         args.steps_per_epoch_val = round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split)
