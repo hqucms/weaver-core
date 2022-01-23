@@ -89,6 +89,16 @@ def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale
     return keep_indices.copy()
 
 
+def _check_labels(table):
+    if np.all(table['_labelcheck_'] == 1):
+        del table['_labelcheck_']
+    else:
+        if np.any(table['_labelcheck_'] == 0):
+            raise RuntimeError('Inconsistent label definition: some of the entries are not assigned to any classes!')
+        if np.any(table['_labelcheck_'] > 1):
+            raise RuntimeError('Inconsistent label definition: some of the entries are assigned to multiple classes!')
+
+
 def _preprocess(table, data_config, options):
     # apply selection
     entries = _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
@@ -96,6 +106,9 @@ def _preprocess(table, data_config, options):
         return []
     # define new variables
     _build_new_variables(table, data_config.var_funcs)
+    # check labels
+    if data_config.label_type == 'simple':
+        _check_labels(table)
     # build weights
     if options['reweight']:
         _build_weights(table, data_config)

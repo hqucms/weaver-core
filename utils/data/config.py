@@ -95,6 +95,7 @@ class DataConfig(object):
             assert(isinstance(self.label_value, list))
             self.label_names = ('_label_',)
             self.var_funcs['_label_'] = 'np.stack([%s], axis=1).argmax(1)' % (','.join(self.label_value))
+            self.var_funcs['_labelcheck_'] = 'np.stack([%s], axis=1).sum(1)' % (','.join(self.label_value))
         else:
             self.label_names = tuple(self.label_value.keys())
             self.var_funcs.update(self.label_value)
