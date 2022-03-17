@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils.logger import _logger
+from .logger import _logger
 
 '''Modified from: https://github.com/sovrasov/flops-counter.pytorch'''
 

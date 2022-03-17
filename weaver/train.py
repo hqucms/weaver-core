@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import ast
 import sys
 import shutil
 import glob
@@ -11,10 +12,9 @@ import math
 import torch
 
 from torch.utils.data import DataLoader
-from importlib import import_module
-import ast
 from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
+from weaver.utils.import_tools import import_module
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
@@ -535,7 +535,7 @@ def model_setup(args, data_config):
     :param data_config:
     :return: model, model_info, network_module, network_options
     """
-    network_module = import_module(args.network_config.replace('.py', '').replace('/', '.'))
+    network_module = import_module(args.network_config, name='_network_module')
     network_options = {k: ast.literal_eval(v) for k, v in args.network_option}
     _logger.info('Network options: %s' % str(network_options))
     if args.export_onnx:
