@@ -13,7 +13,7 @@
 - [Weaver](#weaver)
     - [Set up your environment](#set-up-your-environment)
         - [Install Miniconda (if you don't already have it)](#install-miniconda-if-you-dont-already-have-it)
-        - [Set up a conda environment and install the required packages](#set-up-a-conda-environment-and-install-the-required-packages)
+        - [Set up a conda environment and install the packages](#set-up-a-conda-environment-and-install-the-packages)
     - [Prepare your configuration files](#prepare-your-configuration-files)
         - [Data configuration file](#data-configuration-file)
         - [Model configuration file](#model-configuration-file)
@@ -59,7 +59,7 @@ If you cannot run `conda` command, check if you need to add the conda path to yo
 export PATH="$HOME/miniconda3/bin:$PATH"
 ```
 
-### Set up a conda environment and install the required packages
+### Set up a conda environment and install the packages
 
 ```bash
 # create a new conda environment
@@ -68,24 +68,12 @@ conda create -n weaver python=3.7
 # activate the environment
 conda activate weaver
 
-# install the necessary python packages
-pip install numpy pandas scikit-learn scipy matplotlib tqdm PyYAML
-
-# install uproot for reading/writing ROOT files
-pip install uproot3 awkward0 lz4 xxhash
-
-# install PyTables if using HDF5 files
-pip install tables
-
-# install onnxruntime if needs to run inference w/ ONNX models
-pip install onnxruntime-gpu
-
-# install tensorboard for visualization
-pip install tensorboard
-
 # install pytorch, follow instructions for your OS/CUDA version at:
 # https://pytorch.org/get-started
 # pip install torch
+
+# install weaver, this will install also all the dependencies except for PyTorch
+pip install weaver-core
 ```
 
 ## Prepare your configuration files
@@ -136,13 +124,13 @@ An example of the model configuration file is [networks/particle_net_pf_sv.py](n
 
 ## Start running!
 
-The [train.py](train.py) script is the top-level script to run for training a neural net, getting prediction from trained models, and exporting trained models to ONNX for production.
-To check all the command-line options for `train.py`, run `python train.py -h`. Examples for training, inference and model exportation are shown below:
+The `weaver` command is the top-level entry to run for training a neural net, getting prediction from trained models, and exporting trained models to ONNX for production. The corresponding script file is [weaver/train.py](weaver/train.py).
+To check all the command-line options for `weaver`, run `weaver -h`. Examples for training, inference and model exportation are shown below:
 
 ### Training
 
 ```bash
-python train.py --data-train '/path/to/train_files/*/*/*/*/output_*.root' \
+weaver --data-train '/path/to/train_files/*/*/*/*/output_*.root' \
  --data-test '/path/to/train_files/*/*/*/*/output_*.root' \
  --data-config data/ak15_points_pf_sv.yaml \
  --network-config networks/particle_net_pf_sv.py \
@@ -168,7 +156,7 @@ Note:
 Once you have a trained model, you can load it to run prediction and test its performance, e.g.,
 
 ```bash
-python train.py --predict --data-test '/path/to/test_files/*/*/*/*/output_*.root' \
+weaver --predict --data-test '/path/to/test_files/*/*/*/*/output_*.root' \
  --data-config data/ak15_points_pf_sv.yaml \
  --network-config networks/particle_net_pf_sv.py \
  --model-prefix /path/to/models/prefix_best_epoch_state.pt \
@@ -189,7 +177,7 @@ Note:
 When you are satisfied with the trained model, you could export it from PyTorch to ONNX format for inference (e.g., using [ONNXRuntime](https://github.com/microsoft/onnxruntime)):
 
 ```bash
-python train.py -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path/to/models/prefix_best_epoch_state.pt --export-onnx model.onnx
+weaver -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path/to/models/prefix_best_epoch_state.pt --export-onnx model.onnx
 ```
 
 ## More about data loading and processing

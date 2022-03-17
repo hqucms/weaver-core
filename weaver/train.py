@@ -13,8 +13,8 @@ import torch
 from torch.utils.data import DataLoader
 from importlib import import_module
 import ast
-from utils.logger import _logger, _configLogger
-from utils.dataset import SimpleIterDataset
+from weaver.utils.logger import _logger, _configLogger
+from weaver.utils.dataset import SimpleIterDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
@@ -339,7 +339,7 @@ def flops(model, model_info):
     :param model_info:
     :return:
     """
-    from utils.flops_counter import get_model_complexity_info
+    from weaver.utils.flops_counter import get_model_complexity_info
     import copy
 
     model = copy.deepcopy(model).cpu()
@@ -452,7 +452,7 @@ def optim(args, model, device):
         parameters = model.parameters()
 
     if args.optimizer == 'ranger':
-        from utils.nn.optimizer.ranger import Ranger
+        from weaver.utils.nn.optimizer.ranger import Ranger
         opt = Ranger(parameters, lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'adam':
         opt = torch.optim.Adam(parameters, lr=args.start_lr, **optimizer_options)
@@ -570,7 +570,7 @@ def iotest(args, data_loader):
     """
     from tqdm.auto import tqdm
     from collections import defaultdict
-    from utils.data.tools import _concat
+    from weaver.utils.data.tools import _concat
     _logger.info('Start running IO test')
     monitor_info = defaultdict(list)
 
@@ -595,7 +595,7 @@ def save_root(args, output_path, data_config, scores, labels, observers):
     :param observers
     :return:
     """
-    from utils.data.fileio import _write_root
+    from weaver.utils.data.fileio import _write_root
     output = {}
     if args.regression_mode:
         output[data_config.label_names[0]] = labels[data_config.label_names[0]]
@@ -627,7 +627,7 @@ def save_awk(args, output_path, scores, labels, observers):
     :param observers:
     :return:
     """
-    from utils.data.tools import awkward
+    from weaver.utils.data.tools import awkward
     output = {'scores': scores}
     output.update(labels)
     output.update(observers)
@@ -646,7 +646,7 @@ def save_awk(args, output_path, scores, labels, observers):
     awkward.save(output_path, output, mode='w')
 
 
-def main(args):
+def _main(args):
     _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
 
     if args.file_fraction < 1:
@@ -655,12 +655,12 @@ def main(args):
     # classification/regression mode
     if args.regression_mode:
         _logger.info('Running in regression mode')
-        from utils.nn.tools import train_regression as train
-        from utils.nn.tools import evaluate_regression as evaluate
+        from weaver.utils.nn.tools import train_regression as train
+        from weaver.utils.nn.tools import evaluate_regression as evaluate
     else:
         _logger.info('Running in classification mode')
-        from utils.nn.tools import train_classification as train
-        from utils.nn.tools import evaluate_classification as evaluate
+        from weaver.utils.nn.tools import train_classification as train
+        from weaver.utils.nn.tools import evaluate_classification as evaluate
 
     # training/testing mode
     training_mode = not args.predict
@@ -712,7 +712,7 @@ def main(args):
         return
 
     if args.tensorboard:
-        from utils.nn.tools import TensorboardHelper
+        from weaver.utils.nn.tools import TensorboardHelper
         tb = TensorboardHelper(tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
     else:
         tb = None
@@ -742,7 +742,7 @@ def main(args):
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
             start_lr, end_lr, num_iter = args.lr_finder.replace(' ', '').split(',')
-            from utils.lr_finder import LRFinder
+            from weaver.utils.lr_finder import LRFinder
             lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=train_input_names,
                                  label_names=train_label_names)
             lr_finder.range_test(train_loader, start_lr=float(start_lr), end_lr=float(end_lr), num_iter=int(num_iter))
@@ -815,7 +815,7 @@ def main(args):
             # run prediction
             if args.model_prefix.endswith('.onnx'):
                 _logger.info('Loading model %s for eval' % args.model_prefix)
-                from utils.nn.tools import evaluate_onnx
+                from weaver.utils.nn.tools import evaluate_onnx
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
             else:
                 test_metric, scores, labels, observers = evaluate(
@@ -841,7 +841,7 @@ def main(args):
                 _logger.info('Written output to %s' % output_path, color='bold')
 
 
-if __name__ == '__main__':
+def main():
     args = parser.parse_args()
 
     if args.samples_per_epoch is not None:
@@ -886,4 +886,8 @@ if __name__ == '__main__':
             stdout = None
     _configLogger('weaver', stdout=stdout, filename=args.log)
 
-    main(args)
+    _main(args)
+
+
+if __name__ == '__main__':
+    main()
