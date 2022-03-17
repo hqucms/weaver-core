@@ -42,6 +42,8 @@ class AutoStandardizer(object):
     """
 
     def __init__(self, filelist, data_config):
+        if isinstance(filelist, dict):
+            filelist = sum(filelist.values(), [])
         self._filelist = filelist if isinstance(
             filelist, (list, tuple)) else glob.glob(filelist)
         self._data_config = data_config.copy()
@@ -115,6 +117,8 @@ class WeightMaker(object):
     """
 
     def __init__(self, filelist, data_config):
+        if isinstance(filelist, dict):
+            filelist = sum(filelist.values(), [])
         self._filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
         self._data_config = data_config.copy()
 
