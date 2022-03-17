@@ -29,6 +29,7 @@ class Lookahead(Optimizer):
         self.step_counter = 0
         assert pullback_momentum in ["reset", "pullback", "none"]
         self.pullback_momentum = pullback_momentum
+        self.defaults = optimizer.defaults
         self.reset()
 
     def reset(self):

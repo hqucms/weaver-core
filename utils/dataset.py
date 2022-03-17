@@ -1,8 +1,7 @@
 import os
-import glob
 import copy
+import json
 import numpy as np
-import math
 import torch.utils.data
 
 from itertools import chain
@@ -153,21 +152,28 @@ class _SimpleIter(object):
         self.indices = []
         self.cursor = 0
 
+        self._seed = None
         worker_info = torch.utils.data.get_worker_info()
-        filelist = self._init_filelist.copy()
+        file_dict = self._init_file_dict.copy()
         if worker_info is not None:
             # in a worker process
-            np.random.seed((int(os.environ.get("LOCAL_RANK", "0")) + worker_info.seed) & 0xFFFFFFFF)
+            self._name += '_worker%d' % worker_info.id
+            self._seed = worker_info.seed & 0xFFFFFFFF
+            np.random.seed(self._seed)
             # split workload by files
-            per_worker = int(math.ceil(len(filelist) / float(worker_info.num_workers)))
-            start = worker_info.id * per_worker
-            stop = min(start + per_worker, len(filelist))
-            filelist = filelist[start:stop]
-        self.worker_filelist = filelist
+            new_file_dict = {}
+            for name, files in file_dict.items():
+                new_files = files[worker_info.id::worker_info.num_workers]
+                assert(len(new_files) > 0)
+                new_file_dict[name] = new_files
+            file_dict = new_file_dict
+        self.worker_file_dict = file_dict
+        self.worker_filelist = sum(file_dict.values(), [])
         self.worker_info = worker_info
         self.restart()
 
     def restart(self):
+        print('=== Restarting DataIter %s, seed=%s ===' % (self._name, self._seed))
         # re-shuffle filelist and load range if for training
         filelist = self.worker_filelist.copy()
         if self._sampler_options['shuffle']:
@@ -191,10 +197,13 @@ class _SimpleIter(object):
         _logger.debug(
             'Init iter [%d], will load %d (out of %d*%s=%d) files with load_range=%s:\n%s', 0
             if self.worker_info is None else self.worker_info.id, len(self.filelist),
-            len(self._init_filelist),
-            self._file_fraction, int(len(self._init_filelist) * self._file_fraction),
+            len(sum(self._init_file_dict.values(), [])),
+            self._file_fraction, int(len(sum(self._init_file_dict.values(), [])) * self._file_fraction),
             str(self.load_range),
             '\n'.join(self.filelist[: 3]) + '\n ... ' + self.filelist[-1],)
+
+        _logger.info('Restarted DataIter %s, load_range=%s, file_list:\n%s' %
+                     (self._name, str(self.load_range), json.dumps(self.worker_file_dict, indent=2)))
 
         # reset file fetching cursor
         self.ipos = 0 if self._fetch_by_files else self.load_range[0]
@@ -284,7 +293,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
     Handles dataloading.
 
     Arguments:
-        filelist (list): list of files to be loaded.
+        file_dict (dict): dictionary of lists of files to be loaded.
         data_config_file (str): YAML file containing data format information.
         for_training (bool): flag indicating whether the dataset is used for training or testing.
             When set to ``True``, will enable shuffling and sampling-based reweighting.
@@ -302,22 +311,20 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         file_fraction (float): fraction of files to load.
     """
 
-    def __init__(self, filelist, data_config_file, for_training=True, load_range_and_fraction=None,
+    def __init__(self, file_dict, data_config_file, for_training=True, load_range_and_fraction=None,
                  fetch_by_files=False, fetch_step=0.01, file_fraction=1, remake_weights=False, up_sample=True,
-                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False):
+                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name=''):
         self._iters = {} if infinity_mode or in_memory else None
         _init_args = set(self.__dict__.keys())
-        self._init_filelist = filelist if isinstance(filelist, (list, tuple)) else glob.glob(filelist)
+        self._init_file_dict = file_dict
         self._init_load_range_and_fraction = load_range_and_fraction
         self._fetch_by_files = fetch_by_files
-        if fetch_step <= 0:
-            self._fetch_step = len(filelist) if fetch_by_files else 1.
-        else:
-            self._fetch_step = fetch_step
+        self._fetch_step = fetch_step
         self._file_fraction = file_fraction
         self._async_load = async_load
         self._infinity_mode = infinity_mode
         self._in_memory = in_memory
+        self._name = name
 
         # ==== sampling parameters ====
         self._sampler_options = {
@@ -345,13 +352,13 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         if for_training:
             # produce variable standardization info if needed
             if self._data_config._missing_standardization_info:
-                s = AutoStandardizer(filelist, self._data_config)
+                s = AutoStandardizer(file_dict, self._data_config)
                 self._data_config = s.produce(data_config_autogen_file)
 
             # produce reweight info if needed
             if self._sampler_options['reweight'] and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
                 if remake_weights or self._data_config.reweight_hists is None:
-                    w = WeightMaker(filelist, self._data_config)
+                    w = WeightMaker(file_dict, self._data_config)
                     self._data_config = w.produce(data_config_autogen_file)
 
             # reload data_config w/o observers for training

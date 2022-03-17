@@ -4,14 +4,15 @@ import os
 from functools import lru_cache
 
 
-def _configLogger(name, filename=None, loglevel=logging.INFO):
+def _configLogger(name, stdout=sys.stdout, filename=None, loglevel=logging.INFO):
     # define a Handler which writes INFO messages or higher to the sys.stdout
     logger = logging.getLogger(name)
     logger.setLevel(loglevel)
-    console = logging.StreamHandler(sys.stdout)
-    console.setLevel(loglevel)
-    console.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
-    logger.addHandler(console)
+    if stdout:
+        console = logging.StreamHandler(stdout)
+        console.setLevel(loglevel)
+        console.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
+        logger.addHandler(console)
     if filename:
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
@@ -19,20 +20,6 @@ def _configLogger(name, filename=None, loglevel=logging.INFO):
         logfile.setLevel(loglevel)
         logfile.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
         logger.addHandler(logfile)
-
-
-class _LoggerNoOp():
-    def debug(msg, *args, **kwargs):
-        pass
-
-    def info(msg, *args, **kwargs):
-        pass
-
-    def warning(msg, *args, **kwargs):
-        pass
-
-    def error(msg, *args, **kwargs):
-        pass
 
 
 class ColoredLogger():
@@ -60,7 +47,7 @@ class ColoredLogger():
     }
 
     def __init__(self, name):
-        self.logger = logging.getLogger(name) if int(os.environ.get("LOCAL_RANK", "0")) == 0 else _LoggerNoOp()
+        self.logger = logging.getLogger(name)
 
     def colorize(self, msg, color):
         return self.color_dict[color] + msg + self.color_dict['endcolor']
