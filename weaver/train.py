@@ -783,7 +783,7 @@ def _main(args):
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
                                  epoch, args.model_prefix + '_best_epoch_state.pt')
-                    torch.save(model, args.model_prefix + '_best_epoch_full.pt')
+                    # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
                          (epoch, valid_metric, best_valid_metric), color='bold')
 
