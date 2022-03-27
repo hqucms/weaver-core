@@ -2,6 +2,7 @@ import time
 import glob
 import copy
 import numpy as np
+import awkward as ak
 
 from ..logger import _logger
 from .tools import _get_variable_names, _eval_expr
@@ -10,25 +11,24 @@ from .fileio import _read_files
 
 def _apply_selection(table, selection):
     if selection is None:
-        return
-    selected = _eval_expr(selection, table).astype('bool')
-    for k in table.keys():
-        table[k] = table[k][selected]
-    return selected.sum()
+        return table
+    selected = ak.values_astype(_eval_expr(selection, table), 'bool')
+    return table[selected]
 
 
 def _build_new_variables(table, funcs):
     if funcs is None:
-        return
+        return table
     for k, expr in funcs.items():
-        if k in table:
+        if k in table.fields:
             continue
         table[k] = _eval_expr(expr, table)
+    return table
 
 
 def _clean_up(table, drop_branches):
-    for k in drop_branches:
-        del table[k]
+    columns = [k for k in table.fields if k not in drop_branches]
+    return table[columns]
 
 
 class AutoStandardizer(object):
@@ -66,9 +66,10 @@ class AutoStandardizer(object):
         _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, self.load_range,
                             show_progressbar=True, treename=self._data_config.treename)
-        _apply_selection(table, self._data_config.selection)
-        _build_new_variables(table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
-        _clean_up(table, self.load_branches - self.keep_branches)
+        table = _apply_selection(table, self._data_config.selection)
+        table = _build_new_variables(
+            table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
+        table = _clean_up(table, self.load_branches - self.keep_branches)
         return table
 
     def make_preprocess_params(self, table):
@@ -79,11 +80,7 @@ class AutoStandardizer(object):
                 if k.endswith('_mask'):
                     params['center'] = None
                 else:
-                    a = table[k]
-                    try:
-                        a = a.content
-                    except AttributeError:
-                        pass
+                    a = ak.flatten(table[k], axis=None)
                     low, center, high = np.percentile(a, [16, 50, 84])
                     scale = max(high - center, center - low)
                     scale = 1 if scale == 0 else 1. / scale
@@ -136,9 +133,10 @@ class WeightMaker(object):
         _logger.debug('[WeightMaker] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, show_progressbar=True, treename=self._data_config.treename)
-        _apply_selection(table, self._data_config.selection)
-        _build_new_variables(table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
-        _clean_up(table, self.load_branches - self.keep_branches)
+        table = _apply_selection(table, self._data_config.selection)
+        table = _build_new_variables(
+            table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
+        table = _clean_up(table, self.load_branches - self.keep_branches)
         return table
 
     def make_weights(self, table):

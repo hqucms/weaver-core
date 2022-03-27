@@ -1,11 +1,12 @@
 import numpy as np
+import awkward as ak
 import tqdm
 import time
 import torch
 
 from collections import defaultdict, Counter
 from .metrics import evaluate_metrics
-from ..data.tools import awkward, _concat
+from ..data.tools import _concat
 from ..logger import _logger
 
 
@@ -211,9 +212,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         if len(scores) != entry_count:
             if len(labels_counts):
                 labels_counts = np.concatenate(labels_counts)
-                scores = awkward.JaggedArray.fromcounts(labels_counts, scores)
+                scores = ak.unflatten(scores, labels_counts)
                 for k, v in labels.items():
-                    labels[k] = awkward.JaggedArray.fromcounts(labels_counts, v)
+                    labels[k] = ak.unflatten(v, labels_counts)
             else:
                 assert(count % entry_count == 0)
                 scores = scores.reshape((entry_count, int(count / entry_count), -1)).transpose((1, 2))

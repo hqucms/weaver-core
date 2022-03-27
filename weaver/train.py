@@ -111,7 +111,7 @@ parser.add_argument('--num-workers', type=int, default=1,
 parser.add_argument('--predict', action='store_true', default=False,
                     help='run prediction instead of training')
 parser.add_argument('--predict-output', type=str,
-                    help='path to save the prediction output, support `.root` and `.awkd` format')
+                    help='path to save the prediction output, support `.root` and `.parquet` format')
 parser.add_argument('--export-onnx', type=str, default=None,
                     help='export the PyTorch model to ONNX model and save it at the given path (path must ends w/ .onnx); '
                          'needs to set `--data-config`, `--network-config`, and `--model-prefix` (requires the full model path)')
@@ -619,31 +619,19 @@ def save_root(args, output_path, data_config, scores, labels, observers):
     _write_root(output_path, output)
 
 
-def save_awk(args, output_path, scores, labels, observers):
+def save_parquet(args, output_path, scores, labels, observers):
     """
-    Saves as .awkd
+    Saves as parquet file
     :param scores:
     :param labels:
     :param observers:
     :return:
     """
-    from weaver.utils.data.tools import awkward
+    import awkward as ak
     output = {'scores': scores}
     output.update(labels)
     output.update(observers)
-
-    name_remap = {}
-    arraynames = list(output)
-    for i in range(len(arraynames)):
-        for j in range(i + 1, len(arraynames)):
-            if arraynames[i].startswith(arraynames[j]):
-                name_remap[arraynames[j]] = '%s_%d' % (arraynames[j], len(name_remap))
-            if arraynames[j].startswith(arraynames[i]):
-                name_remap[arraynames[i]] = '%s_%d' % (arraynames[i], len(name_remap))
-    _logger.info('Renamed the following variables in the output file: %s', str(name_remap))
-    output = {name_remap[k] if k in name_remap else k: v for k, v in output.items()}
-
-    awkward.save(output_path, output, mode='w')
+    ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
 def _main(args):
@@ -837,7 +825,7 @@ def _main(args):
                 if output_path.endswith('.root'):
                     save_root(args, output_path, data_config, scores, labels, observers)
                 else:
-                    save_awk(args, output_path, scores, labels, observers)
+                    save_parquet(args, output_path, scores, labels, observers)
                 _logger.info('Written output to %s' % output_path, color='bold')
 
 

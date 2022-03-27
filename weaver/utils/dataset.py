@@ -2,16 +2,16 @@ import os
 import copy
 import json
 import numpy as np
+import awkward as ak
 import torch.utils.data
 
-from itertools import chain
 from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
 from .logger import _logger, warn_once
 from .data.tools import _pad, _repeat_pad, _clip
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
-from .data.preprocess import _apply_selection, _build_new_variables, _clean_up, AutoStandardizer, WeightMaker
+from .data.preprocess import _apply_selection, _build_new_variables, AutoStandardizer, WeightMaker
 
 
 def _build_weights(table, data_config):
@@ -47,6 +47,15 @@ def _build_weights(table, data_config):
 
 
 def _finalize_inputs(table, data_config):
+    output = {}
+    # copy observer variables before transformation
+    for k in data_config.z_variables:
+        if k in data_config.observer_names:
+            output[k] = ak.to_numpy(table[k])
+    # copy labels
+    for k in data_config.label_names:
+        output[k] = ak.to_numpy(table[k])
+    # transformation
     for k, params in data_config.preprocess_params.items():
         if data_config._auto_standardization and params['center'] == 'auto':
             raise ValueError('No valid standardization params for %s' % k)
@@ -63,13 +72,14 @@ def _finalize_inputs(table, data_config):
     # stack variables for each input group
     for k, names in data_config.input_dicts.items():
         if len(names) == 1 and data_config.preprocess_params[names[0]]['length'] is None:
-            table['_' + k] = table[names[0]]
+            output['_' + k] = ak.to_numpy(table[names[0]])
         else:
-            table['_' + k] = np.stack([table[n] for n in names], axis=1)
-    # reduce memory usage
-    for n in set(chain(*data_config.input_dicts.values())):
-        if n not in data_config.label_names and n not in data_config.observer_names:
-            del table[n]
+            output['_' + k] = ak.to_numpy(np.stack([table[n] for n in names], axis=1))
+    # copy monitor variables
+    for k in data_config.z_variables:
+        if k not in output:
+            output[k] = ak.to_numpy(table[k])
+    return output
 
 
 def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale=1):
@@ -90,7 +100,7 @@ def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale
 
 def _check_labels(table):
     if np.all(table['_labelcheck_'] == 1):
-        del table['_labelcheck_']
+        return
     else:
         if np.any(table['_labelcheck_'] == 0):
             raise RuntimeError('Inconsistent label definition: some of the entries are not assigned to any classes!')
@@ -100,36 +110,34 @@ def _check_labels(table):
 
 def _preprocess(table, data_config, options):
     # apply selection
-    entries = _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
-    if entries == 0:
+    table = _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
+    if len(table) == 0:
         return []
     # define new variables
-    _build_new_variables(table, data_config.var_funcs)
+    table = _build_new_variables(table, data_config.var_funcs)
     # check labels
     if data_config.label_type == 'simple':
         _check_labels(table)
     # build weights
     if options['reweight']:
         _build_weights(table, data_config)
-    # drop unused variables
-    _clean_up(table, data_config.drop_branches)
-    # perform input variable standardization, clipping, padding and stacking
-    _finalize_inputs(table, data_config)
     # compute reweight indices
     if options['reweight'] and data_config.weight_name is not None:
-        indices = _get_reweight_indices(table[data_config.weight_name], up_sample=options['up_sample'],
+        indices = _get_reweight_indices(ak.to_numpy(table[data_config.weight_name]), up_sample=options['up_sample'],
                                         weight_scale=options['weight_scale'], max_resample=options['max_resample'])
     else:
         indices = np.arange(len(table[data_config.label_names[0]]))
     # shuffle
     if options['shuffle']:
         np.random.shuffle(indices)
-    return indices
+    # perform input variable standardization, clipping, padding and stacking
+    table = _finalize_inputs(table, data_config)
+    return table, indices
 
 
 def _load_next(data_config, filelist, load_range, options):
     table = _read_files(filelist, data_config.load_branches, load_range, treename=data_config.treename)
-    indices = _preprocess(table, data_config, options)
+    table, indices = _preprocess(table, data_config, options)
     return table, indices
 
 

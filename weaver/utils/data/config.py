@@ -84,7 +84,9 @@ class DataConfig(object):
                               'center': _get(1, 'auto' if self._auto_standardization else None),
                               'scale': _get(2, 1), 'min': _get(3, -5), 'max': _get(4, 5), 'pad_value': _get(5, 0)}
                     if v[0] in self.preprocess_params and params != self.preprocess_params[v[0]]:
-                        raise RuntimeError('Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' % (v[0], str(self.preprocess_params[k]), str(params)))
+                        raise RuntimeError(
+                            'Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' %
+                            (v[0], str(self.preprocess_params[k]), str(params)))
                     if params['center'] == 'auto':
                         self._missing_standardization_info = True
                     self.preprocess_params[v[0]] = params
@@ -94,8 +96,8 @@ class DataConfig(object):
         if self.label_type == 'simple':
             assert(isinstance(self.label_value, list))
             self.label_names = ('_label_',)
-            self.var_funcs['_label_'] = 'np.stack([%s], axis=1).argmax(1)' % (','.join(self.label_value))
-            self.var_funcs['_labelcheck_'] = 'np.stack([%s], axis=1).sum(1)' % (','.join(self.label_value))
+            self.var_funcs['_label_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(self.label_value))
+            self.var_funcs['_labelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(self.label_value))
         else:
             self.label_names = tuple(self.label_value.keys())
             self.var_funcs.update(self.label_value)
@@ -150,7 +152,8 @@ class DataConfig(object):
                 if self.use_precomputed_weights:
                     _log('weight: %s' % self.var_funcs[self.weight_name])
                 else:
-                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes', 'class_weights', 'reweight_threshold', 'reweight_discard_under_overflow']:
+                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes',
+                              'class_weights', 'reweight_threshold', 'reweight_discard_under_overflow']:
                         _log('%s: %s' % (k, getattr(self, k)))
 
         # parse config
@@ -214,9 +217,9 @@ class DataConfig(object):
 
     def export_json(self, fp):
         import json
-        j = {'output_names':self.label_value, 'input_names':self.input_names}
+        j = {'output_names': self.label_value, 'input_names': self.input_names}
         for k, v in self.input_dicts.items():
-            j[k] = {'var_names':v, 'var_infos':{}}
+            j[k] = {'var_names': v, 'var_infos': {}}
             for var_name in v:
                 j[k]['var_length'] = self.preprocess_params[var_name]['length']
                 info = self.preprocess_params[var_name]
@@ -227,6 +230,6 @@ class DataConfig(object):
                     'lower_bound': -1e32 if info['center'] is None else info['min'],
                     'upper_bound': 1e32 if info['center'] is None else info['max'],
                     'pad': info['pad_value']
-                    }
+                }
         with open(fp, 'w') as f:
             json.dump(j, f, indent=2)

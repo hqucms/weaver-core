@@ -1,12 +1,7 @@
 import numpy as np
 import math
 
-try:
-    import awkward0 as awkward
-except ImportError:
-    import awkward
-    if awkward.__version__[0] == '1':
-        raise ImportError('Please install awkward0 with `pip install awkward0`.')
+import awkward as ak
 
 
 def _concat(arrays, axis=0):
@@ -15,7 +10,7 @@ def _concat(arrays, axis=0):
     if isinstance(arrays[0], np.ndarray):
         return np.concatenate(arrays, axis=axis)
     else:
-        return awkward.concatenate(arrays, axis=axis)
+        return ak.concatenate(arrays, axis=axis)
 
 
 def _stack(arrays, axis=1):
@@ -24,15 +19,15 @@ def _stack(arrays, axis=1):
     if isinstance(arrays[0], np.ndarray):
         return np.stack(arrays, axis=axis)
     else:
-        content = np.stack([a.content for a in arrays], axis=axis)
-        return awkward.JaggedArray.fromcounts(arrays[0].counts, content)
+        return ak.concatenate(arrays, axis=axis)
 
 
 def _pad(a, maxlen, value=0, dtype='float32'):
     if isinstance(a, np.ndarray) and a.ndim >= 2 and a.shape[1] == maxlen:
         return a
-    elif isinstance(a, awkward.JaggedArray):
-        return a.pad(maxlen, clip=True).fillna(value).regular().astype(dtype)
+    elif isinstance(a, ak.Array):
+        a = ak.values_astype(a, dtype)
+        return ak.fill_none(ak.pad_none(a, maxlen, clip=True), value)
     else:
         x = (np.ones((len(a), maxlen)) * value).astype(dtype)
         for idx, s in enumerate(a):
@@ -44,21 +39,21 @@ def _pad(a, maxlen, value=0, dtype='float32'):
 
 
 def _repeat_pad(a, maxlen, shuffle=False, dtype='float32'):
-    x = a.flatten()
+    x = ak.to_numpy(ak.flatten(a))
     x = np.tile(x, int(np.ceil(len(a) * maxlen / len(x))))
     if shuffle:
         np.random.shuffle(x)
     x = x[:len(a) * maxlen].reshape((len(a), maxlen))
-    mask = _pad(awkward.JaggedArray.zeros_like(a), maxlen, value=1)
+    mask = _pad(ak.zeros_like(a), maxlen, value=1)
     x = _pad(a, maxlen) + mask * x
-    return x.astype(dtype)
+    return ak.values_astype(x, dtype)
 
 
 def _clip(a, a_min, a_max):
     if isinstance(a, np.ndarray):
         return np.clip(a, a_min, a_max)
     else:
-        return awkward.JaggedArray.fromcounts(a.counts, np.clip(a.content, a_min, a_max))
+        return ak.unflatten(np.clip(ak.flatten(a), a_min, a_max), ak.num(a))
 
 
 def _knn(support, query, k, n_jobs=1):
@@ -101,17 +96,17 @@ def _batch_gather(array, indices):
     return out
 
 
-def _p4_from_xyzt(*args):
-    from uproot3_methods import TLorentzVectorArray
-    return TLorentzVectorArray.from_cartesian(*args)
+def _p4_from_pxpypze(px, py, pz, energy):
+    import vector
+    return vector.Array({'px': px, 'py': py, 'pz': pz, 'energy': energy})
 
 
-def _p4_from_ptetaphie(*args):
-    from uproot3_methods import TLorentzVectorArray
-    return TLorentzVectorArray.from_ptetaphie(*args)
+def _p4_from_ptetaphie(pt, eta, phi, energy):
+    import vector
+    return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'energy': energy})
 
 
-def _get_variable_names(expr, exclude=['awkward', 'np', 'numpy', 'math']):
+def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math']):
     import ast
     root = ast.parse(expr)
     return sorted({node.id for node in ast.walk(root) if isinstance(
@@ -120,9 +115,9 @@ def _get_variable_names(expr, exclude=['awkward', 'np', 'numpy', 'math']):
 
 def _eval_expr(expr, table):
     tmp = {k: table[k] for k in _get_variable_names(expr)}
-    tmp.update(
-        {'math': math, 'np': np, 'awkward': awkward, '_concat': _concat, '_stack': _stack, '_pad': _pad,
-         '_repeat_pad': _repeat_pad, '_clip': _clip, '_batch_knn': _batch_knn,
-         '_batch_permute_indices': _batch_permute_indices, '_batch_argsort': _batch_argsort,
-         '_batch_gather': _batch_gather, '_p4_from_xyzt': _p4_from_xyzt, '_p4_from_ptetaphie': _p4_from_ptetaphie})
+    tmp.update({'math': math, 'np': np, 'numpy': np, 'ak': ak, 'awkward': ak,
+                '_concat': _concat, '_stack': _stack, '_pad': _pad, '_repeat_pad': _repeat_pad, '_clip': _clip,
+                '_batch_knn': _batch_knn, '_batch_permute_indices': _batch_permute_indices,
+                '_batch_argsort': _batch_argsort, '_batch_gather': _batch_gather, '_p4_from_pxpypze': _p4_from_pxpypze,
+                '_p4_from_ptetaphie': _p4_from_ptetaphie})
     return eval(expr, tmp)
