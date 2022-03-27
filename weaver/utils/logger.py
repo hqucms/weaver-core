@@ -14,7 +14,8 @@ def _configLogger(name, stdout=sys.stdout, filename=None, loglevel=logging.INFO)
         console.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s'))
         logger.addHandler(console)
     if filename:
-        if not os.path.exists(os.path.dirname(filename)):
+        dirname = os.path.dirname(filename)
+        if dirname and not os.path.exists(dirname):
             os.makedirs(os.path.dirname(filename))
         logfile = logging.FileHandler(filename)
         logfile.setLevel(loglevel)

@@ -101,7 +101,7 @@ class DataConfig(object):
         else:
             self.label_names = tuple(self.label_value.keys())
             self.var_funcs.update(self.label_value)
-        # weights: TODO
+        self.basewgt_name = '_basewgt_'
         self.weight_name = None
         if opts['weights'] is not None:
             self.weight_name = 'weight_'
@@ -110,6 +110,9 @@ class DataConfig(object):
                 self.var_funcs[self.weight_name] = '*'.join(opts['weights']['weight_branches'])
             else:
                 self.reweight_method = opts['weights']['reweight_method']
+                self.reweight_basewgt = opts['weights'].get('reweight_basewgt', None)
+                if self.reweight_basewgt:
+                    self.var_funcs[self.basewgt_name] = self.reweight_basewgt
                 self.reweight_branches = tuple(opts['weights']['reweight_vars'].keys())
                 self.reweight_bins = tuple(opts['weights']['reweight_vars'].values())
                 self.reweight_classes = tuple(opts['weights']['reweight_classes'])
@@ -152,8 +155,9 @@ class DataConfig(object):
                 if self.use_precomputed_weights:
                     _log('weight: %s' % self.var_funcs[self.weight_name])
                 else:
-                    for k in ['reweight_method', 'reweight_branches', 'reweight_bins', 'reweight_classes',
-                              'class_weights', 'reweight_threshold', 'reweight_discard_under_overflow']:
+                    for k in ['reweight_method', 'reweight_basewgt', 'reweight_branches', 'reweight_bins',
+                              'reweight_classes', 'class_weights', 'reweight_threshold',
+                              'reweight_discard_under_overflow']:
                         _log('%s: %s' % (k, getattr(self, k)))
 
         # parse config

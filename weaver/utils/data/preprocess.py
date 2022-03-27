@@ -31,6 +31,46 @@ def _clean_up(table, drop_branches):
     return table[columns]
 
 
+def _build_weights(table, data_config, reweight_hists=None, warn=_logger.warning):
+    if data_config.weight_name is None:
+        raise RuntimeError('Error when building weights: `weight_name` is None!')
+    if data_config.use_precomputed_weights:
+        return ak.to_numpy(table[data_config.weight_name])
+    else:
+        x_var, y_var = data_config.reweight_branches
+        x_bins, y_bins = data_config.reweight_bins
+        rwgt_sel = None
+        if data_config.reweight_discard_under_overflow:
+            rwgt_sel = (table[x_var] >= min(x_bins)) & (table[x_var] <= max(x_bins)) & \
+                (table[y_var] >= min(y_bins)) & (table[y_var] <= max(y_bins))
+        # init w/ wgt=0: events not belonging to any class in `reweight_classes` will get a weight of 0 at the end
+        wgt = np.zeros(len(table), dtype='float32')
+        sum_evts = 0
+        if reweight_hists is None:
+            reweight_hists = data_config.reweight_hists
+        for label, hist in reweight_hists.items():
+            pos = table[label] == 1
+            if rwgt_sel is not None:
+                pos = (pos & rwgt_sel)
+            rwgt_x_vals = ak.to_numpy(table[x_var][pos])
+            rwgt_y_vals = ak.to_numpy(table[y_var][pos])
+            x_indices = np.clip(np.digitize(
+                rwgt_x_vals, x_bins) - 1, a_min=0, a_max=len(x_bins) - 2)
+            y_indices = np.clip(np.digitize(
+                rwgt_y_vals, y_bins) - 1, a_min=0, a_max=len(y_bins) - 2)
+            wgt[pos] = hist[x_indices, y_indices]
+            sum_evts += np.sum(pos)
+        if sum_evts != len(table):
+            warn(
+                'Not all selected events used in the reweighting. '
+                'Check consistency between `selection` and `reweight_classes` definition, or with the `reweight_vars` binnings '
+                '(under- and overflow bins are discarded by default, unless `reweight_discard_under_overflow` is set to `False` in the `weights` section).',
+            )
+        if data_config.reweight_basewgt:
+            wgt *= ak.to_numpy(table[data_config.basewgt_name])
+        return wgt
+
+
 class AutoStandardizer(object):
     r"""AutoStandardizer.
 
@@ -73,14 +113,14 @@ class AutoStandardizer(object):
         return table
 
     def make_preprocess_params(self, table):
-        _logger.info('Using %d events to calculate standardization info', len(table[list(table.keys())[0]]))
+        _logger.info('Using %d events to calculate standardization info', len(table))
         preprocess_params = copy.deepcopy(self._data_config.preprocess_params)
         for k, params in self._data_config.preprocess_params.items():
             if params['center'] == 'auto':
                 if k.endswith('_mask'):
                     params['center'] = None
                 else:
-                    a = ak.flatten(table[k], axis=None)
+                    a = ak.to_numpy(ak.flatten(table[k], axis=None))
                     low, center, high = np.percentile(a, [16, 50, 84])
                     scale = max(high - center, center - low)
                     scale = 1 if scale == 0 else 1. / scale
@@ -120,7 +160,8 @@ class WeightMaker(object):
         self._data_config = data_config.copy()
 
     def read_file(self, filelist):
-        self.keep_branches = set(self._data_config.reweight_branches + self._data_config.reweight_classes)
+        self.keep_branches = set(self._data_config.reweight_branches + self._data_config.reweight_classes +
+                                 (self._data_config.basewgt_name,))
         self.load_branches = set()
         for k in self.keep_branches:
             if k in self._data_config.var_funcs:
@@ -151,7 +192,7 @@ class WeightMaker(object):
             table[x_var] = np.clip(table[x_var], min(x_bins), max(x_bins))
             table[y_var] = np.clip(table[y_var], min(y_bins), max(y_bins))
 
-        _logger.info('Using %d events to make weights', len(table[x_var]))
+        _logger.info('Using %d events to make weights', len(table))
 
         sum_evts = 0
         max_weight = 0.9
@@ -160,19 +201,23 @@ class WeightMaker(object):
         result = {}
         for label in self._data_config.reweight_classes:
             pos = (table[label] == 1)
-            x = table[x_var][pos]
-            y = table[y_var][pos]
+            x = ak.to_numpy(table[x_var][pos])
+            y = ak.to_numpy(table[y_var][pos])
             hist, _, _ = np.histogram2d(x, y, bins=self._data_config.reweight_bins)
-            _logger.info('%s:\n %s', label, str(hist.astype('int64')))
+            _logger.info('%s (unweighted):\n %s', label, str(hist.astype('int64')))
             sum_evts += hist.sum()
+            if self._data_config.reweight_basewgt:
+                w = ak.to_numpy(table[self._data_config.basewgt_name][pos])
+                hist, _, _ = np.histogram2d(x, y, weights=w, bins=self._data_config.reweight_bins)
+                _logger.info('%s (weighted):\n %s', label, str(hist.astype('float32')))
             raw_hists[label] = hist.astype('float32')
             result[label] = hist.astype('float32')
-        if sum_evts != len(table[x_var]):
+        if sum_evts != len(table):
             _logger.warning(
                 'Only %d (out of %d) events actually used in the reweighting. '
                 'Check consistency between `selection` and `reweight_classes` definition, or with the `reweight_vars` binnings '
                 '(under- and overflow bins are discarded by default, unless `reweight_discard_under_overflow` is set to `False` in the `weights` section).',
-                sum_evts, len(table[x_var]))
+                sum_evts, len(table))
             time.sleep(10)
 
         if self._data_config.reweight_method == 'flat':
@@ -206,6 +251,14 @@ class WeightMaker(object):
         for label in self._data_config.reweight_classes:
             class_wgt = float(min_nevt) / class_events[label]
             result[label] *= class_wgt
+
+        if self._data_config.reweight_basewgt:
+            wgts = _build_weights(table, self._data_config, reweight_hists=result)
+            wgt_ref = np.percentile(wgts, 100 - self._data_config.reweight_threshold)
+            _logger.info('Set overall reweighting scale factor (%d threshold) to %s (max %s)' %
+                         (100 - self._data_config.reweight_threshold, wgt_ref, np.max(wgts)))
+            for label in self._data_config.reweight_classes:
+                result[label] /= wgt_ref
 
         _logger.info('weights:')
         for label in self._data_config.reweight_classes:

@@ -50,9 +50,9 @@ def _repeat_pad(a, maxlen, shuffle=False, dtype='float32'):
 
 
 def _clip(a, a_min, a_max):
-    if isinstance(a, np.ndarray):
+    try:
         return np.clip(a, a_min, a_max)
-    else:
+    except ValueError:
         return ak.unflatten(np.clip(ak.flatten(a), a_min, a_max), ak.num(a))
 
 

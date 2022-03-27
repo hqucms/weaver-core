@@ -11,39 +11,7 @@ from .logger import _logger, warn_once
 from .data.tools import _pad, _repeat_pad, _clip
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
-from .data.preprocess import _apply_selection, _build_new_variables, AutoStandardizer, WeightMaker
-
-
-def _build_weights(table, data_config):
-    if data_config.weight_name and not data_config.use_precomputed_weights:
-        x_var, y_var = data_config.reweight_branches
-        x_bins, y_bins = data_config.reweight_bins
-        rwgt_sel = None
-        if data_config.reweight_discard_under_overflow:
-            rwgt_sel = (table[x_var] >= min(x_bins)) & (table[x_var] <= max(x_bins)) & \
-                (table[y_var] >= min(y_bins)) & (table[y_var] <= max(y_bins))
-        # init w/ wgt=0: events not belonging to any class in `reweight_classes` will get a weight of 0 at the end
-        wgt = np.zeros(len(table[x_var]), dtype='float32')
-        sum_evts = 0
-        for label, hist in data_config.reweight_hists.items():
-            pos = table[label] == 1
-            if rwgt_sel is not None:
-                pos &= rwgt_sel
-            rwgt_x_vals = table[x_var][pos]
-            rwgt_y_vals = table[y_var][pos]
-            x_indices = np.clip(np.digitize(
-                rwgt_x_vals, x_bins) - 1, a_min=0, a_max=len(x_bins) - 2)
-            y_indices = np.clip(np.digitize(
-                rwgt_y_vals, y_bins) - 1, a_min=0, a_max=len(y_bins) - 2)
-            wgt[pos] = hist[x_indices, y_indices]
-            sum_evts += pos.sum()
-        if sum_evts != len(table[x_var]):
-            warn_once(
-                'Not all selected events used in the reweighting. '
-                'Check consistency between `selection` and `reweight_classes` definition, or with the `reweight_vars` binnings '
-                '(under- and overflow bins are discarded by default, unless `reweight_discard_under_overflow` is set to `False` in the `weights` section).',
-            )
-        table[data_config.weight_name] = wgt
+from .data.preprocess import _apply_selection, _build_new_variables, _build_weights, AutoStandardizer, WeightMaker
 
 
 def _finalize_inputs(table, data_config):
@@ -118,12 +86,10 @@ def _preprocess(table, data_config, options):
     # check labels
     if data_config.label_type == 'simple':
         _check_labels(table)
-    # build weights
-    if options['reweight']:
-        _build_weights(table, data_config)
     # compute reweight indices
     if options['reweight'] and data_config.weight_name is not None:
-        indices = _get_reweight_indices(ak.to_numpy(table[data_config.weight_name]), up_sample=options['up_sample'],
+        wgts = _build_weights(table, data_config, warn=warn_once)
+        indices = _get_reweight_indices(wgts, up_sample=options['up_sample'],
                                         weight_scale=options['weight_scale'], max_resample=options['max_resample'])
     else:
         indices = np.arange(len(table[data_config.label_names[0]]))
