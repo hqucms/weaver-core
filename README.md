@@ -76,6 +76,13 @@ conda activate weaver
 pip install weaver-core
 ```
 
+Alternatively, if you want to install `weaver-core` in editable/development mode:
+```
+git clone git@github.com:hqucms/weaver-core.git
+cd weaver-core
+pip install -e .
+```
+
 ## Prepare your configuration files
 
 To train a neural network using `Weaver`, you need to prepare:
