@@ -98,11 +98,13 @@ def _batch_gather(array, indices):
 
 def _p4_from_pxpypze(px, py, pz, energy):
     import vector
+    vector.register_awkward()
     return vector.Array({'px': px, 'py': py, 'pz': pz, 'energy': energy})
 
 
 def _p4_from_ptetaphie(pt, eta, phi, energy):
     import vector
+    vector.register_awkward()
     return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'energy': energy})
 
 

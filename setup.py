@@ -16,7 +16,7 @@ with open(requirements_path) as f:
         install_requires.append(line)
 
 setup(name="weaver-core",
-      version='0.3.1',
+      version='0.3.2',
       description="A streamlined deep-learning framework for high energy physics",
       long_description_content_type="text/markdown",
       author="H. Qu, C. Li",
