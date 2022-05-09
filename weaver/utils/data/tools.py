@@ -26,8 +26,10 @@ def _pad(a, maxlen, value=0, dtype='float32'):
     if isinstance(a, np.ndarray) and a.ndim >= 2 and a.shape[1] == maxlen:
         return a
     elif isinstance(a, ak.Array):
-        a = ak.values_astype(a, dtype)
-        return ak.fill_none(ak.pad_none(a, maxlen, clip=True), value)
+        if a.ndim == 1:
+            a = ak.unflatten(a, 1)
+        a = ak.fill_none(ak.pad_none(a, maxlen, clip=True), value)
+        return ak.values_astype(a, dtype)
     else:
         x = (np.ones((len(a), maxlen)) * value).astype(dtype)
         for idx, s in enumerate(a):
@@ -108,6 +110,12 @@ def _p4_from_ptetaphie(pt, eta, phi, energy):
     return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'energy': energy})
 
 
+def _p4_from_ptetaphim(pt, eta, phi, mass):
+    import vector
+    vector.register_awkward()
+    return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
+
+
 def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math']):
     import ast
     root = ast.parse(expr)
@@ -121,5 +129,5 @@ def _eval_expr(expr, table):
                 '_concat': _concat, '_stack': _stack, '_pad': _pad, '_repeat_pad': _repeat_pad, '_clip': _clip,
                 '_batch_knn': _batch_knn, '_batch_permute_indices': _batch_permute_indices,
                 '_batch_argsort': _batch_argsort, '_batch_gather': _batch_gather, '_p4_from_pxpypze': _p4_from_pxpypze,
-                '_p4_from_ptetaphie': _p4_from_ptetaphie})
+                '_p4_from_ptetaphie': _p4_from_ptetaphie, '_p4_from_ptetaphim': _p4_from_ptetaphim})
     return eval(expr, tmp)
