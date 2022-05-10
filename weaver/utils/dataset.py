@@ -84,7 +84,7 @@ def _preprocess(table, data_config, options):
     # define new variables
     table = _build_new_variables(table, data_config.var_funcs)
     # check labels
-    if data_config.label_type == 'simple':
+    if data_config.label_type == 'simple' and options['training']:
         _check_labels(table)
     # compute reweight indices
     if options['reweight'] and data_config.weight_name is not None:
