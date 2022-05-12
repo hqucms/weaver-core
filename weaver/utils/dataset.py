@@ -19,7 +19,11 @@ def _finalize_inputs(table, data_config):
     # copy observer variables before transformation
     for k in data_config.z_variables:
         if k in data_config.observer_names:
-            output[k] = ak.to_numpy(table[k])
+            a = ak.to_numpy(table[k])
+            if a.dtype in (np.uint16, np.uint32, np.uint64):
+                # FIXME: hack as torch only supports float64, float32, float16, complex64, complex128, int64, int32, int16, int8, uint8, and bool
+                a = a.astype('int64')
+            output[k] = a
     # copy labels
     for k in data_config.label_names:
         output[k] = ak.to_numpy(table[k])
@@ -40,9 +44,9 @@ def _finalize_inputs(table, data_config):
     # stack variables for each input group
     for k, names in data_config.input_dicts.items():
         if len(names) == 1 and data_config.preprocess_params[names[0]]['length'] is None:
-            output['_' + k] = ak.to_numpy(table[names[0]])
+            output['_' + k] = ak.to_numpy(ak.values_astype(table[names[0]], 'float32'))
         else:
-            output['_' + k] = ak.to_numpy(np.stack([table[n] for n in names], axis=1))
+            output['_' + k] = ak.to_numpy(np.stack([ak.values_astype(table[n], 'float32') for n in names], axis=1))
     # copy monitor variables
     for k in data_config.z_variables:
         if k not in output:
