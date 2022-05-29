@@ -439,11 +439,12 @@ def optim(args, model, device):
             assert(len(no_decay_1x) + len(no_decay_mult) == len(no_decay))
         else:
             decay_1x, no_decay_1x = list(decay.values()), list(no_decay.values())
+        wd = optimizer_options.pop('weight_decay', 0.)
         parameters = [
             {'params': no_decay_1x, 'weight_decay': 0.},
-            {'params': decay_1x, 'weight_decay': optimizer_options.pop('weight_decay', 0.)},
+            {'params': decay_1x, 'weight_decay': wd},
             {'params': no_decay_mult, 'weight_decay': 0., 'lr': args.start_lr * mult_factor},
-            {'params': decay_mult, 'weight_decay': optimizer_options.pop('weight_decay', 0.), 'lr': args.start_lr * mult_factor},
+            {'params': decay_mult, 'weight_decay': wd, 'lr': args.start_lr * mult_factor},
         ]
         _logger.info('Parameters excluded from weight decay:\n - %s', '\n - '.join(names_no_decay))
         if len(names_lr_mult):
