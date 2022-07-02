@@ -317,12 +317,15 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             self._sampler_options.update(training=False, shuffle=False, reweight=False)
 
         # discover auto-generated reweight file
-        data_config_md5 = _md5(data_config_file)
-        data_config_autogen_file = data_config_file.replace('.yaml', '.%s.auto.yaml' % data_config_md5)
-        if os.path.exists(data_config_autogen_file):
-            data_config_file = data_config_autogen_file
-            _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' %
-                         data_config_file)
+        if '.auto.yaml' in data_config_file:
+            data_config_autogen_file = data_config_file
+        else:
+            data_config_md5 = _md5(data_config_file)
+            data_config_autogen_file = data_config_file.replace('.yaml', '.%s.auto.yaml' % data_config_md5)
+            if os.path.exists(data_config_autogen_file):
+                data_config_file = data_config_autogen_file
+                _logger.info('Found file %s w/ auto-generated preprocessing information, will use that instead!' %
+                             data_config_file)
 
         # load data config (w/ observers now -- so they will be included in the auto-generated yaml)
         self._data_config = DataConfig.load(data_config_file)

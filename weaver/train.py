@@ -49,6 +49,8 @@ parser.add_argument('--in-memory', action='store_true', default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
 parser.add_argument('--train-val-split', type=float, default=0.8,
                     help='training/validation split fraction')
+parser.add_argument('--no-remake-weights', action='store_true', default=False,
+                    help='do not remake weights for sampling (reweighting), use existing ones in the previous auto-generated data config YAML file')
 parser.add_argument('--demo', action='store_true', default=False,
                     help='quickly test the setup by running over only a small number of events')
 parser.add_argument('--lr-finder', type=str, default=None,
@@ -221,6 +223,7 @@ def train_load(args):
         raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
 
     train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
+                                   remake_weights=not args.no_remake_weights,
                                    load_range_and_fraction=(train_range, args.data_fraction),
                                    file_fraction=args.file_fraction,
                                    fetch_by_files=args.fetch_by_files,
