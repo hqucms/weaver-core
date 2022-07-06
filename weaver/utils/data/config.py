@@ -203,11 +203,13 @@ class DataConfig(object):
             yaml.safe_dump(self.options, f, sort_keys=False)
 
     @classmethod
-    def load(cls, fp, load_observers=True):
+    def load(cls, fp, load_observers=True, load_reweight_info=True):
         with open(fp) as f:
             options = yaml.safe_load(f)
         if not load_observers:
             options['observers'] = None
+        if not load_reweight_info:
+            options['weights'] = None
         return cls(**options)
 
     def copy(self):

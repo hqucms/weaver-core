@@ -349,6 +349,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
                     'Found file %s w/ auto-generated preprocessing information, will use that instead!' %
                     data_config_file)
             self._data_config = DataConfig.load(data_config_file, load_observers=False)
+        else:
+            self._data_config = DataConfig.load(data_config_file, load_reweight_info=False)
 
         # derive all variables added to self.__dict__
         self._init_args = set(self.__dict__.keys()) - _init_args
