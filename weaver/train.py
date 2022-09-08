@@ -303,18 +303,19 @@ def test_load(args):
     return test_loaders, data_config
 
 
-def onnx(args, model, data_config, model_info):
+def onnx(args):
     """
     Saving model as ONNX.
     :param args:
-    :param model:
-    :param data_config:
-    :param model_info:
     :return:
     """
     assert (args.export_onnx.endswith('.onnx'))
     model_path = args.model_prefix
     _logger.info('Exporting model %s to ONNX' % model_path)
+
+    from weaver.utils.dataset import DataConfig
+    data_config = DataConfig.load(args.data_config, load_observers=False, load_reweight_info=False)
+    model, model_info, _ = model_setup(args, data_config)
     model.load_state_dict(torch.load(model_path, map_location='cpu'))
     model = model.cpu()
     model.eval()
@@ -641,6 +642,11 @@ def save_parquet(args, output_path, scores, labels, observers):
 def _main(args):
     _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
 
+    # export to ONNX
+    if args.export_onnx:
+        onnx(args)
+        return
+
     if args.file_fraction < 1:
         _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
 
@@ -696,11 +702,6 @@ def _main(args):
 
     if args.profile:
         profile(args, model, model_info, device=dev)
-        return
-
-    # export to ONNX
-    if args.export_onnx:
-        onnx(args, model, data_config, model_info)
         return
 
     if args.tensorboard:
