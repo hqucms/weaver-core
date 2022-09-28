@@ -56,7 +56,7 @@ class DataConfig(object):
 
         self.selection = opts['selection']
         self.test_time_selection = opts['test_time_selection'] if opts['test_time_selection'] else self.selection
-        self.var_funcs = opts['new_variables']
+        self.var_funcs = copy.deepcopy(opts['new_variables'])
         # preprocessing config
         self.preprocess = opts['preprocess']
         self._auto_standardization = opts['preprocess']['method'].lower().startswith('auto')
@@ -86,7 +86,7 @@ class DataConfig(object):
                     if v[0] in self.preprocess_params and params != self.preprocess_params[v[0]]:
                         raise RuntimeError(
                             'Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' %
-                            (v[0], str(self.preprocess_params[k]), str(params)))
+                            (v[0], str(self.preprocess_params[v[0]]), str(params)))
                     if params['center'] == 'auto':
                         self._missing_standardization_info = True
                     self.preprocess_params[v[0]] = params
@@ -203,13 +203,19 @@ class DataConfig(object):
             yaml.safe_dump(self.options, f, sort_keys=False)
 
     @classmethod
-    def load(cls, fp, load_observers=True, load_reweight_info=True):
+    def load(cls, fp, load_observers=True, load_reweight_info=True, extra_selection=None, extra_test_selection=None):
         with open(fp) as f:
             options = yaml.safe_load(f)
         if not load_observers:
             options['observers'] = None
         if not load_reweight_info:
             options['weights'] = None
+        if extra_selection:
+            options['selection'] = '(%s) & (%s)' % (options['selection'], extra_selection)
+        if extra_test_selection:
+            if 'test_time_selection' not in options:
+                raise RuntimeError('`test_time_selection` is not defined in the yaml file!')
+            options['test_time_selection'] = '(%s) & (%s)' % (options['test_time_selection'], extra_test_selection)
         return cls(**options)
 
     def copy(self):

@@ -19,8 +19,12 @@ from weaver.utils.import_tools import import_module
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
-parser.add_argument('-c', '--data-config', type=str, default='data/ak15_points_pf_sv_v0.yaml',
+parser.add_argument('-c', '--data-config', type=str,
                     help='data config YAML file')
+parser.add_argument('--extra-selection', type=str, default=None,
+                    help='Additional selection requirement, will modify `selection` to `(selection) & (extra)` on-the-fly')
+parser.add_argument('--extra-test-selection', type=str, default=None,
+                    help='Additional test-time selection requirement, will modify `test_time_selection` to `(test_time_selection) & (extra)` on-the-fly')
 parser.add_argument('-i', '--data-train', nargs='*', default=[],
                     help='training files; supported syntax:'
                          ' (a) plain list, `--data-train /path/to/a/* /path/to/b/*`;'
@@ -60,7 +64,7 @@ parser.add_argument('--tensorboard', type=str, default=None,
 parser.add_argument('--tensorboard-custom-fn', type=str, default=None,
                     help='the path of the python script containing a user-specified function `get_tensorboard_custom_fn`, '
                          'to display custom information per mini-batch or per epoch, during the training, validation or test.')
-parser.add_argument('-n', '--network-config', type=str, default='networks/particle_net_pfcand_sv.py',
+parser.add_argument('-n', '--network-config', type=str,
                     help='network architecture configuration file; the path must be relative to the current dir')
 parser.add_argument('-o', '--network-option', nargs=2, action='append', default=[],
                     help='options to pass to the model class constructor, e.g., `--network-option use_counts False`')
@@ -129,6 +133,8 @@ parser.add_argument('--profile', action='store_true', default=False,
                     help='run the profiler')
 parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], default=None,
                     help='backend for distributed training')
+parser.add_argument('--cross-validation', type=str, default=None,
+                    help='enable k-fold cross validation; input format: `variable_name%k`')
 
 
 def to_filelist(args, mode='train'):
@@ -223,6 +229,7 @@ def train_load(args):
         raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
 
     train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
+                                   extra_selection=args.extra_selection,
                                    remake_weights=not args.no_remake_weights,
                                    load_range_and_fraction=(train_range, args.data_fraction),
                                    file_fraction=args.file_fraction,
@@ -232,6 +239,7 @@ def train_load(args):
                                    in_memory=args.in_memory,
                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
     val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
+                                 extra_selection=args.extra_selection,
                                  load_range_and_fraction=(val_range, args.data_fraction),
                                  file_fraction=args.file_fraction,
                                  fetch_by_files=args.fetch_by_files,
@@ -291,6 +299,7 @@ def test_load(args):
         _logger.info('Running on test file group %s with %d files:\n...%s', name, len(filelist), '\n...'.join(filelist))
         num_workers = min(args.num_workers, len(filelist))
         test_data = SimpleIterDataset({name: filelist}, args.data_config, for_training=False,
+                                      extra_selection=args.extra_test_selection,
                                       load_range_and_fraction=((0, 1), args.data_fraction),
                                       fetch_by_files=True, fetch_step=1,
                                       name='test_' + name)
@@ -818,14 +827,16 @@ def _main(args):
 
             if args.predict_output:
                 if '/' not in args.predict_output:
-                    args.predict_output = os.path.join(
+                    predict_output = os.path.join(
                         os.path.dirname(args.model_prefix),
                         'predict_output', args.predict_output)
-                os.makedirs(os.path.dirname(args.predict_output), exist_ok=True)
-                if name == '':
-                    output_path = args.predict_output
                 else:
-                    base, ext = os.path.splitext(args.predict_output)
+                    predict_output = args.predict_output
+                os.makedirs(os.path.dirname(predict_output), exist_ok=True)
+                if name == '':
+                    output_path = predict_output
+                else:
+                    base, ext = os.path.splitext(predict_output)
                     output_path = base + '_' + name + ext
                 if output_path.endswith('.root'):
                     save_root(args, output_path, data_config, scores, labels, observers)
@@ -879,7 +890,18 @@ def main():
             stdout = None
     _configLogger('weaver', stdout=stdout, filename=args.log)
 
-    _main(args)
+    if args.cross_validation:
+        model_dir, model_fn = os.path.split(args.model_prefix)
+        var_name, kfold = args.cross_validation.split('%')
+        kfold = int(kfold)
+        for i in range(kfold):
+            logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
+            args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
+            args.extra_selection = f'{var_name}%{kfold}!={i}'
+            args.extra_test_selection = f'{var_name}%{kfold}=={i}'
+            _main(args)
+    else:
+        _main(args)
 
 
 if __name__ == '__main__':
