@@ -87,6 +87,8 @@ class DataConfig(object):
                         raise RuntimeError(
                             'Incompatible info for variable %s, had: \n  %s\nnow got:\n  %s' %
                             (v[0], str(self.preprocess_params[v[0]]), str(params)))
+                    if k.endswith('_mask') and params['pad_mode'] != 'constant':
+                        raise RuntimeError('The `pad_mode` must be set to `constant` for the mask input `%s`' % k)
                     if params['center'] == 'auto':
                         self._missing_standardization_info = True
                     self.preprocess_params[v[0]] = params

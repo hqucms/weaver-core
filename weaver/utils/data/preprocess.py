@@ -121,6 +121,11 @@ class AutoStandardizer(object):
                     params['center'] = None
                 else:
                     a = ak.to_numpy(ak.flatten(table[k], axis=None))
+                    # check for NaN
+                    if np.any(np.isnan(a)):
+                        _logger.warning('[AutoStandardizer] Found NaN in `%s`, will convert it to 0.', k)
+                        time.sleep(10)
+                        a = np.nan_to_num(a)
                     low, center, high = np.percentile(a, [16, 50, 84])
                     scale = max(high - center, center - low)
                     scale = 1 if scale == 0 else 1. / scale
