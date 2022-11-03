@@ -113,7 +113,7 @@ def _p4_from_ptetaphie(pt, eta, phi, energy):
 def _p4_from_ptetaphim(pt, eta, phi, mass):
     import vector
     vector.register_awkward()
-    return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
+    return vector.zip({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
 
 
 def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math']):
