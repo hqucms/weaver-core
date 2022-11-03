@@ -101,19 +101,19 @@ def _batch_gather(array, indices):
 def _p4_from_pxpypze(px, py, pz, energy):
     import vector
     vector.register_awkward()
-    return vector.Array({'px': px, 'py': py, 'pz': pz, 'energy': energy})
+    return vector.zip({'px': px, 'py': py, 'pz': pz, 'energy': energy})
 
 
 def _p4_from_ptetaphie(pt, eta, phi, energy):
     import vector
     vector.register_awkward()
-    return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'energy': energy})
+    return vector.zip({'pt': pt, 'eta': eta, 'phi': phi, 'energy': energy})
 
 
 def _p4_from_ptetaphim(pt, eta, phi, mass):
     import vector
     vector.register_awkward()
-    return vector.Array({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
+    return vector.zip({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
 
 
 def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math']):
