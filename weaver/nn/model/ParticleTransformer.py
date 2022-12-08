@@ -111,21 +111,21 @@ def pairwise_lv_fts(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
     return torch.cat(outputs, dim=1)
 
 
-def build_sparse_tensor(uu, idx, seq_len):
-    # inputs: uu (N, C, num_pairs), idx (N, 2, num_pairs)
-    # return: (N, C, seq_len, seq_len)
-    batch_size, num_fts, num_pairs = uu.size()
+def build_sparse_tensor(ef, idx, seq_len):
+    # inputs: ef (N, C, num_pairs), idx (N, 2, num_pairs)
+    # return: (N, C, seq_len, seq_len) (seq_len is the number of pf+sv)
+    batch_size, num_fts, num_pairs = ef.size()
     idx = torch.min(idx, torch.ones_like(idx) * seq_len)
     i = torch.cat((
-        torch.arange(0, batch_size, device=uu.device).repeat_interleave(num_fts * num_pairs).unsqueeze(0),
-        torch.arange(0, num_fts, device=uu.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0),
-        idx[:, :1, :].expand_as(uu).flatten().unsqueeze(0),
-        idx[:, 1:, :].expand_as(uu).flatten().unsqueeze(0),
+        torch.arange(0, batch_size, device=ef.device).repeat_interleave(num_fts * num_pairs).unsqueeze(0),
+        torch.arange(0, num_fts, device=ef.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0),
+        idx[:, :1, :].expand_as(ef).flatten().unsqueeze(0),
+        idx[:, 1:, :].expand_as(ef).flatten().unsqueeze(0),
     ), dim=0)
     return torch.sparse_coo_tensor(
-        i, uu.flatten(),
+        i, ef.flatten(),
         size=(batch_size, num_fts, seq_len + 1, seq_len + 1),
-        device=uu.device).to_dense()[:, :, :seq_len, :seq_len]
+        device=ef.device).to_dense()[:, :, :seq_len, :seq_len]
 
 
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
@@ -187,11 +187,11 @@ class SequenceTrimmer(nn.Module):
         self.target = target
         self._counter = 0
 
-    def forward(self, x, v=None, mask=None, uu=None):
+    def forward(self, x, v=None, mask=None, ef=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
-        # uu: (N, C', P, P)
+        # ef: (N, C', P, P)
         if mask is None:
             mask = torch.ones_like(x[:, :1])
         mask = mask.bool()
@@ -210,9 +210,9 @@ class SequenceTrimmer(nn.Module):
                     x = torch.gather(x, -1, perm.expand_as(x))
                     if v is not None:
                         v = torch.gather(v, -1, perm.expand_as(v))
-                    if uu is not None:
-                        uu = torch.gather(uu, -2, perm.unsqueeze(-1).expand_as(uu))
-                        uu = torch.gather(uu, -1, perm.unsqueeze(-2).expand_as(uu))
+                    if ef is not None:
+                        ef = torch.gather(ef, -2, perm.unsqueeze(-1).expand_as(ef))
+                        ef = torch.gather(ef, -1, perm.unsqueeze(-2).expand_as(ef))
                 else:
                     maxlen = mask.sum(dim=-1).max()
                 maxlen = max(maxlen, 1)
@@ -221,10 +221,10 @@ class SequenceTrimmer(nn.Module):
                     x = x[:, :, :maxlen]
                     if v is not None:
                         v = v[:, :, :maxlen]
-                    if uu is not None:
-                        uu = uu[:, :, :maxlen, :maxlen]
+                    if ef is not None:
+                        ef = ef[:, :, :maxlen, :maxlen]
 
-        return x, v, mask, uu
+        return x, v, mask, ef
 
 
 class Embed(nn.Module):
@@ -312,26 +312,26 @@ class PairEmbed(nn.Module):
         else:
             raise RuntimeError('`mode` can only be `sum` or `concat`')
 
-    def forward(self, x, uu=None):
+    def forward(self, x, ef=None):
         # x: (batch, v_dim, seq_len)
-        # uu: (batch, v_dim, seq_len, seq_len)
-        assert (x is not None or uu is not None)
+        # ef: (batch, v_dim, seq_len, seq_len)
+        assert (x is not None or ef is not None)
         with torch.no_grad():
             if x is not None:
                 batch_size, _, seq_len = x.size()
             else:
-                batch_size, _, seq_len, _ = uu.size()
+                batch_size, _, seq_len, _ = ef.size()
             if self.is_symmetric and not self.for_onnx:
                 i, j = torch.tril_indices(seq_len, seq_len, offset=-1 if self.remove_self_pair else 0,
-                                          device=(x if x is not None else uu).device)
+                                          device=(x if x is not None else ef).device)
                 if x is not None:
                     x = x.unsqueeze(-1).repeat(1, 1, 1, seq_len)
                     xi = x[:, :, i, j]  # (batch, dim, seq_len*(seq_len+1)/2)
                     xj = x[:, :, j, i]
                     x = self.pairwise_lv_fts(xi, xj)
-                if uu is not None:
+                if ef is not None:
                     # (batch, dim, seq_len*(seq_len+1)/2)
-                    uu = uu[:, :, i, j]
+                    ef = ef[:, :, i, j]
             else:
                 if x is not None:
                     x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
@@ -339,25 +339,25 @@ class PairEmbed(nn.Module):
                         i = torch.arange(0, seq_len, device=x.device)
                         x[:, :, i, i] = 0
                     x = x.view(-1, self.pairwise_lv_dim, seq_len * seq_len)
-                if uu is not None:
-                    uu = uu.view(-1, self.pairwise_input_dim, seq_len * seq_len)
+                if ef is not None:
+                    ef = ef.view(-1, self.pairwise_input_dim, seq_len * seq_len)
             if self.mode == 'concat':
                 if x is None:
-                    pair_fts = uu
-                elif uu is None:
+                    pair_fts = ef
+                elif ef is None:
                     pair_fts = x
                 else:
-                    pair_fts = torch.cat((x, uu), dim=1)
+                    pair_fts = torch.cat((x, ef), dim=1)
 
         if self.mode == 'concat':
             elements = self.embed(pair_fts)  # (batch, embed_dim, num_elements)
         elif self.mode == 'sum':
             if x is None:
-                elements = self.fts_embed(uu)
-            elif uu is None:
+                elements = self.fts_embed(ef)
+            elif ef is None:
                 elements = self.embed(x)
             else:
-                elements = self.embed(x) + self.fts_embed(uu)
+                elements = self.embed(x) + self.fts_embed(ef)
 
         if self.is_symmetric and not self.for_onnx:
             y = torch.zeros(batch_size, self.out_dim, seq_len, seq_len, dtype=elements.dtype, device=elements.device)
@@ -528,26 +528,26 @@ class ParticleTransformer(nn.Module):
     def no_weight_decay(self):
         return {'cls_token', }
 
-    def forward(self, x, v=None, mask=None, uu=None, uu_idx=None):
+    def forward(self, x, v=None, mask=None, ef=None, ef_idx=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
-        # for pytorch: uu (N, C', num_pairs), uu_idx (N, 2, num_pairs)
-        # for onnx: uu (N, C', P, P), uu_idx=None
+        # for pytorch: ef (N, C', num_pairs), ef_idx (N, 2, num_pairs)
+        # for onnx: ef (N, C', P, P), ef_idx=None
 
         with torch.no_grad():
             if not self.for_inference:
-                if uu_idx is not None:
-                    uu = build_sparse_tensor(uu, uu_idx, x.size(-1))
-            x, v, mask, uu = self.trimmer(x, v, mask, uu)
+                if ef_idx is not None:
+                    ef = build_sparse_tensor(ef, ef_idx, x.size(-1))
+            x, v, mask, ef = self.trimmer(x, v, mask, ef)
             padding_mask = ~mask.squeeze(1)  # (N, P)
 
         with torch.cuda.amp.autocast(enabled=self.use_amp):
             # input embedding
             x = self.embed(x).masked_fill(~mask.permute(2, 0, 1), 0)  # (P, N, C)
             attn_mask = None
-            if (v is not None or uu is not None) and self.pair_embed is not None:
-                attn_mask = self.pair_embed(v, uu).view(-1, v.size(-1), v.size(-1))  # (N*num_heads, P, P)
+            if (v is not None or ef is not None) and self.pair_embed is not None:
+                attn_mask = self.pair_embed(v, ef).view(-1, v.size(-1), v.size(-1))  # (N*num_heads, P, P)
 
             # transform
             for block in self.blocks:
@@ -710,26 +710,26 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
     def no_weight_decay(self):
         return {'part.cls_token', }
 
-    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None, pf_uu=None, pf_uu_idx=None):
+    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None, pf_ef=None, pf_ef_idx=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
 
         with torch.no_grad():
             if not self.for_inference:
-                if pf_uu_idx is not None:
-                    pf_uu = build_sparse_tensor(pf_uu, pf_uu_idx, pf_x.size(-1))
+                if pf_ef_idx is not None:
+                    pf_ef = build_sparse_tensor(pf_ef, pf_ef_idx, pf_x.size(-1))
 
-            pf_x, pf_v, pf_mask, pf_uu = self.pf_trimmer(pf_x, pf_v, pf_mask, pf_uu)
+            pf_x, pf_v, pf_mask, pf_ef = self.pf_trimmer(pf_x, pf_v, pf_mask, pf_ef)
             sv_x, sv_v, sv_mask, _ = self.sv_trimmer(sv_x, sv_v, sv_mask)
             v = torch.cat([pf_v, sv_v], dim=2)
             mask = torch.cat([pf_mask, sv_mask], dim=2)
-            uu = torch.zeros(v.size(0), pf_uu.size(1), v.size(2), v.size(2), dtype=v.dtype, device=v.device)
-            uu[:, :, :pf_x.size(2), :pf_x.size(2)] = pf_uu
+            ef = torch.zeros(v.size(0), pf_ef.size(1), v.size(2), v.size(2), dtype=v.dtype, device=v.device)
+            ef[:, :, :pf_x.size(2), :pf_x.size(2)] = pf_ef
 
         with torch.cuda.amp.autocast(enabled=self.use_amp):
             pf_x = self.pf_embed(pf_x)  # after embed: (seq_len, batch, embed_dim)
             sv_x = self.sv_embed(sv_x)
             x = torch.cat([pf_x, sv_x], dim=0)
 
-            return self.part(x, v, mask, uu)
+            return self.part(x, v, mask, ef)

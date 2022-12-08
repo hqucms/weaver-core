@@ -129,6 +129,7 @@ def pairwise_lv_fts(xi, xj, use_polarization_angle=False, eps=1e-8, for_onnx=Fal
 
     ptmin = ((pti <= ptj) * pti + (pti > ptj) * ptj) if for_onnx else torch.minimum(pti, ptj)
     delta = delta_r2(rapi, phii, rapj, phij).sqrt()
+    #does the natural log and it sets a minimum in order to not let it diverge
     lndelta = torch.log(delta.clamp(min=eps))
     lnkt = torch.log((ptmin * delta).clamp(min=eps))
     lnz = torch.log((ptmin / (pti + ptj).clamp(min=eps)).clamp(min=eps))
@@ -146,7 +147,7 @@ def pairwise_lv_fts(xi, xj, use_polarization_angle=False, eps=1e-8, for_onnx=Fal
     return torch.cat(outputs, dim=1)
 
 
-def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, edges=None, idx=None, null_edge_pos=None,
+def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, edge_list=None, idx=None, null_edge_pos=None,
                       k=None,
                       use_rel_fts=False,
                       use_rel_coords=False,
@@ -183,8 +184,8 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, edges=None, idx=N
                                 use_polarization_angle=use_polarization_angle,
                                 for_onnx=cpu_mode))
 
-    if edges is not None:
-        outputs.append(gather_edges(edges, idx))
+    if edge_list is not None:
+        outputs.append(gather_edges(edge_list, idx))
 
     if len(outputs) > 0:
         # (batch_size, c, num_points, k)
@@ -354,31 +355,31 @@ class MultiScaleEdgeConv(nn.Module):
 
         self.gamma = nn.Parameter(init_scale * torch.ones((out_dim, 1, 1)))
 
-    def forward(self, points, features, lorentz_vectors, mask=None, edges=None,
+    def forward(self, points, features, lorentz_vectors, mask=None, edge_list=None,
                 idx=None, null_edge_pos=None, edge_inputs=None, lvs_ngbs=None):
 
         fts_encode = self.node_encode(features).squeeze(-1)
 
         if idx is None:
             idx = self.knn(points)
-            edges, rel_coords, lvs_ngbs, null_edge_pos = self.get_graph_feature(
-                points, fts_encode, lorentz_vectors, mask, edges, idx, null_edge_pos)
+            edge_list, rel_coords, lvs_ngbs, null_edge_pos = self.get_graph_feature(
+                points, fts_encode, lorentz_vectors, mask, edge_list, idx, null_edge_pos)
         else:
             if self.k < self.num_neighbors_in:
                 idx = idx[:, :, :self.k]
                 null_edge_pos = null_edge_pos[:, :, :, :self.k]
                 if edge_inputs is not None:
                     edge_inputs = edge_inputs[:, :, :, :self.k]
-            edges, *_ = self.get_graph_feature(
-                fts=fts_encode, mask=mask, edges=edges, idx=idx, null_edge_pos=null_edge_pos)
+            edge_list, *_ = self.get_graph_feature(
+                fts=fts_encode, mask=mask, edge_list=edge_list, idx=idx, null_edge_pos=null_edge_pos)
             if edge_inputs is not None:
-                edges = torch.cat([edges, edge_inputs], dim=1)
+                edge_list = torch.cat([edge_list, edge_inputs], dim=1)
 
         if sum(self.slice_dims) < self.k:
-            edges = torch.cat([edges[:, :, :, s] for s in self.slices], dim=-1)
+            edge_list = torch.cat([edge_list[:, :, :, s] for s in self.slices], dim=-1)
             null_edge_pos = torch.cat([null_edge_pos[:, :, :, s] for s in self.slices], dim=-1)
 
-        message = self.edge_mlp(edges)
+        message = self.edge_mlp(edge_list)
         if self.edge_se is not None:
             message = self.edge_se(message, ~null_edge_pos)
 
@@ -603,7 +604,7 @@ class ParticleNeXt(nn.Module):
         self.for_inference = for_inference
         self._counter = 0
 
-    def forward(self, points, features, lorentz_vectors, mask=None, edges=None):
+    def forward(self, points, features, lorentz_vectors, mask=None, edge_list=None, edge_features=None):
         # print('points:\n', points)
         # print('features:\n', features)
         # print('lorentz_vectors:\n', lorentz_vectors)
@@ -671,8 +672,8 @@ class ParticleNeXt(nn.Module):
                         features = torch.gather(features, -1, perm.expand_as(features))
                         if lorentz_vectors is not None:
                             lorentz_vectors = torch.gather(lorentz_vectors, -1, perm.expand_as(lorentz_vectors))
-                        if edges is not None:
-                            raise NotImplementedError
+                        #if edge_list is not None:
+                        #    raise NotImplementedError
                     else:
                         maxlen = mask.sum(dim=-1).max()
                     maxlen = max(maxlen, self.num_neighbors)
@@ -682,8 +683,8 @@ class ParticleNeXt(nn.Module):
                         features = features[:, :, :maxlen]
                         if lorentz_vectors is not None:
                             lorentz_vectors = lorentz_vectors[:, :, :maxlen]
-                        if edges is not None:
-                            edges = edges[:, :, :maxlen, :maxlen]
+                        if edge_list is not None:
+                            edge_list = edge_list[:, :, :maxlen, :maxlen]
 
             if self.global_aggregation == 'mean':
                 counts = mask.float().sum(dim=-1)
@@ -707,8 +708,8 @@ class ParticleNeXt(nn.Module):
                 # using static graph
                 idx = self.knn(points)
                 edge_inputs, _, lvs_ngbs, null_edge_pos = self.get_graph_feature(
-                    lvs=lorentz_vectors, mask=mask, edges=edges, idx=idx, null_edge_pos=None)
-                edges = None
+                    lvs=lorentz_vectors, mask=mask, edge_list=edge_list, idx=idx, null_edge_pos=None)
+                edge_list = None
             else:
                 idx = None
                 edge_inputs = None
@@ -723,15 +724,15 @@ class ParticleNeXt(nn.Module):
         # encode features
         features = self.node_encode(features)
 
-        # encode edges
+        # encode edge_list
         if edge_inputs is not None:
             edge_inputs = self.edge_encode(edge_inputs)
-        elif edges is not None:
-            edges = self.edge_encode(edges)
+        elif edge_list is not None:
+            edge_list = self.edge_encode(edge_list)
 
         for layer in self.layers:
             points, features = layer(
-                points=points, features=features, lorentz_vectors=lorentz_vectors, mask=mask, edges=edges,
+                points=points, features=features, lorentz_vectors=lorentz_vectors, mask=mask, edge_list=edge_list,
                 idx=idx, null_edge_pos=null_edge_pos, edge_inputs=edge_inputs, lvs_ngbs=lvs_ngbs)
 
         features = self.post(features).squeeze(-1)
@@ -833,7 +834,7 @@ class ParticleNeXtTagger(nn.Module):
                                for_inference=for_inference,
                                )
 
-    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, sv_points, sv_features, sv_vectors, sv_mask, edges=None):
+    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, sv_points, sv_features, sv_vectors, sv_mask,  edge_list, edge_features, edge_features_mask):
         if self.pf_input_dropout:
             pf_mask = self.pf_input_dropout(pf_mask)
         if self.sv_input_dropout:
@@ -843,4 +844,4 @@ class ParticleNeXtTagger(nn.Module):
         features = torch.cat((self.pf_encode(pf_features), self.sv_encode(sv_features)), dim=2)
         lorentz_vectors = torch.cat((pf_vectors, sv_vectors), dim=2)
         mask = torch.cat((pf_mask, sv_mask), dim=2)
-        return self.pn(points, features, lorentz_vectors, mask, edges=edges)
+        return self.pn(points, features, lorentz_vectors, mask, edge_list, edge_features)
