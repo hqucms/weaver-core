@@ -16,18 +16,7 @@ new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: ak.ones_like(pfcand_etarel)
-   # FIXME: use (px, py, pz, energy) directly once they are available in the ntuples
-   pfp4: _p4_from_ptetaphie(pfcand_pt_nopuppi, ak.where(jet_eta >= 0, 1, -1) * pfcand_etarel + jet_eta, pfcand_phirel, np.exp(pfcand_e_log_nopuppi))
-   pfcand_px: pfp4.px
-   pfcand_py: pfp4.py
-   pfcand_pz: pfp4.pz
-   pfcand_energy: pfp4.energy
    sv_mask: ak.ones_like(sv_etarel)
-   svp4: _p4_from_ptetaphie(sv_pt, ak.where(jet_eta >= 0, 1, -1) * sv_etarel + jet_eta, sv_phirel, np.exp(sv_e_log))
-   sv_px: svp4.px
-   sv_py: svp4.py
-   sv_pz: svp4.pz
-   sv_energy: svp4.energy
    label_b:     (jet_genjet_pt>0) & (jet_nBHadrons==1)
    label_bb:    (jet_genjet_pt>0) & (jet_nBHadrons>1)
    label_c:     (jet_genjet_pt>0) & (jet_nBHadrons==0) & (jet_nCHadrons==1)
@@ -47,9 +36,13 @@ preprocess:
   data_fraction:
 
 inputs:
-   pf_x:
+   pf_points:
       length: 50
-      pad_mode: wrap
+      vars:
+         - [pfcand_etarel, null]
+         - [pfcand_phirel, null]
+   pf_features:
+      length: 50
       vars:
       ### [format 1]: var_name (no transformation)
       ### [format 2]: [var_name,
@@ -78,22 +71,17 @@ inputs:
          - [pfcand_btagSip3dVal, 0, 90]
          - [pfcand_btagSip3dSig, 0, 0.5]
          - [pfcand_btagJetDistVal, 0, 50]
-   pf_v:
-      length: 50
-      pad_mode: wrap
-      vars:
-         - [pfcand_px, null]
-         - [pfcand_py, null]
-         - [pfcand_pz, null]
-         - [pfcand_energy, null]
    pf_mask:
       length: 50
-      pad_mode: constant
       vars:
          - [pfcand_mask, null]
-   sv_x:
+   sv_points:
       length: 5
-      pad_mode: wrap
+      vars:
+         - [sv_etarel, null]
+         - [sv_phirel, null]
+   sv_features:
+      length: 5
       vars:
          - [sv_pt_log, 2.8, 0.8]
          - [sv_mass, 1.1, 0.6]
@@ -106,28 +94,17 @@ inputs:
          - [sv_dxysig, 5, 0.03]
          - [sv_d3d, 0.35, 0.4]
          - [sv_d3dsig, 5, 0.03]
-   sv_v:
-      length: 5
-      pad_mode: wrap
-      vars:
-         - [sv_px, null]
-         - [sv_py, null]
-         - [sv_pz, null]
-         - [sv_energy, null]
    sv_mask:
       length: 5
-      pad_mode: constant
       vars:
          - [sv_mask, null]
    pf_ef_idx:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      pad_mode: wrap
       vars:
          - [track1_index, null]
          - [track2_index, null]
    pf_ef:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      pad_mode: wrap
       vars:
          - [pca_distance, null]
          - [pca_significance, null]

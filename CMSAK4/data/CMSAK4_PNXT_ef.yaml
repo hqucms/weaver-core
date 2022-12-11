@@ -47,9 +47,13 @@ preprocess:
   data_fraction:
 
 inputs:
-   pf_x:
+   pf_points:
       length: 50
-      pad_mode: wrap
+      vars:
+         - [pfcand_etarel, null]
+         - [pfcand_phirel, null]
+   pf_features:
+      length: 50
       vars:
       ### [format 1]: var_name (no transformation)
       ### [format 2]: [var_name,
@@ -78,9 +82,8 @@ inputs:
          - [pfcand_btagSip3dVal, 0, 90]
          - [pfcand_btagSip3dSig, 0, 0.5]
          - [pfcand_btagJetDistVal, 0, 50]
-   pf_v:
+   pf_vectors:
       length: 50
-      pad_mode: wrap
       vars:
          - [pfcand_px, null]
          - [pfcand_py, null]
@@ -88,12 +91,15 @@ inputs:
          - [pfcand_energy, null]
    pf_mask:
       length: 50
-      pad_mode: constant
       vars:
          - [pfcand_mask, null]
-   sv_x:
+   sv_points:
       length: 5
-      pad_mode: wrap
+      vars:
+         - [sv_etarel, null]
+         - [sv_phirel, null]
+   sv_features:
+      length: 5
       vars:
          - [sv_pt_log, 2.8, 0.8]
          - [sv_mass, 1.1, 0.6]
@@ -106,9 +112,8 @@ inputs:
          - [sv_dxysig, 5, 0.03]
          - [sv_d3d, 0.35, 0.4]
          - [sv_d3dsig, 5, 0.03]
-   sv_v:
+   sv_vectors:
       length: 5
-      pad_mode: wrap
       vars:
          - [sv_px, null]
          - [sv_py, null]
@@ -116,18 +121,15 @@ inputs:
          - [sv_energy, null]
    sv_mask:
       length: 5
-      pad_mode: constant
       vars:
          - [sv_mask, null]
    pf_ef_idx:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      pad_mode: wrap
       vars:
          - [track1_index, null]
          - [track2_index, null]
    pf_ef:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      pad_mode: wrap
       vars:
          - [pca_distance, null]
          - [pca_significance, null]
