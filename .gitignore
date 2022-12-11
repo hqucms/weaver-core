@@ -133,3 +133,4 @@ models*/
 #out*.txt
 *.auto.yaml
 CMSAK4/runs/
+CMSAK4/training/

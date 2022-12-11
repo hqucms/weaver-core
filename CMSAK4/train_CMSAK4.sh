@@ -21,7 +21,7 @@ else
     CMD="python ../train.py"
 fi
 
-epochs=50
+epochs=1
 samples_per_epoch=$((10000 * 1024 / $NGPUS))
 samples_per_epoch_val=$((10000 * 128))
 dataopts="--num-workers 4 --fetch-step 0.01"
@@ -31,6 +31,9 @@ model=$1
 [[ -z ${model} ]] && model="ParT"
 if [[ "$model" == "ParT" ]]; then
     modelopts="networks/CMSAK4_ParT.py --use-amp"
+    batchopts="--batch-size 512 --start-lr 1e-3"
+elif [[ "$model" == "ParT_ef" ]]; then
+    modelopts="networks/CMSAK4_ParT_ef.py --use-amp"
     batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PN" ]]; then
     modelopts="networks/CMSAK4_PN.py"

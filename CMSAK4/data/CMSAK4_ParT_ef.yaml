@@ -155,7 +155,7 @@ inputs:
          - [pca_jetAxis_dotprod, null]
          - [pca_jetAxis_dEta, null]
          - [pca_jetAxis_dPhi_, null]
-   edge_features_mask:
+   pf_ef_mask:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [edge_features_mask, null]

@@ -710,7 +710,7 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
     def no_weight_decay(self):
         return {'part.cls_token', }
 
-    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None, pf_ef=None, pf_ef_idx=None):
+    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None, pf_ef=None, pf_ef_idx=None, pf_ef_mask=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
