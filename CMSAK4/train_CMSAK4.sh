@@ -17,7 +17,8 @@ NGPUS=${DDP_NGPUS}
 if ((NGPUS > 1)); then
     CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
 else
-    CMD="weaver"
+    #CMD="weaver"
+    CMD="python ../train.py"
 fi
 
 epochs=50

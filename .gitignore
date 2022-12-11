@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+*.root
+models*/
+#out*.txt
+*.auto.yaml
+CMSAK4/runs/
