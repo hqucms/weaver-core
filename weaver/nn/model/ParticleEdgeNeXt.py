@@ -7,9 +7,9 @@ from functools import partial
 
 import sys
 
-orig_stdout = sys.stdout
-f = open('out_log.txt', 'w')
-sys.stdout = f
+#orig_stdout = sys.stdout
+#f = open('out_log.txt', 'w')
+#sys.stdout = f
 
 torch.set_printoptions(profile="full")
 
@@ -126,13 +126,13 @@ def gather(x, k, idx, cpu_mode=False):
 
 
 def gather_edges(x, idx):
-    print("ef gather_edges\n", x.size() , "\n", x)
-    print("idx gather_edges\n", idx.size() , "\n", idx)
+    #print("ef gather_edges\n", x.size() , "\n", x)
+    #print("idx gather_edges\n", idx.size() , "\n", idx)
 
     num_dims = x.size(1)
     idx = idx.unsqueeze(1).repeat(1, num_dims, 1, 1)
     x_final=x.gather(-1, idx)
-    print("x_final gather_edges\n", x_final.size() , "\n", x_final)
+    #print("x_final gather_edges\n", x_final.size() , "\n", x_final)
 
     return x_final
 
@@ -190,7 +190,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
     outputs = []
     if fts is not None:
         fts_ngbs = gather(fts, k, idx, cpu_mode=cpu_mode)
-        print("fts\n", fts.size() , "\n", fts)
+        #print("fts\n", fts.size() , "\n", fts)
 
         fts_center = fts.unsqueeze(-1).repeat(1, 1, 1, k)
         outputs.extend([fts_center, (fts_ngbs - fts_center) if use_rel_fts else fts_ngbs])
@@ -218,7 +218,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         outputs = torch.cat(outputs, dim=1)
     else:
         outputs = None
-    print("outputs1\n", outputs.size() , "\n", outputs)
+    #print("outputs1\n", outputs.size() , "\n", outputs)
 
     if ef_tensor is not None:
         #outputs.append(gather_edges(ef_tensor, idx))
@@ -235,7 +235,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
 
         outputs=torch.cat((outputs, ef_outputs), dim=3)
 
-        print("outputs2\n", outputs.size() , "\n", outputs)
+        #print("outputs2\n", outputs.size() , "\n", outputs)
 
     return outputs, rel_coords, lvs_ngbs, null_edge_pos
 
@@ -454,8 +454,8 @@ class MultiScaleEdgeConv(nn.Module):
 
         dummy_pos_tensor= torch.zeros(batch_size, 1, num_points, self.k, device=null_edge_pos.device, dtype=torch.bool)
         null_edge_pos = torch.cat([null_edge_pos, dummy_pos_tensor], dim=3)
-        print("null_edge_pos cu2\n", null_edge_pos.size(), null_edge_pos)
-        print("null_edge_pos cu2\n", null_edge_pos.size(), ~null_edge_pos)
+        #print("null_edge_pos cu2\n", null_edge_pos.size(), null_edge_pos)
+        #print("null_edge_pos cu2\n", null_edge_pos.size(), ~null_edge_pos)
 
         message = self.edge_mlp(ef_tensor)
         if self.edge_se is not None:

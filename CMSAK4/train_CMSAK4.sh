@@ -18,7 +18,7 @@ if ((NGPUS > 1)); then
     CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
 else
     #CMD="weaver"
-    CMD="python ../weaver/train.py"
+    CMD="python ../train.py"
 fi
 
 epochs=1
@@ -46,7 +46,7 @@ elif [[ "$model" == "PNXT" ]]; then
     batchopts="--batch-size 512 --start-lr 1e-2"
 elif [[ "$model" == "PNXT_ef" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 3 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-2"
 else
     echo "Invalid model $model!"
     exit 1
