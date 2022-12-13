@@ -12,6 +12,8 @@ import math
 import torch
 
 from torch.utils.data import DataLoader
+
+sys.path.append(os.path.join("..", ""))
 from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module

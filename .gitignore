@@ -130,7 +130,7 @@ dmypy.json
 
 *.root
 models*/
-#out*.txt
+out*.txt
 *.auto.yaml
 CMSAK4/runs/
 CMSAK4/training/
