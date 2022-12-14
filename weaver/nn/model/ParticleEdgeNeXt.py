@@ -218,24 +218,26 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         outputs = torch.cat(outputs, dim=1)
     else:
         outputs = None
-    #print("outputs1\n", outputs.size() , "\n", outputs)
 
     if ef_tensor is not None:
         #outputs.append(gather_edges(ef_tensor, idx))
         ef_outputs=gather_edges_new(ef_tensor, k)
 
-        batch_size, num_fts, num_points, _ = outputs.size()
-        num_efts= ef_outputs.size(1)
+        batch_size, num_efts, num_points, _= ef_outputs.size()
+        dummy_outputs= torch.zeros(batch_size, num_efts, num_points, k, device=ef_outputs.device)
 
-        dummy_outputs= torch.zeros(batch_size, num_efts, num_points, k, device=outputs.device)
-        dummy_ef= torch.zeros(batch_size, num_fts, num_points, k, device=ef_outputs.device)
-
-        outputs=torch.cat((outputs, dummy_outputs), dim=1)
-        ef_outputs=torch.cat((ef_outputs, dummy_ef), dim=1)
+        if use_rel_lv_fts:
+            num_fts= outputs.size(1)
+            dummy_ef= torch.zeros(batch_size, num_fts, num_points, k, device=ef_outputs.device)
+            outputs=torch.cat((outputs, dummy_outputs), dim=1)
+            ef_outputs=torch.cat((ef_outputs, dummy_ef), dim=1)
+        else:
+            outputs=dummy_outputs
 
         outputs=torch.cat((outputs, ef_outputs), dim=3)
 
-        #print("outputs2\n", outputs.size() , "\n", outputs)
+        #print("outputs2\n", outputs.size() , "\n")
+
 
     return outputs, rel_coords, lvs_ngbs, null_edge_pos
 
@@ -435,16 +437,8 @@ class MultiScaleEdgeConv(nn.Module):
                 fts=fts_encode, mask=mask, ef_tensor=ef_tensor, idx=idx, null_edge_pos=null_edge_pos)
             if edge_inputs is not None:
                 batch_size, num_efts_tensor, num_points, _ = ef_tensor.size()
-                num_efts_inputs = edge_inputs.size(1)
-
                 dummy_tensor= torch.zeros(batch_size, num_efts_tensor, num_points, self.k, device=ef_tensor.device)
-                #dummy_ef_tensor2= torch.zeros(batch_size, num_efts_inputs+num_efts_tensor, num_points, self.k, device=ef_tensor.device)
-
                 ef_tensor=torch.cat((ef_tensor, dummy_tensor), dim=3)
-                #ef_tensor=torch.cat((ef_tensor, dummy_ef_tensor2), dim=3)
-
-                #ef_tensor=torch.cat((outputs, ef_outputs), dim=3)
-
                 ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1)
 
 
@@ -452,10 +446,10 @@ class MultiScaleEdgeConv(nn.Module):
             ef_tensor = torch.cat([ef_tensor[:, :, :, s] for s in self.slices], dim=-1)
             null_edge_pos = torch.cat([null_edge_pos[:, :, :, s] for s in self.slices], dim=-1)
 
-        dummy_pos_tensor= torch.zeros(batch_size, 1, num_points, self.k, device=null_edge_pos.device, dtype=torch.bool)
-        null_edge_pos = torch.cat([null_edge_pos, dummy_pos_tensor], dim=3)
-        #print("null_edge_pos cu2\n", null_edge_pos.size(), null_edge_pos)
-        #print("null_edge_pos cu2\n", null_edge_pos.size(), ~null_edge_pos)
+        if edge_inputs is not None:
+            dummy_pos_tensor= torch.zeros(edge_inputs.size(0), 1, edge_inputs.size(2), self.k, device=null_edge_pos.device, dtype=torch.bool)
+            null_edge_pos = torch.cat([null_edge_pos, dummy_pos_tensor], dim=3)
+
 
         message = self.edge_mlp(ef_tensor)
         if self.edge_se is not None:

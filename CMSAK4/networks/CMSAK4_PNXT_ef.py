@@ -11,14 +11,14 @@ def get_model(data_config, **kwargs):
         num_classes=len(data_config.label_value),
         # network configurations
         node_dim=32,
-        edge_dim=8,
+        edge_dim=32, #8
         use_edge_bn=True,
         layer_params=[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],  # noqa
         fc_params=[(256, 0.1)],
         global_aggregation='attn4',
         # MultiScaleEdgeConv options
         edge_aggregation='attn8',
-        use_rel_lv_fts=True,
+        use_rel_lv_fts=False, #True
         use_polarization_angle=False,
         use_rel_fts=False,
         use_rel_dist=False,
