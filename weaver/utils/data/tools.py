@@ -19,7 +19,10 @@ def _stack(arrays, axis=1):
     if isinstance(arrays[0], np.ndarray):
         return np.stack(arrays, axis=axis)
     else:
-        return ak.concatenate(arrays, axis=axis)
+        s = [slice(None)] * (arrays[0].ndim + 1)
+        s[axis] = np.newaxis
+        s = tuple(s)
+        return ak.concatenate([a.__getitem__(s) for a in arrays], axis=axis)
 
 
 def _pad(a, maxlen, value=0, dtype='float32'):
