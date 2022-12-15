@@ -96,10 +96,11 @@ class DataConfig(object):
         self.label_type = opts['labels']['type']
         self.label_value = opts['labels']['value']
         if self.label_type == 'simple':
-            assert(isinstance(self.label_value, list))
+            assert (isinstance(self.label_value, list))
             self.label_names = ('_label_',)
-            self.var_funcs['_label_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(self.label_value))
-            self.var_funcs['_labelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(self.label_value))
+            label_exprs = ['ak.to_numpy(%s)' % k for k in self.label_value]
+            self.var_funcs['_label_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(label_exprs))
+            self.var_funcs['_labelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(label_exprs))
         else:
             self.label_names = tuple(self.label_value.keys())
             self.var_funcs.update(self.label_value)

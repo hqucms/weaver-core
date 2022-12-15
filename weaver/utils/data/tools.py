@@ -52,10 +52,10 @@ def _repeat_pad(a, maxlen, shuffle=False, dtype='float32'):
 
 
 def _clip(a, a_min, a_max):
-    try:
+    if isinstance(a, np.ndarray):
         return np.clip(a, a_min, a_max)
-    except ValueError:
-        return ak.unflatten(np.clip(ak.flatten(a), a_min, a_max), ak.num(a))
+    else:
+        return ak.unflatten(np.clip(ak.to_numpy(ak.flatten(a)), a_min, a_max), ak.num(a))
 
 
 def _knn(support, query, k, n_jobs=1):
