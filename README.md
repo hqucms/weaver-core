@@ -1,8 +1,10 @@
 # Weaver
 
-`Weaver` aims at providing a streamlined yet flexible machine learning R&D framework for high energy physics (HEP) applications. It puts particular emphases on:
+`Weaver` aims at providing a streamlined yet flexible machine learning R&D framework for high energy physics (HEP) applications. See [weaver-examples](https://github.com/hqucms/weaver-examples) for a number of use cases.
 
-- handling common HEP dataset formats (ROOT, HDF5, [awkward array](https://github.com/scikit-hep/awkward-array)) efficiently, up to terabyte-level
+Weaver puts particular emphases on:
+
+- handling common HEP dataset formats (ROOT, HDF5, [awkward array](https://github.com/scikit-hep/awkward-array)) efficiently, up to terabyte-scale
 - providing a simple way to perform input processing _on-the-fly_ (e.g., sample selections, new variable definition, inputs transformation/standardization, sample reweighting, etc.)
 - bridging the gap between development and production: neural networks are trained with [PyTorch](https://pytorch.org/) and exported to the [ONNX](http://onnx.ai/) format for fast inference (e.g., using [ONNXRuntime](https://github.com/microsoft/onnxruntime))
 
@@ -24,14 +26,14 @@
     - [More about data loading and processing](#more-about-data-loading-and-processing)
         - [Training mode](#training-mode)
         - [Prediction/Inference mode](#predictioninference-mode)
-    - [Performance consideration](#performance-consideration)
+    - [Performance considerations on data loading](#performance-considerations-on-data-loading)
 
 <!-- /TOC -->
 
 ## Set up your environment
 
 The `Weaver` package requires Python 3.7+ and a number of packages like `numpy`, `scikit-learn`, `PyTorch`, etc.
-To run the neural network training, a Nvidia GPU with [CUDA](https://developer.nvidia.com/cuda-downloads) support is needed.
+To run the neural network training, an Nvidia GPU with [CUDA](https://developer.nvidia.com/cuda-downloads) support is needed.
 
 To manage the Python environment, we recommend using [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 Below are the instructions to set up Miniconda and install the required packages. This needs to be done only once.
@@ -47,23 +49,19 @@ bash Miniconda3-latest-Linux-x86_64.sh
 # > Do you wish the installer to initialize Miniconda3
 # > by running conda init? [yes|no]
 
-# disable auto activation of the base environment
+# [Optional] Disable auto activation of the base environment
 conda config --set auto_activate_base false
 ```
 
-Verify the installation is successful by running `conda info` and check if the paths are pointing to your Miniconda installation.
+Verify the installation is successful by running `conda info` and checking if the paths are pointing to your Miniconda installation.
 
-If you cannot run `conda` command, check if you need to add the conda path to your `PATH` variable in your bashrc/zshrc file, e.g.,
-
-```bash
-export PATH="$HOME/miniconda3/bin:$PATH"
-```
+If you cannot run the `conda` command, check if the conda path has been correctly set up in your `.bashrc`/`.zshrc` file. You may need to log out and log in again for the changes to take effect.
 
 ### Set up a conda environment and install the packages
 
 ```bash
 # create a new conda environment
-conda create -n weaver python=3.7
+conda create -n weaver python=3.10
 
 # activate the environment
 conda activate weaver
@@ -77,6 +75,7 @@ pip install weaver-core
 ```
 
 Alternatively, if you want to install `weaver-core` in editable/development mode:
+
 ```
 git clone git@github.com:hqucms/weaver-core.git
 cd weaver-core
@@ -102,12 +101,12 @@ The data configuration file is a [YAML](https://yaml.org/) format file describin
 - `observers` (optional): additional variables that are not used in the training, but will be added to the output files when running prediction
 - `weights` (optional): instance weight information for sampling the instances during the training
 
-An example of the data configuration file is [data/ak15_points_pf_sv.yaml](data/ak15_points_pf_sv.yaml).
-For more details, check [utils/data/config.py](utils/data/config.py) and [utils/dataset.py](utils/dataset.py).
+An example of the data configuration file is [JetClass_full.yaml](https://github.com/jet-universe/particle_transformer/blob/29ef32b5020c11d0d22fba01f37a740a72cbbb4d/data/JetClass/JetClass_full.yaml).
+For more details, check [utils/data/config.py](weaver/utils/data/config.py) and [utils/dataset.py](weaver/utils/dataset.py).
 
 ### Model configuration file
 
-The model configuration file specifies the neural network model and the loss function. It needs to implement the `get_model` function (required) and the `get_loss` fucntion (optional, default is `torch.nn.CrossEntropyLoss()`) in the following signatures:
+The model configuration file specifies the neural network model and the loss function. It needs to implement the `get_model` function (required) and the `get_loss` function (optional, default is `torch.nn.CrossEntropyLoss()`) in the following signatures:
 
 ```python
 def get_model(data_config, **kwargs):
@@ -127,7 +126,7 @@ def get_loss(data_config, **kwargs):
     return loss_func
 ```
 
-An example of the model configuration file is [networks/particle_net_pf_sv.py](networks/particle_net_pf_sv.py).
+An example of the model configuration file is [example_ParticleTransformer.py](https://github.com/jet-universe/particle_transformer/blob/29ef32b5020c11d0d22fba01f37a740a72cbbb4d/networks/example_ParticleTransformer.py).
 
 ## Start running!
 
@@ -149,12 +148,12 @@ weaver --data-train '/path/to/train_files/*/*/*/*/output_*.root' \
 Note:
 
 - `--data-train` and `--data-test` supports providing multiple entries, e.g., `--data-train /path/to/A /path/to/B /path/to/C`, and each entry also supports wildcards (`*`, `?`, etc. -- The python `glob` package is used to parse the paths).
-- `--data-test` is optional: if specified, the performance on the testing dataset will be automatcially evaluated after the training, using the epoch giving the best performance on the validation set. The prediction output can be saved if `--predict-output` is also set.
+- `--data-test` is optional: if specified, the performance on the testing dataset will be automatically evaluated after the training, using the epoch giving the best performance on the validation set. The prediction output can be saved if `--predict-output` is also set.
 - for training, `--model-prefix` sets the _prefix_ part of the paths to save model snapshots.
   At the end of each epoch, the model parameters will be saved to `/path/to/models/prefix_epoch-%d_state.pt`,
   and the optimizer states will be saved to `/path/to/models/prefix_epoch-%d_optimizer.pt` in case the training is interrupted and needed to be resumed from a certain epoch.
-  - One can also uses a auto-generated path by including `{auto}` as part of the `--model-prefix`, then `{auto}` will be replaced by a string based on timestamp and the hash of the network configuration.
-- for small datasets, it's more efficient to use `--in-memory` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
+  - One can also use an auto-generated path by including `{auto}` as part of the `--model-prefix`, then `{auto}` will be replaced by a string based on the timestamp and the hash of the network configuration.
+- for small datasets, it's more efficient to use `--in-memory --fetch-step 1` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
 - when training on remote files (e.g., from EOS filesystem), one could consider adding `--copy-inputs` so the files are copied to the local workdir to speed up data loading.
 - training can be resumed by adding `--load-epoch [last_epoch]`: with this option, the training will continue at `last_epoch + 1`, and the optimizer states and the learning rate will be properly restored.
 
@@ -177,7 +176,7 @@ Note:
   (`*`, `?`, etc. -- The python `glob` package is used to parse the paths).
 - for inference, one can use a data configuration file with different `selection` / `observers` sections, but the `inputs` and `labels` sections must remain unchanged.
 - for inference, one can specify the full path of the model parameters in `--model-prefix`.
-- `--predict-output` sets the path for the output file. It can either be the full path (if `/` is contained in the path), or just the file name part (e.g., `output.root`) so that the output will be written under the directory of the `--model-prefix`, i.e., `{model_prefix_dir}/predict_output/{predict_output}`. Currently support saving to ROOT files (use `.root` extension) or awkward arrays (use `.awkd` extension).
+- `--predict-output` sets the path for the output file. It can either be the full path (if `/` is contained in the path), or just the file name part (e.g., `output.root`) so that the output will be written under the directory of the `--model-prefix`, i.e., `{model_prefix_dir}/predict_output/{predict_output}`. Currently supports saving to ROOT files (use `.root` extension) or parquet files containing awkward arrays (use `.parquet` extension).
 
 ### Model exportation
 
@@ -189,11 +188,11 @@ weaver -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path
 
 ## More about data loading and processing
 
-To cope with large datasets, the data loader in `Weaver` does not read all input files into memory, but rather load the input events incrementally. The implementation follows the `PyTorch` [iterable-style datasets](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) interface. To speed up the data loading process, [multi-process data loading](https://pytorch.org/docs/stable/data.html#multi-process-data-loading) is also implemented.
+To cope with large datasets, the data loader in `Weaver` does not read all input files into memory, but rather loads the input events incrementally. The implementation follows the `PyTorch` [iterable-style datasets](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) interface. To speed up the data loading process, [multi-process data loading](https://pytorch.org/docs/stable/data.html#multi-process-data-loading) is also implemented.
 
-**[Note]** For small dataset that actually fits into the memory, use `--in-memory` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
+**[Note]** For small datasets that actually fit into the memory, use `--in-memory --fetch-step 1` to load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run.
 
-The [data loader](utils/dataset.py) in `Weaver` operates in different ways for training and prediction/inference.
+The [data loader](weaver/utils/dataset.py) in `Weaver` operates in different ways for training and prediction/inference.
 
 ### Training mode
 
@@ -201,21 +200,21 @@ For training, properly mixing events of different types (e.g., signal/background
 
 To achieve this efficiently, `Weaver` divides all input files randomly into `N` groups and will load them concurrently with `N` worker threads (`N` is set by `--num-workers`). Then, two data loading strategies are available at the worker thread level:
 
-- [**Default**] The "event-based" strategy attempts to read all the input files (assigned to this worker thread) at each step in order to "maximally" mix events. To meet the memory constraint, for every step, only a small chunk of events is loaded from each input file, and then randomly shuffled before being fed to the training pipeline. The chunk size is set by `--fetch-step` (default is 0.01), corresponding to the fraction (i.e., 10% by default) of events to be loaded from each file in every step. This is the default strategy as, for typical HEP datasets, each individual input file originates from a specific physics process, thus contains events of only a particular type / limited phase space. Note that while this approach ensures a good mixing of events, it requires a high reading throughput of the data storage (thus a fast SSD is preferred), otherwise data loading can become a bottleneck in the training speed.
+- [**Default**] The "event-based" strategy attempts to read all the input files (assigned to this worker thread) at each step in order to "maximally" mix events. To meet the memory constraint, for every step, only a small chunk of events is loaded from each input file, and then randomly shuffled before being fed to the training pipeline. The chunk size is set by `--fetch-step` (default is 0.01), corresponding to the fraction (i.e., 10% by default) of events to be loaded from each file in every step. This is the default strategy as, for typical HEP datasets, each individual input file originates from a specific physics process, thus contains events of only a particular type / limited phase space. Note that while this approach ensures good mixing of events, it requires a high reading throughput of the data storage (thus a fast SSD is preferred), otherwise data loading can become a bottleneck in the training speed.
 
   - Note: consider setting a smaller `--fetch-step` if the memory limit is exceeded.
 
 - An alternative approach is the "file-based" strategy, which can be enabled with `--fetch-by-files`. This approach will instead read all events from every file for each step, and it will read `m` input files (`m` is set by `--fetch-step`) before mixing and shuffling the loaded events. This strategy is more suitable when each input file is already a mixture of all types of events (e.g., pre-processed with [NNTools](https://github.com/hqucms/NNTools/)), otherwise it may lead to suboptimal training performance. However, a higher data loading speed can generally be achieved with this approach.
 
-**[Note]** If the dataset is stored on EOS and the size is not very large, it may be more efficient to transfer the files to the local storage of the worker node when submitting batch jobs. This can be done on-the-fly by adding the `--copy-inputs` option.
+**[Note]** If the dataset is stored on EOS and the size is not very large, it may be more efficient to transfer the files to the local storage of the worker node when submitting batch jobs. This can be done on the fly by adding the `--copy-inputs` option.
 
 ### Prediction/Inference mode
 
-Contrary to training, for prediction/inference, the events are not mixed/shuffled. Instead, the order of the events are preserved, exactly as in the input files. Therefore, only the "file-based" strategy described above is supported, and the `--fetch-step` is fixed to 1.
+Contrary to training, for prediction/inference, the events are not mixed/shuffled. Instead, the order of the events is preserved, exactly as in the input files. Therefore, only the "file-based" strategy described above is supported, and the `--fetch-step` is fixed to 1.
 
-For more details of the data loader, please check [utils/dataset.py](utils/dataset.py).
+For more details on the data loader, please check [utils/dataset.py](weaver/utils/dataset.py).
 
-## Performance consideration
+## Performance considerations on data loading
 
 Loading data from disk can often become a bottleneck. Here are a few tips to get better data loading performance:
 

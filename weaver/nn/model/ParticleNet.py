@@ -1,8 +1,12 @@
+''' ParticleNet
+
+Paper: "ParticleNet: Jet Tagging via Particle Clouds" - https://arxiv.org/abs/1902.08570
+
+Adapted from the DGCNN implementation in https://github.com/WangYueFt/dgcnn/blob/master/pytorch/model.py.
+'''
 import numpy as np
 import torch
 import torch.nn as nn
-
-'''Based on https://github.com/WangYueFt/dgcnn/blob/master/pytorch/model.py.'''
 
 
 def knn(x, k):

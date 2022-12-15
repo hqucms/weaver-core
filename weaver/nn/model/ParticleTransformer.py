@@ -1,3 +1,7 @@
+''' Particle Transformer (ParT)
+
+Paper: "Particle Transformer for Jet Tagging" - https://arxiv.org/abs/2202.03772
+'''
 import math
 import random
 import warnings
@@ -129,7 +133,7 @@ def build_sparse_tensor(uu, idx, seq_len):
 
 
 def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
-    # From https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/weight_init.py
+    # From https://github.com/rwightman/pytorch-image-models/blob/18ec173f95aa220af753358bf860b16b6691edb2/timm/layers/weight_init.py#L8
     r"""Fills the input Tensor with values drawn from a truncated
     normal distribution. The values are effectively drawn from the
     normal distribution :math:`\mathcal{N}(\text{mean}, \text{std}^2)`
