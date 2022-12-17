@@ -16,6 +16,7 @@ new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: ak.ones_like(pfcand_etarel)
+   pf_ef_mask: ak.ones_like(pca_distance)
    # FIXME: use (px, py, pz, energy) directly once they are available in the ntuples
    pfp4: _p4_from_ptetaphie(pfcand_pt_nopuppi, ak.where(jet_eta >= 0, 1, -1) * pfcand_etarel + jet_eta, pfcand_phirel, np.exp(pfcand_e_log_nopuppi))
    pfcand_px: pfp4.px
@@ -157,6 +158,11 @@ inputs:
          - [pca_jetAxis_dotprod, null]
          - [pca_jetAxis_dEta, null]
          - [pca_jetAxis_dPhi_, null]
+   pf_ef_mask:
+      length: 600 # max lenght of the variable for each event (eg: max number of tracks combinations)
+      vars:
+         - [pf_ef_mask, null]
+
 
 labels:
    ### type can be `simple`, `custom`

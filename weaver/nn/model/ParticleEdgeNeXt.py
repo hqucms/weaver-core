@@ -141,8 +141,9 @@ def gather_edges_new(x, k=8):
     #print("ef gather_edges_new\n", x.size() , "\n", x) # (bs, num_ef, num_pf, num_pf)
     num_dims = x.size(1)
 
-    ratio=x[:, 0, :, :]/x[:, 16, :, :] # ratio between pcs_distance and pca_dist1
-    idx=ratio.topk(k=k,dim=-1, largest=False)[1][:, :, :] # take the k indices of the smallest ratios
+    order=x[:, 0, :, :]/x[:, 16, :, :] # ratio between pca_distance and pca_dist1
+    #order=1/x[:, 0, :, :] # 1/pca_distance ----> metti largest=True
+    idx=order.topk(k=k,dim=-1, largest=False)[1][:, :, :] # take the k indices of the smallest ratios
     idx = idx.unsqueeze(1).repeat(1, num_dims, 1, 1) # reshape to be as x
     x_final=x.gather(-1, idx) #(bs, num_ef, num_pf, k)
     #print("x_final gather_edges_new\n", x_final.size() , "\n", x_final)
@@ -186,6 +187,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         mask_ngbs = gather(mask, k, idx, cpu_mode=cpu_mode)
         mask_ngbs = mask_ngbs & mask.unsqueeze(-1)
         null_edge_pos = ~mask_ngbs
+        print("nulledge", null_edge_pos.size())
 
     outputs = []
     if fts is not None:
@@ -439,7 +441,7 @@ class MultiScaleEdgeConv(nn.Module):
                 batch_size, num_efts_tensor, num_points, _ = ef_tensor.size()
                 dummy_tensor= torch.zeros(batch_size, num_efts_tensor, num_points, self.k, device=ef_tensor.device)
                 ef_tensor=torch.cat((ef_tensor, dummy_tensor), dim=3)
-                ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1)
+                ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1) #(batch_size, num_ef+num_fts, num_points, k+k)
 
 
         if sum(self.slice_dims) < self.k:
@@ -676,7 +678,7 @@ class ParticleEdgeNeXt(nn.Module):
         self.for_inference = for_inference
         self._counter = 0
 
-    def forward(self, points, features, lorentz_vectors, mask=None, ef_tensor=None):
+    def forward(self, points, features, lorentz_vectors, mask=None, ef_tensor=None, ef_mask_tensor=None):
         # print('points:\n', points)
         # print('features:\n', features)
         # print('lorentz_vectors:\n', lorentz_vectors)
@@ -740,6 +742,8 @@ class ParticleEdgeNeXt(nn.Module):
                         rand.masked_fill_(~mask, -1)
                         perm = rand.argsort(dim=-1, descending=True)
                         mask = torch.gather(mask, -1, perm)
+                        print('mask:\n', mask.size())
+
                         points = torch.gather(points, -1, perm.expand_as(points))
                         features = torch.gather(features, -1, perm.expand_as(features))
                         if lorentz_vectors is not None:
@@ -757,6 +761,9 @@ class ParticleEdgeNeXt(nn.Module):
                             lorentz_vectors = lorentz_vectors[:, :, :maxlen]
                         if ef_tensor is not None:
                             ef_tensor = ef_tensor[:, :, :maxlen, :maxlen]
+                        if ef_mask_tensor is not None:
+                            ef_mask_tensor = ef_mask_tensor[:, :, :maxlen, :maxlen]
+
 
             if self.global_aggregation == 'mean':
                 counts = mask.float().sum(dim=-1)
@@ -906,7 +913,7 @@ class ParticleEdgeNeXtTagger(nn.Module):
                                for_inference=for_inference,
                                )
 
-    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, sv_points, sv_features, sv_vectors, sv_mask, pf_ef_idx, pf_ef):
+    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, sv_points, sv_features, sv_vectors, sv_mask, pf_ef_idx, pf_ef, pf_ef_mask):
         if self.pf_input_dropout:
             pf_mask = self.pf_input_dropout(pf_mask)
         if self.sv_input_dropout:
@@ -918,4 +925,5 @@ class ParticleEdgeNeXtTagger(nn.Module):
         mask = torch.cat((pf_mask, sv_mask), dim=2)
 
         ef_tensor=build_sparse_tensor(pf_ef, pf_ef_idx, features.size(-1))
-        return self.pn(points, features, lorentz_vectors, mask, ef_tensor)
+        ef_mask_tensor=build_sparse_tensor(pf_ef_mask, pf_ef_idx, features.size(-1))
+        return self.pn(points, features, lorentz_vectors, mask, ef_tensor, ef_mask_tensor)

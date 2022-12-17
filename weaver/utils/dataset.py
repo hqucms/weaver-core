@@ -38,8 +38,7 @@ def _finalize_inputs(table, data_config):
             table[k] = pad_fn(table[k], params['length'])
         # check for NaN
         if np.any(np.isnan(table[k])):
-            _logger.warning(
-                'Found NaN in %s, silently converting it to 0.', k)
+            #_logger.warning('Found NaN in %s, silently converting it to 0.', k)
             table[k] = np.nan_to_num(table[k])
     # stack variables for each input group
     for k, names in data_config.input_dicts.items():
