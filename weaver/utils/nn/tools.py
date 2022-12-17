@@ -118,7 +118,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
 
 
 def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
-                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
+                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds'],
                             tb_helper=None):
     model.eval()
 
@@ -201,6 +201,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
+    print(labels[data_config.label_names[0]], '\n' ,scores)
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
@@ -224,7 +225,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         return total_correct / count, scores, labels, observers
 
 
-def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix']):
+def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix','roc_curve_bVSuds']):
     import onnxruntime
     sess = onnxruntime.InferenceSession(model_path)
 
