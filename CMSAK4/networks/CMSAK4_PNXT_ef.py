@@ -18,7 +18,7 @@ def get_model(data_config, **kwargs):
         global_aggregation='attn4',
         # MultiScaleEdgeConv options
         edge_aggregation='attn8',
-        use_rel_lv_fts=False, #True
+        use_rel_lv_fts=True, #True
         use_polarization_angle=False,
         use_rel_fts=False,
         use_rel_dist=False,

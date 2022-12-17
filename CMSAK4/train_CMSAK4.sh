@@ -11,17 +11,19 @@ DATADIR=${DATADIR_CMSAK4}
 # set a comment via `COMMENT`
 suffix=${COMMENT}
 
+
 # set the number of gpus for DDP training via `DDP_NGPUS`
 NGPUS=${DDP_NGPUS}
 [[ -z $NGPUS ]] && NGPUS=1
 if ((NGPUS > 1)); then
-    CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
+    #CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
+     CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS ../train.py --backend nccl"
 else
     #CMD="weaver"
     CMD="python ../train.py"
 fi
 
-epochs=1
+epochs=23
 samples_per_epoch=$((10000 * 1024 / $NGPUS))
 samples_per_epoch_val=$((10000 * 128))
 dataopts="--num-workers 4 --fetch-step 0.01"
@@ -52,6 +54,8 @@ else
     exit 1
 fi
 
+suffix_specs=$2
+
 $CMD \
     --data-train \
     "BulkGravitonToHHTo4Q_part1:${DATADIR}/BulkGravitonToHHTo4Q_MX-600to6000_MH-15to250_part1_TuneCP5_13TeV-madgraph_pythia8/*/*/*/output_*.root" \
@@ -70,9 +74,9 @@ $CMD \
     "QCD_Pt_800to1000_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_800to1000_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
     "QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
-    --model-prefix training/CMSAK4/${model}/{auto}${suffix}/net \
+    --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
-    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0 \
-    --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}.log --predict-output pred.root \
+    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0,1,2,3 \
+    --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log --predict-output pred.root \
     --tensorboard CMSAK4_${model}${suffix} \
-    "${@:2}"
+    "${@:3}"
