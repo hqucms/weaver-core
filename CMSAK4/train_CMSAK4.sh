@@ -74,9 +74,9 @@ $CMD \
     "QCD_Pt_800to1000_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_800to1000_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
     "QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
-    --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
+    --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/ \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0 \
     --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log --predict-output pred.root \
-    --tensorboard CMSAK4_${model}${suffix} \
+    --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} \
     "${@:3}"
