@@ -76,7 +76,7 @@ $CMD \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
     --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
-    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0,1,2,3 \
+    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0 \
     --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log --predict-output pred.root \
     --tensorboard CMSAK4_${model}${suffix} \
     "${@:3}"

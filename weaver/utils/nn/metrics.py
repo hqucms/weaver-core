@@ -3,7 +3,6 @@ import traceback
 import sklearn.metrics as _m
 from functools import partial
 from ..logger import _logger
-import torch
 
 # def _bkg_rejection(y_true, y_score, sig_eff):
 #     fpr, tpr, _ = _m.roc_curve(y_true, y_score)
@@ -49,16 +48,16 @@ def roc_curve_bVSuds(y_true, y_score):
     y_true_b = y_true==0
     y_true_bb = y_true==1
     y_true_uds = y_true==4
-    y_true_idx = torch.logical_or(torch.logical_or(y_true_b ,y_true_bb),y_true_uds)
+    y_true_idx = np.logical_or(np.logical_or(y_true_b ,y_true_bb),y_true_uds)
     y_score_b=y_score[:,0]*y_true_b
     y_score_bb=y_score[:,1]*y_true_bb
     y_score_uds=(y_score[:,0]+y_score[:,1])*y_true_uds
     y_score_tot=y_score_b+y_score_bb+y_score_uds
     y_score_tot = y_score_tot[y_true_idx]
-    y_true_tot=torch.ones_like(torch.logical_or(y_true_b ,y_true_bb), device=y_true.device)[y_true_idx]
-
+    y_true_tot=(np.logical_or(y_true_b ,y_true_bb))[y_true_idx].astype(int)
+    print('y\n', y_true_tot, y_score_tot)
     return _m.roc_curve(y_true_tot, y_score_tot)
-
+    #return None
 
 
 _metric_dict = {

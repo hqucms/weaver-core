@@ -187,7 +187,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         mask_ngbs = gather(mask, k, idx, cpu_mode=cpu_mode)
         mask_ngbs = mask_ngbs & mask.unsqueeze(-1)
         null_edge_pos = ~mask_ngbs
-        print("nulledge", null_edge_pos.size())
+        #print("nulledge", null_edge_pos.size())
 
     outputs = []
     if fts is not None:
@@ -742,7 +742,7 @@ class ParticleEdgeNeXt(nn.Module):
                         rand.masked_fill_(~mask, -1)
                         perm = rand.argsort(dim=-1, descending=True)
                         mask = torch.gather(mask, -1, perm)
-                        print('mask:\n', mask.size())
+                        #print('mask:\n', mask.size())
 
                         points = torch.gather(points, -1, perm.expand_as(points))
                         features = torch.gather(features, -1, perm.expand_as(features))

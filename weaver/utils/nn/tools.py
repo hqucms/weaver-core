@@ -225,7 +225,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         return total_correct / count, scores, labels, observers
 
 
-def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix','roc_curve_bVSuds']):
+def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds']):
     import onnxruntime
     sess = onnxruntime.InferenceSession(model_path)
 
