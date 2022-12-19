@@ -48,21 +48,26 @@ def confusion_matrix(y_true, y_score):
         y_pred = y_score.argmax(1)
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
-def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
-    y_true_b = np.logical_or(y_true==0,y_true==1)
-    y_true_uds = y_true==4
-    y_true_idx = np.logical_or(y_true_b,y_true_uds)
-    y_score_b=(y_score[:,0]+y_score[:,1])*y_true_b
-    y_score_uds=(y_score[:,0]+y_score[:,1])*y_true_uds
-    y_score_tot=y_score_b+y_score_uds
+
+def get_y_true_score(y_true, y_score, labels_s, labels_b):
+    y_true_s = np.logical_or.reduce([y_true==label_s for label_s in labels_s])
+    y_true_b = np.logical_or.reduce([y_true==label_b for label_b in labels_b])
+    y_true_idx = np.logical_or(y_true_s,y_true_b)
+    y_score_s=sum([y_score[:,label_s] for label_s in labels_s])*y_true_s
+    y_score_b=sum([y_score[:,label_b] for label_b in labels_b])*y_true_b
+    y_score_tot=y_score_s+y_score_b
     y_score_tot = y_score_tot[y_true_idx]
-    y_true_tot=y_true_b[y_true_idx].astype(int)
-    print('y\n', y_true_tot, y_score_tot)
-    #fpr, tpr, thr=_m.roc_curve(y_true_tot, y_score_tot)
+    y_true_tot=y_true_s[y_true_idx].astype(int)
 
-    #_m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs uds', color='darkorange')
+    return y_true_tot, y_score_tot
 
-    '''plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
+def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
+    y_true_tot, y_score_tot = get_y_true_score(y_true, y_score, [0,1], [4])
+
+    '''
+    _m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs uds', color='darkorange')
+
+    plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
     plt.axis('square')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
@@ -70,17 +75,40 @@ def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
     plt.legend()
     plt.savefig(os.path.join(roc_prefix,f'roc_curve_bVSuds_#{epoch}.png'))
     '''
-    with open(os.path.join(roc_prefix,'y_bVSuds.npy'), 'ab') as f:
+
+    with open(f'{roc_prefix}_y_bVSuds.npy', 'ab') as f:
         np.save(f, np.array([y_true_tot, y_score_tot]))
 
+    return f'ROC curve, y_true and y_score for b VS uds properly saved in file: \n {roc_prefix}_y_bVSuds.npy\n'
 
-    return f'ROC curve, y_true and y_score for b VS uds properly saved in directory: \n {roc_prefix}\n'
+
+def roc_curve_bVSg(y_true, y_score, epoch,roc_prefix):
+    y_true_tot, y_score_tot = get_y_true_score(y_true, y_score, [0,1], [5])
+
+
+    '''
+    _m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs g', color='darkorange')
+
+    plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
+    plt.axis('square')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(f'b VS g for epoch #{epoch}')
+    plt.legend()
+    plt.savefig(os.path.join(roc_prefix,f'roc_curve_bVSg_#{epoch}.png'))
+    '''
+
+    with open(f'{roc_prefix}_y_bVSg.npy', 'ab') as f:
+        np.save(f, np.array([y_true_tot, y_score_tot]))
+
+    return f'ROC curve, y_true and y_score for b VS uds properly saved in file: \n {roc_prefix}_y_bVSg.npy\n'
 
 _metric_dict = {
     'roc_auc_score': partial(_m.roc_auc_score, multi_class='ovo'),
     'roc_auc_score_matrix': roc_auc_score_ovo,
     'confusion_matrix': confusion_matrix,
     'roc_curve_bVSuds': roc_curve_bVSuds,
+    'roc_curve_bVSg': roc_curve_bVSg,
     }
 
 
@@ -91,7 +119,7 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=None, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)

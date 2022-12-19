@@ -33,23 +33,23 @@ preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
   method: manual
   ### data_fraction: fraction of events to use when calculating the mean/scale for the standardization
-  data_fraction: 
+  data_fraction:
 
 inputs:
    pf_points:
       length: 50
-      vars: 
+      vars:
          - [pfcand_etarel, null]
          - [pfcand_phirel, null]
    pf_features:
       length: 50
-      vars: 
+      vars:
       ### [format 1]: var_name (no transformation)
-      ### [format 2]: [var_name, 
-      ###              subtract_by(optional, default=None, no transf. if preprocess.method=manual, auto transf. if preprocess.method=auto), 
-      ###              multiply_by(optional, default=1), 
-      ###              clip_min(optional, default=-5), 
-      ###              clip_max(optional, default=5), 
+      ### [format 2]: [var_name,
+      ###              subtract_by(optional, default=None, no transf. if preprocess.method=manual, auto transf. if preprocess.method=auto),
+      ###              multiply_by(optional, default=1),
+      ###              clip_min(optional, default=-5),
+      ###              clip_max(optional, default=5),
       ###              pad_value(optional, default=0)]
          - [pfcand_pt_log_nopuppi, 0.8, 0.7]
          - [pfcand_e_log_nopuppi, 1.2, 0.6]
@@ -73,7 +73,7 @@ inputs:
          - [pfcand_btagJetDistVal, 0, 50]
    pf_mask:
       length: 50
-      vars: 
+      vars:
          - [pfcand_mask, null]
    sv_points:
       length: 5
@@ -106,8 +106,8 @@ labels:
    value: [label_b, label_bb, label_c, label_cc, label_uds, label_g, label_undef, label_pu]
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    # type: custom
-   # value: 
-      # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass) 
+   # value:
+      # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass)
 
 observers:
    - event_no
@@ -121,10 +121,10 @@ observers:
    - jet_nBHadrons
    - jet_nCHadrons
    - jet_genjet_pt
-   - jet_matched_genjet_pt
-   - jet_matched_genjet_eta
-   - jet_matched_genjet_phi
-   - jet_matched_genjet_deltaR
+   #- jet_matched_genjet_pt
+   #- jet_matched_genjet_eta
+   #- jet_matched_genjet_phi
+   #- jet_matched_genjet_deltaR
    - npfcands
    - pfDeepFlavourJetTags_probb
    - pfDeepFlavourJetTags_probbb
@@ -133,7 +133,7 @@ observers:
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
    - jet_qgl
-   - jet_puId
+   #- jet_puId
 
 monitor_variables:
    # - jet_pt

@@ -186,10 +186,10 @@ observers:
    - jet_nBHadrons
    - jet_nCHadrons
    - jet_genjet_pt
-   - jet_matched_genjet_pt
-   - jet_matched_genjet_eta
-   - jet_matched_genjet_phi
-   - jet_matched_genjet_deltaR
+   #- jet_matched_genjet_pt
+   #- jet_matched_genjet_eta
+   #- jet_matched_genjet_phi
+   #- jet_matched_genjet_deltaR
    - npfcands
    - pfDeepFlavourJetTags_probb
    - pfDeepFlavourJetTags_probbb
@@ -198,7 +198,7 @@ observers:
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
    - jet_qgl
-   - jet_puId
+   #- jet_puId
 
 monitor_variables:
    # - jet_pt

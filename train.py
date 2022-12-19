@@ -767,11 +767,12 @@ def _main(args):
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 roc_dirname=os.path.join(dirname, 'roc', '')
-                print('\n\n', dirname, '\n', roc_dirname, '\n')
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
-                if roc_dirname and not os.path.exists(roc_dirname):    
+                if roc_dirname and not os.path.exists(roc_dirname):
                     os.makedirs(roc_dirname)
+                roc_prefix=os.path.join(roc_dirname,os.path.splitext(os.path.basename(args.log))[0])
+
                 state_dict = model.module.state_dict() if isinstance(
                     model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
                 torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
@@ -779,8 +780,7 @@ def _main(args):
             # if args.backend is not None and local_rank == 0:
             # TODO: save checkpoint
             #     save_checkpoint()
-            
-            roc_prefix=os.path.join(roc_dirname,os.path.splitext(os.path.basename(args.log))[0])
+
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
@@ -819,16 +819,23 @@ def _main(args):
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             model = model.to(dev)
 
+        if args.model_prefix and (args.backend is None or local_rank == 0):
+            dirname = os.path.dirname(args.model_prefix)
+            roc_dirname=os.path.join(dirname, 'roc', '')
+            if roc_dirname and not os.path.exists(roc_dirname):
+                os.makedirs(roc_dirname)
+            roc_prefix=os.path.join(roc_dirname,os.path.splitext(os.path.basename(args.log))[0])
+
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()
             # run prediction
             if args.model_prefix.endswith('.onnx'):
                 _logger.info('Loading model %s for eval' % args.model_prefix)
                 from weaver.utils.nn.tools import evaluate_onnx
-                test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=epoch, roc_prefix=roc_prefix)
+                test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
             else:
                 test_metric, scores, labels, observers = evaluate(
-                    model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
+                    model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
             _logger.info('Test metric %.5f' % test_metric, color='bold')
             del test_loader
 
