@@ -119,7 +119,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
 
 def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
                             eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds'],
-                            tb_helper=None, roc_dirname=None):
+                            tb_helper=None, roc_prefix=None):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -202,7 +202,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
     print(labels[data_config.label_names[0]], '\n' ,scores)
-    metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics, epoch=epoch, roc_dirname=roc_dirname)
+    metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics, epoch=epoch, roc_prefix=roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
@@ -226,7 +226,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
 
 def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds'],
-                  epoch=None, roc_dirname=None):
+                  epoch=None, roc_prefix=None):
     import onnxruntime
     sess = onnxruntime.InferenceSession(model_path)
 
@@ -268,7 +268,7 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
 
     scores = np.concatenate(scores)
     labels = {k: _concat(v) for k, v in labels.items()}
-    metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics, epoch=epoch, roc_dirname=roc_dirname)
+    metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores, eval_metrics=eval_metrics, epoch=epoch, roc_prefix=roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
     observers = {k: _concat(v) for k, v in observers.items()}

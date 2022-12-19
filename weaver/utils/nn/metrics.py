@@ -2,7 +2,7 @@ import os
 import traceback
 from functools import partial
 
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import numpy as np
 import sklearn.metrics as _m
 
@@ -48,7 +48,7 @@ def confusion_matrix(y_true, y_score):
         y_pred = y_score.argmax(1)
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
-def roc_curve_bVSuds(y_true, y_score, epoch,roc_dirname):
+def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
     y_true_b = np.logical_or(y_true==0,y_true==1)
     y_true_uds = y_true==4
     y_true_idx = np.logical_or(y_true_b,y_true_uds)
@@ -60,21 +60,21 @@ def roc_curve_bVSuds(y_true, y_score, epoch,roc_dirname):
     print('y\n', y_true_tot, y_score_tot)
     #fpr, tpr, thr=_m.roc_curve(y_true_tot, y_score_tot)
 
-    _m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs uds', color='darkorange')
+    #_m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs uds', color='darkorange')
 
-    plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
+    '''plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
     plt.axis('square')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title(f'b VS uds for epoch #{epoch}')
     plt.legend()
-    plt.savefig(os.path.join(roc_dirname,f'roc_curve_bVSuds_#{epoch}.png'))
-
-    with open(os.path.join(roc_dirname,'y_bVSuds.npy'), 'ab') as f:
+    plt.savefig(os.path.join(roc_prefix,f'roc_curve_bVSuds_#{epoch}.png'))
+    '''
+    with open(os.path.join(roc_prefix,'y_bVSuds.npy'), 'ab') as f:
         np.save(f, np.array([y_true_tot, y_score_tot]))
 
 
-    return f'ROC curve, y_true and y_score for b VS uds properly saved in directory: \n {roc_dirname}\n'
+    return f'ROC curve, y_true and y_score for b VS uds properly saved in directory: \n {roc_prefix}\n'
 
 _metric_dict = {
     'roc_auc_score': partial(_m.roc_auc_score, multi_class='ovo'),
@@ -91,12 +91,12 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=None, roc_dirname=None):
+def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=None, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
         try:
-            results[metric] = func(y_true, y_score, epoch, roc_dirname) if 'roc_curve' in metric else func(y_true, y_score)
+            results[metric] = func(y_true, y_score, epoch, roc_prefix) if 'roc_curve' in metric else func(y_true, y_score)
         except Exception as e:
             results[metric] = None
             _logger.error(str(e))
