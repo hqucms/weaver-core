@@ -7,6 +7,7 @@ import numpy as np
 import sklearn.metrics as _m
 
 from ..logger import _logger
+#np.set_printoptions(threshold=np.inf)
 
 # def _bkg_rejection(y_true, y_score, sig_eff):
 #     fpr, tpr, _ = _m.roc_curve(y_true, y_score)
@@ -49,12 +50,14 @@ def confusion_matrix(y_true, y_score):
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
 
-def get_y_true_score(y_true, y_score, labels_s, labels_b):
-    y_true_s = np.logical_or.reduce([y_true==label_s for label_s in labels_s])
-    y_true_b = np.logical_or.reduce([y_true==label_b for label_b in labels_b])
+def get_labels(y_true, y_score, labels_s, labels_b):
+    #print('y_true   ', y_true, '\n y_score  ', y_score, '\n')
+    y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
+    y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
     y_true_idx = np.logical_or(y_true_s,y_true_b)
-    y_score_s=sum([y_score[:,label_s] for label_s in labels_s])*y_true_s
-    y_score_b=sum([y_score[:,label_b] for label_b in labels_b])*y_true_b
+    y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
+    y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
+    #print('y_true_s   ', y_true_s, '\n y_score_s  ', y_score_s,'\ny_true_b   ', y_true_b, '\n y_score_b  ', y_score_b, '\n y_true_idx', y_true_idx)
     y_score_tot=y_score_s+y_score_b
     y_score_tot = y_score_tot[y_true_idx]
     y_true_tot=y_true_s[y_true_idx].astype(int)
@@ -62,7 +65,8 @@ def get_y_true_score(y_true, y_score, labels_s, labels_b):
     return y_true_tot, y_score_tot
 
 def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
-    y_true_tot, y_score_tot = get_y_true_score(y_true, y_score, [0,1], [4])
+    y_true_tot, y_score_tot = get_labels(y_true, y_score, [0,1], [4])
+    #print('y_true_uds   ', y_true_tot, '\n y_score_uds  ', y_score_tot, '\n')
 
     '''
     _m.RocCurveDisplay.from_predictions(y_true_tot, y_score_tot, name=f'b vs uds', color='darkorange')
@@ -83,7 +87,8 @@ def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
 
 
 def roc_curve_bVSg(y_true, y_score, epoch,roc_prefix):
-    y_true_tot, y_score_tot = get_y_true_score(y_true, y_score, [0,1], [5])
+    y_true_tot, y_score_tot = get_labels(y_true, y_score, [0,1], [5])
+    #print('y_true_g   ', y_true_tot, '\n y_score_g  ', y_score_tot, '\n')
 
 
     '''
