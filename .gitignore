@@ -128,6 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+#Specific paths
 *.root
 models*/
 out*.txt
@@ -136,3 +137,4 @@ CMSAK4/runs/
 CMSAK4/training/
 *history*
 *.png
+*roc*
