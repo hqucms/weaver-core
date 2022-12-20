@@ -80,10 +80,11 @@ def roc_curve_bVSuds(y_true, y_score, epoch,roc_prefix):
     plt.savefig(os.path.join(roc_prefix,f'roc_curve_bVSuds_#{epoch}.png'))
     '''
 
-    with open(f'{roc_prefix}_y_bVSuds.npy', 'ab') as f:
+    outfile=f'{roc_prefix}_y_bVSuds_epoch{epoch}.npy'
+    with open(outfile, 'wb') as f:
         np.save(f, np.array([y_true_tot, y_score_tot]))
 
-    return f'ROC curve, y_true and y_score for b VS uds properly saved in file: \n {roc_prefix}_y_bVSuds.npy\n'
+    return f'y_true and y_score for b VS uds for epoch {epoch} properly saved in file: \n {outfile}\n'
 
 
 def roc_curve_bVSg(y_true, y_score, epoch,roc_prefix):
@@ -102,11 +103,11 @@ def roc_curve_bVSg(y_true, y_score, epoch,roc_prefix):
     plt.legend()
     plt.savefig(os.path.join(roc_prefix,f'roc_curve_bVSg_#{epoch}.png'))
     '''
-
-    with open(f'{roc_prefix}_y_bVSg.npy', 'ab') as f:
+    outfile=f'{roc_prefix}_y_bVSg_epoch{epoch}.npy'
+    with open(outfile, 'wb') as f:
         np.save(f, np.array([y_true_tot, y_score_tot]))
 
-    return f'ROC curve, y_true and y_score for b VS uds properly saved in file: \n {roc_prefix}_y_bVSg.npy\n'
+    return f'y_true and y_score for b VS g for epoch {epoch} properly saved in file: \n {outfile}\n'
 
 _metric_dict = {
     'roc_auc_score': partial(_m.roc_auc_score, multi_class='ovo'),

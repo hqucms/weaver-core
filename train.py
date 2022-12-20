@@ -18,6 +18,9 @@ from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
 
+START_EPOCH=1e9
+END_EPOCH=-1
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
@@ -650,6 +653,15 @@ def save_parquet(args, output_path, scores, labels, observers):
     ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
+def move_log(args):
+    performance_dir=os.path.join(os.path.dirname(args.model_prefix), 'performance')
+    log_name=os.path.join(performance_dir,
+        f'{os.path.splitext(os.path.basename(args.log))[0]}_{START_EPOCH}-{END_EPOCH}{os.path.splitext(args.log)[1]}')
+    shutil.copy(args.log, log_name)
+    _logger.info('log file moved to: \n%s' % log_name)
+    _logger.info('Performance data are stored in directoy: \n%s/' % performance_dir)
+
+
 def _main(args):
     _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
 
@@ -670,6 +682,8 @@ def _main(args):
         _logger.info('Running in classification mode')
         from weaver.utils.nn.tools import train_classification as train
         from weaver.utils.nn.tools import evaluate_classification as evaluate
+
+    from weaver.utils.nn.tools import roc_best_epoch as roc_best_epoch
 
     # training/testing mode
     training_mode = not args.predict
@@ -760,18 +774,19 @@ def _main(args):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
                     continue
+
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
                   steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
-                roc_dirname=os.path.join(dirname, 'roc', '')
+                performance_dir=os.path.join(dirname, 'performance', '')
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
-                if roc_dirname and not os.path.exists(roc_dirname):
-                    os.makedirs(roc_dirname)
-                roc_prefix=os.path.join(roc_dirname,os.path.splitext(os.path.basename(args.log))[0])
+                if performance_dir and not os.path.exists(performance_dir):
+                    os.makedirs(performance_dir)
+                roc_prefix=os.path.join(performance_dir,os.path.splitext(os.path.basename(args.log))[0])
 
                 state_dict = model.module.state_dict() if isinstance(
                     model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
@@ -782,19 +797,32 @@ def _main(args):
             #     save_checkpoint()
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+            valid_metric, valid_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)
             if is_best_epoch:
                 best_valid_metric = valid_metric
+                best_valid_loss = valid_loss
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
                                  epoch, args.model_prefix + '_best_epoch_state.pt')
                     # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
-            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
-                         (epoch, valid_metric, best_valid_metric), color='bold')
+
+                #save labels for roc curve of best epoch
+                roc_best_epoch(f'{roc_prefix}_y_bVSuds_epoch{epoch}.npy')
+                roc_best_epoch(f'{roc_prefix}_y_bVSg_epoch{epoch}.npy')
+
+            _logger.info('Epoch #%d: info saved in log file:\n%s' % (epoch, args.log))
+
+            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f) //  Current validation loss: %.5f (in best epoch: %.5f)' %
+                         (epoch, valid_metric, best_valid_metric, valid_loss, best_valid_loss), color='bold')
+
+            global START_EPOCH
+            global END_EPOCH
+            if epoch<START_EPOCH: START_EPOCH=epoch
+            if epoch>END_EPOCH: END_EPOCH=epoch
 
     if args.data_test:
         if args.backend is not None and local_rank != 0:
@@ -821,10 +849,10 @@ def _main(args):
 
         if args.model_prefix and (args.backend is None or local_rank == 0):
             dirname = os.path.dirname(args.model_prefix)
-            roc_dirname=os.path.join(dirname, 'roc', '')
-            if roc_dirname and not os.path.exists(roc_dirname):
-                os.makedirs(roc_dirname)
-            roc_prefix=os.path.join(roc_dirname,os.path.splitext(os.path.basename(args.log))[0])
+            performance_dir=os.path.join(dirname, 'performance', '')
+            if performance_dir and not os.path.exists(performance_dir):
+                os.makedirs(performance_dir)
+            roc_prefix=os.path.join(performance_dir,os.path.splitext(os.path.basename(args.log))[0])
 
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()
@@ -834,9 +862,9 @@ def _main(args):
                 from weaver.utils.nn.tools import evaluate_onnx
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
             else:
-                test_metric, scores, labels, observers = evaluate(
+                test_metric, test_loss, scores, labels, observers = evaluate(
                     model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
-            _logger.info('Test metric %.5f' % test_metric, color='bold')
+            _logger.info('Test metric %.5f   //   Test loss %.5f' % (test_metric, test_loss), color='bold')
             del test_loader
 
             if args.predict_output:
@@ -904,18 +932,24 @@ def main():
             stdout = None
     _configLogger('weaver', stdout=stdout, filename=args.log)
 
-    if args.cross_validation:
-        model_dir, model_fn = os.path.split(args.model_prefix)
-        var_name, kfold = args.cross_validation.split('%')
-        kfold = int(kfold)
-        for i in range(kfold):
-            _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
-            args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
-            args.extra_selection = f'{var_name}%{kfold}!={i}'
-            args.extra_test_selection = f'{var_name}%{kfold}=={i}'
+    try:
+        if args.cross_validation:
+            model_dir, model_fn = os.path.split(args.model_prefix)
+            var_name, kfold = args.cross_validation.split('%')
+            kfold = int(kfold)
+            for i in range(kfold):
+                _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
+                args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
+                args.extra_selection = f'{var_name}%{kfold}!={i}'
+                args.extra_test_selection = f'{var_name}%{kfold}=={i}'
+                _main(args)
+        else:
             _main(args)
-    else:
-        _main(args)
+    except KeyboardInterrupt as e:
+        move_log(args)
+        raise(e)
+
+    move_log(args)
 
 
 if __name__ == '__main__':

@@ -135,6 +135,7 @@ out*.txt
 *.auto.yaml
 CMSAK4/runs/
 CMSAK4/training/
+performance/
 *history*
 *.png
 *roc*

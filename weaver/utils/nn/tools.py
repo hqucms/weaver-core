@@ -3,6 +3,7 @@ import awkward as ak
 import tqdm
 import time
 import torch
+import os
 
 from collections import defaultdict, Counter
 from .metrics import evaluate_metrics
@@ -206,7 +207,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
-        return total_correct / count
+        return total_correct / count, total_loss / count
     else:
         # convert 2D labels/scores
         if len(scores) != entry_count:
@@ -221,7 +222,15 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 for k, v in labels.items():
                     labels[k] = v.reshape((entry_count, -1))
         observers = {k: _concat(v) for k, v in observers.items()}
-        return total_correct / count, scores, labels, observers
+        return total_correct / count, total_loss / count, scores, labels, observers
+
+
+def roc_best_epoch(infile):
+    with open(infile, 'rb') as f:
+        y_best=np.load(f)
+
+    with open(f'{infile.split("epoch")[0]}best_epoch{os.path.splitext(infile)[1]}', 'wb') as f:
+        np.save(f, y_best)
 
 
 def evaluate_onnx(model_path, test_loader,
@@ -447,11 +456,11 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
-        return total_loss / count
+        return total_loss / count, None
     else:
         # convert 2D labels/scores
         observers = {k: _concat(v) for k, v in observers.items()}
-        return total_loss / count, scores, labels, observers
+        return total_loss / count, None, scores, labels, observers
 
 
 class TensorboardHelper(object):
