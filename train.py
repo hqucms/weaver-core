@@ -18,8 +18,6 @@ from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
 
-START_EPOCH=1e9
-END_EPOCH=-1
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
@@ -653,12 +651,18 @@ def save_parquet(args, output_path, scores, labels, observers):
     ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
-def move_log(args):
-    performance_dir=os.path.join(os.path.dirname(args.model_prefix), 'performance')
+def copy_log(args, start_epoch, end_epoch):
+    dirname=os.path.dirname(args.model_prefix)
+    performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
     log_name=os.path.join(performance_dir,
-        f'{os.path.splitext(os.path.basename(args.log))[0]}_{START_EPOCH}-{END_EPOCH}{os.path.splitext(args.log)[1]}')
-    shutil.copy(args.log, log_name)
-    _logger.info('log file moved to: \n%s' % log_name)
+        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch}.log')
+    shutil.copy2(args.log, log_name)
+    try:
+        os.remove(os.path.join(performance_dir,
+        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch-1}.log'))
+    except FileNotFoundError:
+        pass
+    _logger.info('log file copied to: \n%s' % log_name)
     _logger.info('Performance data are stored in directoy: \n%s/' % performance_dir)
 
 
@@ -683,7 +687,7 @@ def _main(args):
         from weaver.utils.nn.tools import train_classification as train
         from weaver.utils.nn.tools import evaluate_classification as evaluate
 
-    from weaver.utils.nn.tools import roc_best_epoch as roc_best_epoch
+    from weaver.utils.nn.tools import save_labels_best_epoch as save_labels_best_epoch
 
     # training/testing mode
     training_mode = not args.predict
@@ -770,8 +774,23 @@ def _main(args):
         # training loop
         best_valid_metric = np.inf if args.regression_mode else 0
         grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
+        start_epoch=1e9
+        end_epoch=-1
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
+                if epoch==0:
+                    dirname = os.path.dirname(args.model_prefix)
+                    suffix=dirname.split('/')[-1].strip()
+                    performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
+                    for file in os.listdir(performance_dir):
+                        if f'{args.load_epoch}.log' in file:
+                            with open(os.path.join(performance_dir,file)) as f:
+                                f = f.readlines()
+                            for line in f:
+                                if 'validation metric' in line :
+                                    best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
+                                    best_valid_loss=float(line.split('(in best epoch: ',1)[1].split(')')[0])
+
                 if epoch <= args.load_epoch:
                     continue
 
@@ -781,12 +800,13 @@ def _main(args):
                   steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
-                performance_dir=os.path.join(dirname, 'performance', '')
+                suffix=dirname.split('/')[-1].strip()
+                performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
                 if performance_dir and not os.path.exists(performance_dir):
                     os.makedirs(performance_dir)
-                roc_prefix=os.path.join(performance_dir,os.path.splitext(os.path.basename(args.log))[0])
+                roc_prefix=os.path.join(performance_dir,suffix)
 
                 state_dict = model.module.state_dict() if isinstance(
                     model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
@@ -811,18 +831,18 @@ def _main(args):
                     # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
 
                 #save labels for roc curve of best epoch
-                roc_best_epoch(f'{roc_prefix}_y_bVSuds_epoch{epoch}.npy')
-                roc_best_epoch(f'{roc_prefix}_y_bVSg_epoch{epoch}.npy')
+                save_labels_best_epoch(f'{roc_prefix}_labels_epoch{epoch}.npz')
 
             _logger.info('Epoch #%d: info saved in log file:\n%s' % (epoch, args.log))
 
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f) //  Current validation loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_metric, best_valid_metric, valid_loss, best_valid_loss), color='bold')
 
-            global START_EPOCH
-            global END_EPOCH
-            if epoch<START_EPOCH: START_EPOCH=epoch
-            if epoch>END_EPOCH: END_EPOCH=epoch
+
+            if epoch<start_epoch: start_epoch=epoch
+            if epoch>end_epoch: end_epoch=epoch
+
+            copy_log(args, start_epoch, end_epoch)
 
     if args.data_test:
         if args.backend is not None and local_rank != 0:
@@ -849,10 +869,11 @@ def _main(args):
 
         if args.model_prefix and (args.backend is None or local_rank == 0):
             dirname = os.path.dirname(args.model_prefix)
-            performance_dir=os.path.join(dirname, 'performance', '')
+            suffix=dirname.split('/')[-1].strip()
+            performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
             if performance_dir and not os.path.exists(performance_dir):
                 os.makedirs(performance_dir)
-            roc_prefix=os.path.join(performance_dir,os.path.splitext(os.path.basename(args.log))[0])
+            roc_prefix=os.path.join(performance_dir,suffix)
 
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()
@@ -932,24 +953,20 @@ def main():
             stdout = None
     _configLogger('weaver', stdout=stdout, filename=args.log)
 
-    try:
-        if args.cross_validation:
-            model_dir, model_fn = os.path.split(args.model_prefix)
-            var_name, kfold = args.cross_validation.split('%')
-            kfold = int(kfold)
-            for i in range(kfold):
-                _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
-                args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
-                args.extra_selection = f'{var_name}%{kfold}!={i}'
-                args.extra_test_selection = f'{var_name}%{kfold}=={i}'
-                _main(args)
-        else:
+    if args.cross_validation:
+        model_dir, model_fn = os.path.split(args.model_prefix)
+        var_name, kfold = args.cross_validation.split('%')
+        kfold = int(kfold)
+        for i in range(kfold):
+            _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
+            args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
+            args.extra_selection = f'{var_name}%{kfold}!={i}'
+            args.extra_test_selection = f'{var_name}%{kfold}=={i}'
             _main(args)
-    except KeyboardInterrupt as e:
-        move_log(args)
-        raise(e)
+    else:
+        _main(args)
 
-    move_log(args)
+    _logger.info('Finished!\n\n')
 
 
 if __name__ == '__main__':

@@ -119,7 +119,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
 
 
 def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
-                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds', 'roc_curve_bVSg'],
+                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
                             tb_helper=None, roc_prefix=None):
     model.eval()
 
@@ -225,16 +225,18 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         return total_correct / count, total_loss / count, scores, labels, observers
 
 
-def roc_best_epoch(infile):
-    with open(infile, 'rb') as f:
-        y_best=np.load(f)
+def save_labels_best_epoch(infile):
+    with open(infile, 'rb') as in_f:
+        label_file=np.load(in_f)
+        y_true=label_file['y_true']
+        y_score=label_file['y_score']
 
-    with open(f'{infile.split("epoch")[0]}best_epoch{os.path.splitext(infile)[1]}', 'wb') as f:
-        np.save(f, y_best)
+    with open(f'{infile.split("epoch")[0]}best_epoch{os.path.splitext(infile)[1]}', 'wb') as out_f:
+        np.savez(out_f, y_true=y_true, y_score=y_score)
 
 
 def evaluate_onnx(model_path, test_loader,
-                  eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'roc_curve_bVSuds', 'roc_curve_bVSg'],
+                  eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
                   epoch=-1, roc_prefix=None):
     import onnxruntime
     sess = onnxruntime.InferenceSession(model_path)
