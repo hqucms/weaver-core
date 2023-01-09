@@ -1,3 +1,9 @@
+''' ParticleNeXt
+
+An improved version of ParticleNet (https://arxiv.org/abs/1902.08570).
+
+See talk at ML4Jets2021: https://indico.cern.ch/event/980214/contributions/4413544
+'''
 import math
 import numpy as np
 import random

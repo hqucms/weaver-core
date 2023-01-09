@@ -19,7 +19,10 @@ def _stack(arrays, axis=1):
     if isinstance(arrays[0], np.ndarray):
         return np.stack(arrays, axis=axis)
     else:
-        return ak.concatenate(arrays, axis=axis)
+        s = [slice(None)] * (arrays[0].ndim + 1)
+        s[axis] = np.newaxis
+        s = tuple(s)
+        return ak.concatenate([a.__getitem__(s) for a in arrays], axis=axis)
 
 
 def _pad(a, maxlen, value=0, dtype='float32'):
@@ -52,10 +55,10 @@ def _repeat_pad(a, maxlen, shuffle=False, dtype='float32'):
 
 
 def _clip(a, a_min, a_max):
-    try:
+    if isinstance(a, np.ndarray):
         return np.clip(a, a_min, a_max)
-    except ValueError:
-        return ak.unflatten(np.clip(ak.flatten(a), a_min, a_max), ak.num(a))
+    else:
+        return ak.unflatten(np.clip(ak.to_numpy(ak.flatten(a)), a_min, a_max), ak.num(a))
 
 
 def _knn(support, query, k, n_jobs=1):
