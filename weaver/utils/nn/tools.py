@@ -80,6 +80,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
             total_correct += correct
 
             tq.set_postfix({
+                'Epoch':epoch,
                 'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'Loss': '%.5f' % loss,
                 'AvgLoss': '%.5f' % (total_loss / num_batches),
@@ -172,6 +173,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 total_correct += correct
 
                 tq.set_postfix({
+                    'Epoch':epoch,
                     'Loss': '%.5f' % loss,
                     'AvgLoss': '%.5f' % (total_loss / count),
                     'Acc': '%.5f' % (correct / num_examples),

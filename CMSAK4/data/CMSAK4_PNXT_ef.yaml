@@ -39,6 +39,9 @@ new_variables:
    label_pu:    (jet_genjet_pt<=0)
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
+   label_pf_from_b: pfcand_from_b
+   label_pf_from_c: pfcand_from_c
+   label_pf_from_g: pfcand_from_g
 
 
 preprocess:
@@ -125,12 +128,12 @@ inputs:
       vars:
          - [sv_mask, null]
    pf_ef_idx:
-      length: 600 # max lenght of the variable for each event (eg: max number of tracks combinations)
+      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [track1_index, null]
          - [track2_index, null]
    pf_ef:
-      length: 600 # max lenght of the variable for each event (eg: max number of tracks combinations)
+      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [pca_distance, null]
          - [pca_significance, null]
@@ -159,7 +162,7 @@ inputs:
          - [pca_jetAxis_dEta, null]
          - [pca_jetAxis_dPhi_, null]
    pf_ef_mask:
-      length: 600 # max lenght of the variable for each event (eg: max number of tracks combinations)
+      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [pf_ef_mask, null]
 
@@ -168,7 +171,7 @@ labels:
    ### type can be `simple`, `custom`
    ### [option 1] use `simple` for binary/multi-class classification, then `value` is a list of 0-1 labels
    type: simple
-   value: [label_b, label_bb, label_c, label_cc, label_uds, label_g, label_undef, label_pu]
+   value: [label_b, label_bb, label_c, label_cc, label_uds, label_g, label_undef, label_pu] # label_pf_from_b, label_pf_from_c, label_pf_from_g]
    ### [option 2] otherwise use `custom` to define the label, then `value` is a map
    # type: custom
    # value:
