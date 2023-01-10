@@ -137,14 +137,19 @@ def gather_edges(x, idx):
     return x_final
 
 
-def gather_edges_new(x, k=8):
-    #print("ef gather_edges_new\n", x.size() , "\n", x) # (bs, num_ef, num_pf, num_pf)
+def gather_edges_new(x, y=None, k=16):
+    #print("x gather_edges_new\n", x.size() , "\n", x) # (bs, num_ef, num_pf, num_pf)
     num_dims = x.size(1)
-
-    order=x[:, 0, :, :]/x[:, 16, :, :] # ratio between pca_distance and pca_dist1
-    #order=1/x[:, 0, :, :] # 1/pca_distance ----> metti largest=True
+    if y is None:
+        y=x
+    order=y[:, 0, :, :]/y[:, 16, :, :] # ratio between pca_distance and pca_dist1
+    #print("order gather_edges_new\n", order.size() , "\n", order)
+    #order=1/x[:, 0, :, :] # 1/pca_distance ----> largest=True
     idx=order.topk(k=k,dim=-1, largest=False)[1][:, :, :] # take the k indices of the smallest ratios
+    #print("idx gather_edges_new\n", idx.size() , "\n", idx)
     idx = idx.unsqueeze(1).repeat(1, num_dims, 1, 1) # reshape to be as x
+    #print("idx_new gather_edges_new\n", idx.size() , "\n", idx)
+
     x_final=x.gather(-1, idx) #(bs, num_ef, num_pf, k)
     #print("x_final gather_edges_new\n", x_final.size() , "\n", x_final)
 
@@ -175,7 +180,8 @@ def pairwise_lv_fts(xi, xj, use_polarization_angle=False, eps=1e-8, for_onnx=Fal
     return torch.cat(outputs, dim=1)
 
 
-def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, idx=None, null_edge_pos=None,
+def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
+                      ef_mask_tensor=None, idx=None, null_edge_pos=None,
                       k=None,
                       use_rel_fts=False,
                       use_rel_coords=False,
@@ -187,6 +193,11 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         mask_ngbs = gather(mask, k, idx, cpu_mode=cpu_mode)
         mask_ngbs = mask_ngbs & mask.unsqueeze(-1)
         null_edge_pos = ~mask_ngbs
+        if ef_mask_tensor is not None:
+            ef_mask_ngbs=gather_edges_new(x=ef_mask_tensor, y=ef_tensor, k=k).bool()
+            ef_null_edge_pos= ~ef_mask_ngbs
+            null_edge_pos = torch.cat([null_edge_pos, ef_null_edge_pos], dim=3)
+
         #print("nulledge", null_edge_pos.size())
 
     outputs = []
@@ -222,8 +233,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None, i
         outputs = None
 
     if ef_tensor is not None:
-        #outputs.append(gather_edges(ef_tensor, idx))
-        ef_outputs=gather_edges_new(ef_tensor, k)
+        ef_outputs=gather_edges_new(x=ef_tensor, k=k)
 
         batch_size, num_efts, num_points, _= ef_outputs.size()
         dummy_outputs= torch.zeros(batch_size, num_efts, num_points, k, device=ef_outputs.device)
@@ -448,9 +458,9 @@ class MultiScaleEdgeConv(nn.Module):
             ef_tensor = torch.cat([ef_tensor[:, :, :, s] for s in self.slices], dim=-1)
             null_edge_pos = torch.cat([null_edge_pos[:, :, :, s] for s in self.slices], dim=-1)
 
-        if edge_inputs is not None:
+        '''if edge_inputs is not None:
             dummy_pos_tensor= torch.zeros(edge_inputs.size(0), 1, edge_inputs.size(2), self.k, device=null_edge_pos.device, dtype=torch.bool)
-            null_edge_pos = torch.cat([null_edge_pos, dummy_pos_tensor], dim=3)
+            null_edge_pos = torch.cat([null_edge_pos, dummy_pos_tensor], dim=3)'''
 
 
         message = self.edge_mlp(ef_tensor)
@@ -679,10 +689,10 @@ class ParticleEdgeNeXt(nn.Module):
         self._counter = 0
 
     def forward(self, points, features, lorentz_vectors, mask=None, ef_tensor=None, ef_mask_tensor=None):
-        # print('points:\n', points)
-        # print('features:\n', features)
-        # print('lorentz_vectors:\n', lorentz_vectors)
-        # print('mask:\n', mask)
+        # #print('points:\n', points)
+        # #print('features:\n', features)
+        # #print('lorentz_vectors:\n', lorentz_vectors)
+        # #print('mask:\n', mask)
 
         with torch.no_grad():
             if mask is None:
@@ -763,6 +773,9 @@ class ParticleEdgeNeXt(nn.Module):
                             ef_tensor = ef_tensor[:, :, :maxlen, :maxlen]
                         if ef_mask_tensor is not None:
                             ef_mask_tensor = ef_mask_tensor[:, :, :maxlen, :maxlen]
+                            #print('ef_mask_tensor:\n', ef_mask_tensor)
+                            ef_mask_tensor = ef_mask_tensor.bool()
+                            #print('ef_mask_tensor2:\n', ef_mask_tensor)
 
 
             if self.global_aggregation == 'mean':
@@ -787,7 +800,8 @@ class ParticleEdgeNeXt(nn.Module):
                 # using static graph
                 idx = self.knn(points)
                 edge_inputs, _, lvs_ngbs, null_edge_pos = self.get_graph_feature(
-                    lvs=lorentz_vectors, mask=mask, ef_tensor=ef_tensor, idx=idx, null_edge_pos=None)
+                    lvs=lorentz_vectors, mask=mask, ef_tensor=ef_tensor,
+                    ef_mask_tensor=ef_mask_tensor, idx=idx, null_edge_pos=None)
                 ef_tensor = None
             else:
                 idx = None
@@ -839,7 +853,7 @@ class ParticleEdgeNeXt(nn.Module):
         output = self.fc(x)
         if self.for_inference:
             output = torch.softmax(output, dim=1)
-        # print('output:\n', output)
+        # #print('output:\n', output)
         return output
 
 
