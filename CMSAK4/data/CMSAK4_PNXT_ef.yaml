@@ -2,7 +2,7 @@ selection:
    ### use `&`, `|`, `~` for logical operations on numpy arrays
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    >-
-   (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
+   (np.abs(jet_eta)<3) & (jet_pt>15) & (jet_pt<186) & (event_no%7!=0)
    & ( (jet_hadronFlavour>0) | ((jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)!=4) & (np.abs(jet_partonFlavour)!=5)) )
    & ( ~((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)) | ((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0) & (jet_pt<186)) )
    & ( (jet_genjet_pt>0) | ((jet_genjet_pt<=0) & (jet_pt<61)) )
@@ -39,9 +39,9 @@ new_variables:
    label_pu:    (jet_genjet_pt<=0)
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
-   label_pf_from_b: pfcand_from_b
-   label_pf_from_c: pfcand_from_c
-   label_pf_from_g: pfcand_from_g
+   #label_pf_from_b: pfcand_from_b
+   #label_pf_from_c: pfcand_from_c
+   #label_pf_from_g: pfcand_from_g
 
 
 preprocess:
@@ -230,4 +230,5 @@ weights:
    reweight_classes: [label_catB, label_catC, label_uds, label_g, label_undef, label_pu]
    class_weights: [1, 1, 2.5, 5, 0.15, 1]
    reweight_threshold: 15
+   #reweight_discard_under_overflow: False
    reweight_hists:

@@ -16,9 +16,9 @@ def get_model(data_config, **kwargs):
         layer_params=[(16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48)],  # noqa
             #[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],
         fc_params=[(200, 0.1)], #[(256, 0.1)]
-        global_aggregation='attn4',#mean
+        global_aggregation='attn4',#
         # MultiScaleEdgeConv options
-        edge_aggregation='attn8',#mean
+        edge_aggregation='attn8',#attn8
         use_rel_lv_fts=True, #False
         use_polarization_angle=False,
         use_rel_fts=False,

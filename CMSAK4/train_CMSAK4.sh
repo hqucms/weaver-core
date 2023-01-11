@@ -17,13 +17,15 @@ NGPUS=${DDP_NGPUS}
 [[ -z $NGPUS ]] && NGPUS=1
 if ((NGPUS > 1)); then
     #CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
-     CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS ../train.py --backend nccl"
+    CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS ../train.py --backend nccl"
+    
+
 else
     #CMD="weaver"
     CMD="python ../train.py"
 fi
 
-epochs=24
+epochs=20
 samples_per_epoch=$((10000 * 1024 / $NGPUS))
 samples_per_epoch_val=$((10000 * 128))
 dataopts="--num-workers 4 --fetch-step 0.01"
