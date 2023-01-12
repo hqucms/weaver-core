@@ -131,7 +131,6 @@ dmypy.json
 #Specific paths
 *.root
 models*/
-out*.txt
 *.auto.yaml
 CMSAK4/runs/
 CMSAK4/training/
@@ -140,4 +139,5 @@ performance/
 *.png
 *roc*
 *.pt
-to_do.txt
+*.txt
+!requirements.txt

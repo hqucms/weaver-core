@@ -202,8 +202,9 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
 
     outputs = []
     if fts is not None:
+        #print("fts\n", fts.size() , "\n")
         fts_ngbs = gather(fts, k, idx, cpu_mode=cpu_mode)
-        #print("fts\n", fts.size() , "\n", fts)
+        #print("fts_ngbs\n", fts_ngbs.size() , "\n")
 
         fts_center = fts.unsqueeze(-1).repeat(1, 1, 1, k)
         outputs.extend([fts_center, (fts_ngbs - fts_center) if use_rel_fts else fts_ngbs])
@@ -248,7 +249,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
 
         outputs=torch.cat((outputs, ef_outputs), dim=3)
 
-        #print("outputs2\n", outputs.size() , "\n")
+    #print("outputs2\n", outputs.size() , "\n")
 
 
     return outputs, rel_coords, lvs_ngbs, null_edge_pos
@@ -453,6 +454,7 @@ class MultiScaleEdgeConv(nn.Module):
                 ef_tensor=torch.cat((ef_tensor, dummy_tensor), dim=3)
                 ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1) #(batch_size, num_ef+num_fts, num_points, k+k)
 
+        #print('ef_tensor:\n', ef_tensor.size())
 
         if sum(self.slice_dims) < self.k:
             ef_tensor = torch.cat([ef_tensor[:, :, :, s] for s in self.slices], dim=-1)
@@ -464,6 +466,8 @@ class MultiScaleEdgeConv(nn.Module):
 
 
         message = self.edge_mlp(ef_tensor)
+        #print('message1:\n', message.size())
+
         if self.edge_se is not None:
             message = self.edge_se(message, ~null_edge_pos)
 
@@ -517,13 +521,21 @@ class MultiScaleEdgeConv(nn.Module):
         if self.lv_aggregation:
             node_inputs.append(self.lv_encode(torch.cat(node_lv_inputs, dim=1)))
 
+        #print('node_inputs:\n', node_inputs[0].size())
+
         node_fts = self.node_mlp(torch.cat(node_inputs, dim=1))
+        #print('node_fts:\n', node_fts.size())
+
         if self.node_se is not None:
             node_fts = self.node_se(node_fts, mask.unsqueeze(-1))
 
         fts_out = self.shortcut(features) + self.gamma * node_fts
+        #print('fts_out:\n', fts_out.size())
 
-        return pts_out, fts_out
+        #HERE fts_out_label=self.fc(fts_out)
+        # size(fts_out_label)=(batch_size, num_auxiliary_labels, num_nodes)
+
+        return pts_out, fts_out, #fts_out_label
 
 
 class ParticleEdgeNeXt(nn.Module):
@@ -681,7 +693,7 @@ class ParticleEdgeNeXt(nn.Module):
         if self.for_segmentation:
             fcs.append(nn.Conv1d(input_dim, num_classes, kernel_size=1))
         else:
-            fcs.append(nn.Linear(input_dim, num_classes))
+            fcs.append(nn.Linear(input_dim, num_classes)) # after the loop input_dim == out_dim
         self.fc = nn.Sequential(*fcs)
 
         self.trim = trim
@@ -824,12 +836,14 @@ class ParticleEdgeNeXt(nn.Module):
             ef_tensor = self.edge_encode(ef_tensor)
 
         for layer in self.layers:
+            #HERE features_label
             points, features = layer(
                 points=points, features=features, lorentz_vectors=lorentz_vectors, mask=mask, ef_tensor=ef_tensor,
                 idx=idx, null_edge_pos=null_edge_pos, edge_inputs=edge_inputs, lvs_ngbs=lvs_ngbs)
 
         features = self.post(features).squeeze(-1)
 
+        #HERE? features_label=masked(features_label)
         if self.for_segmentation:
             x = masked(features)
         else:
@@ -850,11 +864,13 @@ class ParticleEdgeNeXt(nn.Module):
                 else:
                     x = features.sum(dim=-1) / counts
 
+        #print('x:\n', x.size())
+
         output = self.fc(x)
         if self.for_inference:
             output = torch.softmax(output, dim=1)
-        # #print('output:\n', output)
-        return output
+        #print('output:\n', output.size())
+        return output #, features_label
 
 
 class ParticleEdgeNeXtTagger(nn.Module):

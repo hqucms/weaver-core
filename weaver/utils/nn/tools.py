@@ -16,7 +16,7 @@ def _flatten_label(label, mask=None):
         label = label.view(-1)
         if mask is not None:
             label = label[mask.view(-1)]
-    # print('label', label.shape, label)
+    #print('label', label.shape, label)
     return label
 
 
@@ -27,7 +27,7 @@ def _flatten_preds(preds, mask=None, label_axis=1):
         preds = preds.view((-1, preds.shape[-1]))
         if mask is not None:
             preds = preds[mask.view(-1)]
-    # print('preds', preds.shape, preds)
+    #print('preds', preds.shape, preds)
     return preds
 
 
@@ -56,9 +56,11 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
             label = label.to(dev)
             opt.zero_grad()
             with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+                #HERE catch features_label
                 model_output = model(*inputs)
                 logits = _flatten_preds(model_output, label_mask)
                 loss = loss_func(logits, label)
+                #HERE loss of auxiliary labels
             if grad_scaler is None:
                 loss.backward()
                 opt.step()
@@ -80,7 +82,8 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
             total_correct += correct
 
             tq.set_postfix({
-                'Epoch':epoch,
+                'Training epoch':epoch,
+                'Steps per epoch':steps_per_epoch,
                 'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'Loss': '%.5f' % loss,
                 'AvgLoss': '%.5f' % (total_loss / num_batches),
@@ -100,7 +103,7 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
                 break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
 
@@ -173,7 +176,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 total_correct += correct
 
                 tq.set_postfix({
-                    'Epoch':epoch,
+                    'Validating epoch':epoch,
+                    'Steps per epoch':steps_per_epoch,
                     'Loss': '%.5f' % loss,
                     'AvgLoss': '%.5f' % (total_loss / count),
                     'Acc': '%.5f' % (correct / num_examples),
@@ -189,7 +193,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     if tb_helper:
@@ -276,7 +280,7 @@ def evaluate_onnx(model_path, test_loader,
                 'AvgAcc': '%.5f' % (total_correct / count)})
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     scores = np.concatenate(scores)
@@ -356,7 +360,7 @@ def train_regression(model, loss_func, opt, scheduler, train_loader, dev, epoch,
                 break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
                  (total_loss / num_batches, sum_sqr_err / count, sum_abs_err / count))
 
@@ -440,7 +444,7 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
                     break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
 
     if tb_helper:
         tb_mode = 'eval' if for_training else 'test'

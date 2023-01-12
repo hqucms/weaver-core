@@ -19,6 +19,10 @@ from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
 
 
+'''orig_stdout = sys.stdout
+f = open('out_log.txt', 'w')
+sys.stdout = f'''
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')

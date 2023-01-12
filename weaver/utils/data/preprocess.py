@@ -60,6 +60,29 @@ def _build_weights(table, data_config, reweight_hists=None, warn=_logger.warning
                 rwgt_y_vals, y_bins) - 1, a_min=0, a_max=len(y_bins) - 2)
             wgt[pos] = hist[x_indices, y_indices]
             sum_evts += np.sum(pos)
+
+            '''#HERE
+            #x_ind, y_ind = np.unravel_index(np.argmax(wgt[pos]), wgt[pos].shape)
+
+            x_mean=np.mean(wgt[pos])
+            max_wgt=np.max(wgt[pos])
+            min_wgt=np.min(wgt[pos])
+            x_rms=np.sqrt(np.mean(wgt[pos][0]**2))
+
+            with open("weights.txt", "a") as f:
+                f.write(str(f'\n\n\n {label} :\n'))
+                f.write(np.array2string(wgt[pos]))
+                f.write('\n')
+                f.write('\n')
+                f.write(str(x_mean))
+                f.write('\n')
+                f.write(str(min_wgt))
+                f.write('\n')
+
+                f.write(str(max_wgt))
+                f.write('\n')
+                f.write(str(x_rms))'''
+
         if sum_evts != len(table):
             warn(
                 'Not all selected events used in the reweighting. '
@@ -208,7 +231,7 @@ class WeightMaker(object):
             pos = (table[label] == 1)
             x = ak.to_numpy(table[x_var][pos])
             y = ak.to_numpy(table[y_var][pos])
-            hist, _, _ = np.histogram2d(x, y, bins=self._data_config.reweight_bins)
+            hist, xedges, yedges = np.histogram2d(x, y, bins=self._data_config.reweight_bins)
             _logger.info('%s (unweighted):\n %s', label, str(hist.astype('int64')))
             sum_evts += hist.sum()
             if self._data_config.reweight_basewgt:
@@ -216,6 +239,8 @@ class WeightMaker(object):
                 hist, _, _ = np.histogram2d(x, y, weights=w, bins=self._data_config.reweight_bins)
                 _logger.info('%s (weighted):\n %s', label, str(hist.astype('float32')))
             raw_hists[label] = hist.astype('float32')
+
+
             result[label] = hist.astype('float32')
         if sum_evts != len(table):
             _logger.warning(
@@ -256,6 +281,7 @@ class WeightMaker(object):
         for label in self._data_config.reweight_classes:
             class_wgt = float(min_nevt) / class_events[label]
             result[label] *= class_wgt
+
 
         if self._data_config.reweight_basewgt:
             wgts = _build_weights(table, self._data_config, reweight_hists=result)
