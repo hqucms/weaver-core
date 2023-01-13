@@ -229,7 +229,7 @@ weights:
       #jet_pt: [15, 20, 26, 35, 46, 61, 80, 106, 141, 186, 247, 326, 432, 571, 756, 1000]
       jet_pt: [35, 46, 61, 80, 106]
       #jet_eta: [-4.7, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.7]
-      jet_eta: [2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+      jet_eta: [-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
    reweight_classes: [label_catB, label_catC, label_uds, label_g, label_undef, label_pu]
    class_weights: [1, 1, 2.5, 5, 0.15, 1]
    reweight_threshold: 15

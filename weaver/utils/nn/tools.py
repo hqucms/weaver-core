@@ -10,6 +10,7 @@ from .metrics import evaluate_metrics
 from ..data.tools import _concat
 from ..logger import _logger
 
+from torch.profiler import profile, record_function, ProfilerActivity
 
 def _flatten_label(label, mask=None):
     if label.ndim > 1:
@@ -44,63 +45,73 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
-            inputs = [X[k].to(dev) for k in data_config.input_names]
-            label = y[data_config.label_names[0]].long()
-            try:
-                label_mask = y[data_config.label_names[0] + '_mask'].bool()
-            except KeyError:
-                label_mask = None
-            label = _flatten_label(label, label_mask)
-            num_examples = label.shape[0]
-            label_counter.update(label.cpu().numpy())
-            label = label.to(dev)
-            opt.zero_grad()
-            with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
-                #HERE catch features_label
-                model_output = model(*inputs)
-                logits = _flatten_preds(model_output, label_mask)
-                loss = loss_func(logits, label)
-                #HERE loss of auxiliary labels
-            if grad_scaler is None:
-                loss.backward()
-                opt.step()
-            else:
-                grad_scaler.scale(loss).backward()
-                grad_scaler.step(opt)
-                grad_scaler.update()
+            with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA], profile_memory=True, record_shapes=True) as prof_mem:
+                #with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA], record_shapes=True) as prof_perc:
+                #    with record_function("model_inference"):
+                inputs = [X[k].to(dev) for k in data_config.input_names]
+                label = y[data_config.label_names[0]].long()
+                try:
+                    label_mask = y[data_config.label_names[0] + '_mask'].bool()
+                except KeyError:
+                    label_mask = None
+                label = _flatten_label(label, label_mask)
+                num_examples = label.shape[0]
+                label_counter.update(label.cpu().numpy())
+                label = label.to(dev)
+                opt.zero_grad()
+                with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+                    #HERE catch features_label
+                    model_output = model(*inputs)
+                    logits = _flatten_preds(model_output, label_mask)
+                    loss = loss_func(logits, label)
+                    #HERE loss of auxiliary labels
+                if grad_scaler is None:
+                    loss.backward()
+                    opt.step()
+                else:
+                    grad_scaler.scale(loss).backward()
+                    grad_scaler.step(opt)
+                    grad_scaler.update()
 
-            if scheduler and getattr(scheduler, '_update_per_step', False):
-                scheduler.step()
+                if scheduler and getattr(scheduler, '_update_per_step', False):
+                    scheduler.step()
 
-            _, preds = logits.max(1)
-            loss = loss.item()
+                _, preds = logits.max(1)
+                loss = loss.item()
 
-            num_batches += 1
-            count += num_examples
-            correct = (preds == label).sum().item()
-            total_loss += loss
-            total_correct += correct
+                num_batches += 1
+                count += num_examples
+                correct = (preds == label).sum().item()
+                total_loss += loss
+                total_correct += correct
 
-            tq.set_postfix({
-                'Training epoch':epoch,
-                'Steps per epoch':steps_per_epoch,
-                'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
-                'Loss': '%.5f' % loss,
-                'AvgLoss': '%.5f' % (total_loss / num_batches),
-                'Acc': '%.5f' % (correct / num_examples),
-                'AvgAcc': '%.5f' % (total_correct / count)})
+                tq.set_postfix({
+                    'Training epoch':epoch,
+                    'Steps per epoch':steps_per_epoch,
+                    'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
+                    'Loss': '%.5f' % loss,
+                    'AvgLoss': '%.5f' % (total_loss / num_batches),
+                    'Acc': '%.5f' % (correct / num_examples),
+                    'AvgAcc': '%.5f' % (total_correct / count)})
 
-            if tb_helper:
-                tb_helper.write_scalars([
-                    ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
-                    ("Acc/train", correct / num_examples, tb_helper.batch_train_count + num_batches),
-                    ])
-                if tb_helper.custom_fn:
-                    with torch.no_grad():
-                        tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
+                if tb_helper:
+                    tb_helper.write_scalars([
+                        ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
+                        ("Acc/train", correct / num_examples, tb_helper.batch_train_count + num_batches),
+                        ])
+                    if tb_helper.custom_fn:
+                        with torch.no_grad():
+                            tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
 
-            if steps_per_epoch is not None and num_batches >= steps_per_epoch:
-                break
+                if steps_per_epoch is not None and num_batches >= steps_per_epoch:
+                    break
+
+                #if num_batches==2:
+                #    print(prof_perc.key_averages().table(sort_by="cpu_time_total"))
+
+            if num_batches==1 or num_batches==2:
+                print(prof_mem.key_averages().table(sort_by="cpu_time_total"))
+
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
@@ -191,6 +202,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
+                #if num_batches % 500 == 0:
+
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
