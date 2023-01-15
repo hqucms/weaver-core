@@ -31,6 +31,10 @@ def _flatten_preds(preds, mask=None, label_axis=1):
     #print('preds', preds.shape, preds)
     return preds
 
+def trace_handler(prof):
+    print(prof.key_averages().table(
+        sort_by="self_cuda_time_total", row_limit=-1))
+
 
 def train_classification(model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None, tb_helper=None):
     model.train()
@@ -44,10 +48,9 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
     count = 0
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
-        for X, y, _ in tq:
-            with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA], profile_memory=True, record_shapes=True) as prof_mem:
-                #with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA], record_shapes=True) as prof_perc:
-                #    with record_function("model_inference"):
+        with profile(activities=[ProfilerActivity.CPU,ProfilerActivity.CUDA], profile_memory=True, record_shapes=True,
+                        schedule=torch.profiler.schedule( wait=1, warmup=1, active=5, repeat=2, skip_first=1), on_trace_ready=trace_handler) as prof:
+            for X, y, _ in tq:
                 inputs = [X[k].to(dev) for k in data_config.input_names]
                 label = y[data_config.label_names[0]].long()
                 try:
@@ -106,11 +109,8 @@ def train_classification(model, loss_func, opt, scheduler, train_loader, dev, ep
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
 
-                #if num_batches==2:
-                #    print(prof_perc.key_averages().table(sort_by="cpu_time_total"))
-
-            if num_batches==1 or num_batches==2:
-                print(prof_mem.key_averages().table(sort_by="cpu_time_total"))
+                # send a signal to the profiler that the next iteration has started
+                prof.step()
 
 
     time_diff = time.time() - start_time
@@ -509,3 +509,4 @@ class TensorboardHelper(object):
     def write_scalars(self, write_info):
         for tag, scalar_value, global_step in write_info:
             self.writer.add_scalar(tag, scalar_value, global_step)
+
