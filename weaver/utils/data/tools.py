@@ -55,7 +55,7 @@ def _repeat_pad(a, maxlen, shuffle=False, dtype='float32'):
 
 
 def _clip(a, a_min, a_max):
-    if isinstance(a, np.ndarray):
+    if isinstance(a, np.ndarray) or a.ndim == 1:
         return np.clip(a, a_min, a_max)
     else:
         return ak.unflatten(np.clip(ak.to_numpy(ak.flatten(a)), a_min, a_max), ak.num(a))
