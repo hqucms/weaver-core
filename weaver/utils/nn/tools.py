@@ -88,10 +88,10 @@ def _aux_halder(aux_output, aux_label_pf, aux_mask_pf, aux_loss_func,
     if isinstance(aux_label_pf,(torch.LongTensor, torch.cuda.LongTensor)):
         _, aux_preds_pf = aux_logits_pf.max(1)
         aux_correct_pf = (aux_preds_pf == aux_label_pf).sum().item()
-        total_aux_correct_pf += aux_correct_pf
     elif isinstance(aux_label_pf,(torch.FloatTensor, torch.cuda.FloatTensor)):
         #HERE sqrt? avg?
         aux_correct_pf = (aux_logits_pf - aux_label_pf).square().sum().item()
+    total_aux_correct_pf += aux_correct_pf
 
     return aux_label_pf, aux_mask_pf, loss, aux_loss_pf, aux_correct_pf, total_aux_correct_pf, num_aux_examples_pf, aux_label_counter, aux_scores
 
@@ -271,9 +271,13 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 try:
                     aux_acc=aux_correct_pf_clas / num_aux_examples_pf
                     avg_aux_acc=total_aux_correct_pf_clas / aux_count_pf
+                    aux_dist=aux_correct_pf_regr / num_aux_examples_pf
+                    avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf
                 except ZeroDivisionError:
                     aux_acc=0
                     avg_aux_acc=0
+                    aux_dist=0
+                    avg_aux_dist=0
 
                 tq.set_postfix({
                     'Train epoch':epoch,
@@ -286,7 +290,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     'AuxLoss': '%.5f' % aux_loss,
                     'AvgAuxLoss': '%.5f' % (total_aux_loss / num_batches),
                     'AuxAcc': '%.5f' % (aux_acc),
-                    'AvgAuxAcc': '%.5f' % (avg_aux_acc)})
+                    'AvgAuxAcc': '%.5f' % (avg_aux_acc),
+                    'AuxDist': '%.5f' % (aux_dist),
+                    'AvgAuxDist': '%.5f' % (avg_aux_dist)})
 
                 if tb_helper:
                     tb_helper.write_scalars([
@@ -307,6 +313,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
+    _logger.info('Train AvgAuxLoss: %.5f, AvgAuxAcc: %.5f, AvgAuxDist: %.5f' % (total_aux_loss / num_batches, avg_aux_acc, avg_aux_dist))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     _logger.info('Train auxliliary class distribution: \n    %s', str(sorted(aux_label_counter.items())))
 
@@ -479,10 +486,14 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_acc=aux_correct_pf_clas / num_aux_examples_pf
                     avg_aux_acc=total_aux_correct_pf_clas / aux_count_pf
                     avg_aux_loss = total_aux_loss / aux_count_pf
+                    aux_dist=aux_correct_pf_regr / num_aux_examples_pf
+                    avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf
                 except ZeroDivisionError:
                     aux_acc=0
                     avg_aux_acc=0
                     avg_aux_loss=0
+                    aux_dist=0
+                    avg_aux_dist=0
 
                 tq.set_postfix({
                     'Val epoch':epoch,
@@ -494,8 +505,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     'AuxLoss': '%.5f' % aux_loss,
                     'AvgAuxLoss': '%.5f' % (avg_aux_loss),
                     'AuxAcc': '%.5f' % (aux_acc),
-                    'AvgAuxAcc': '%.5f' % (avg_aux_acc)})
-
+                    'AvgAuxAcc': '%.5f' % (avg_aux_acc),
+                    'AuxDist': '%.5f' % (aux_dist),
+                    'AvgAuxDist': '%.5f' % (avg_aux_dist)})
                 if tb_helper:
                     if tb_helper.custom_fn:
                         with torch.no_grad():
@@ -547,7 +559,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
-        return total_correct / count, total_loss / count, avg_aux_acc, avg_aux_loss
+        return total_correct / count, total_loss / count, avg_aux_acc, avg_aux_dist, avg_aux_loss
     else:
         # convert 2D labels/scores
         if len(scores) != entry_count:
