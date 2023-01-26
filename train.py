@@ -830,7 +830,7 @@ def _main(args):
             #     save_checkpoint()
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric, valid_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+            valid_metric, valid_loss,valid_aux_metric, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr, aux_loss_func_bin=aux_loss_func_bin,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
@@ -839,6 +839,8 @@ def _main(args):
             if is_best_epoch:
                 best_valid_metric = valid_metric
                 best_valid_loss = valid_loss
+                best_valid_aux_metric= valid_aux_metric
+                best_valid_aux_loss = valid_aux_loss
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
                                  epoch, args.model_prefix + '_best_epoch_state.pt')
@@ -851,6 +853,8 @@ def _main(args):
 
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f) //  Current validation loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_metric, best_valid_metric, valid_loss, best_valid_loss), color='bold')
+            _logger.info('Epoch #%d: Current validation aux metric: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
+                         (epoch, valid_aux_metric, best_valid_aux_metric, valid_aux_loss, best_valid_aux_loss), color='bold')
 
 
             if epoch<start_epoch: start_epoch=epoch

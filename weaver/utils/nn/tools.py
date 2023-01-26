@@ -163,7 +163,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         model_output = model_output_tot[0]
                         aux_output = model_output_tot[1]
                         aux_output_pair = model_output_tot[2]
-                       # print('\n\aux_output\n', aux_output.size(), aux_output_pair.size())
+                        #print('\n\aux_output\n', aux_output.size(), aux_output_pair.size())
 
                     logits = _flatten_preds(model_output, label_mask)
                     #print('\nlogits\n', logits.size(), logits)
@@ -207,16 +207,24 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         # usa la maschera dove in qualche modo devi sapere il numero di pf per ogni
                         # elemento di una batch. inoltre la maschera deve considrare anche quali
                         # pf sono unmatched
+
                         num_pf = (aux_label_pair_bin[:, 0, :, 0] == -2).nonzero(as_tuple=False)
                         x=torch.cat(( torch.where(num_pf[:-1, 0] != num_pf[1:, 0])), dim=0)
                         num_pf= torch.cat((num_pf[0, 1].unsqueeze(dim=0), num_pf[x+1, 1]))
-                        print('\n num_pf', num_pf)
-                        mask= aux_label_pair_bin[:,0,:,0] != -2
+                        print('\n num_pf', num_pf.size())
+
+                        mask= ((aux_label_pair_bin[:,0,:,0] != -2) & (aux_label_pair_bin[:,0,:,0] != -1))
+                        #mask1= (aux_label_pair_bin != -2) & (aux_label_pair_bin != -1) & (aux_label_pair_bin.gather(0, mask))
                         print('\n mask', mask)
+                        #print('\n mask1', mask1)
 
-                        aux_label_pair_bin=aux_label_pair_bin.flatten(end_dim=2)
-                        print('\n\ aux_label_pair_bin\n','\n', aux_label_pair_bin, aux_label_pair_bin.size())
+                        #aux_label_pair_bin = aux_label_pair_bin[:, :num_pf, :num_pf, :]
+                        #aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1),:aux_output_pair.size(2), :]
 
+                        #aux_label_pair_bin=aux_label_pair_bin.flatten(end_dim=2)
+                        print('\n\ aux_label_pair_bin_cut\n','\n', aux_label_pair_bin, aux_label_pair_bin.size())
+
+                        raise Exception
 
                         '''index_f += aux_label_pf_regr.size(2)
                         _, aux_mask_pf, loss, aux_loss, aux_correct_pf_regr, \
@@ -228,9 +236,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                                         num_aux_examples_pf,total_aux_correct_pf_regr,
                                         loss, aux_loss, dev)
                         index_i+=aux_label_pf_regr.size(2)'''
+
+
 """
-
-
                     aux_count_pf += num_aux_examples_pf
 
                 loss = loss.mean()
@@ -539,7 +547,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
-        return total_correct / count, total_loss / count
+        return total_correct / count, total_loss / count, avg_aux_acc, avg_aux_loss
     else:
         # convert 2D labels/scores
         if len(scores) != entry_count:
