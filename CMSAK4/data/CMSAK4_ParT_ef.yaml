@@ -119,13 +119,13 @@ inputs:
       pad_mode: constant
       vars:
          - [sv_mask, null]
-   pf_ef_idx:
+   track_ef_idx:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
       pad_mode: wrap
       vars:
          - [track1_index, null]
          - [track2_index, null]
-   pf_ef:
+   track_ef:
       length: 300 # max lenght of the variable for each event (eg: max number of tracks combinations)
       pad_mode: wrap
       vars:

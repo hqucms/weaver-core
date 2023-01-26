@@ -263,8 +263,9 @@ def train_load(args):
     data_config = train_data.config
     train_input_names = train_data.config.input_names
     train_label_names = train_data.config.label_names
+    train_aux_label_names = train_data.config.aux_label_names
 
-    return train_loader, val_loader, data_config, train_input_names, train_label_names
+    return train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names
 
 
 def test_load(args):
@@ -574,12 +575,18 @@ def model_setup(args, data_config):
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
+        aux_loss_func_clas = network_module.get_aux_loss_clas(data_config, **network_options)
+        aux_loss_func_regr = network_module.get_aux_loss_regr(data_config, **network_options)
+        aux_loss_func_bin = network_module.get_aux_loss_bin(data_config, **network_options)
         _logger.info('Using loss function %s with options %s' % (loss_func, network_options))
     except AttributeError:
         loss_func = torch.nn.CrossEntropyLoss()
-        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.',
+        aux_loss_func_clas = torch.nn.CrossEntropyLoss()
+        aux_loss_func_regr = torch.nn.MSELoss()
+        aux_loss_func_bin = torch.nn.BCELoss()
+        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` and `torch.nn.MSELoss()` by default.',
                         args.network_config)
-    return model, model_info, loss_func
+    return model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin
 
 
 def iotest(args, data_loader):
@@ -691,7 +698,7 @@ def _main(args):
         from weaver.utils.nn.tools import train_classification as train
         from weaver.utils.nn.tools import evaluate_classification as evaluate
 
-    from weaver.utils.nn.tools import save_labels_best_epoch as save_labels_best_epoch
+    from weaver.utils.nn.tools import save_labels_best_epoch
 
     # training/testing mode
     training_mode = not args.predict
@@ -715,7 +722,7 @@ def _main(args):
 
     # load data
     if training_mode:
-        train_loader, val_loader, data_config, train_input_names, train_label_names = train_load(args)
+        train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names = train_load(args)
     else:
         test_loaders, data_config = test_load(args)
 
@@ -724,7 +731,7 @@ def _main(args):
         iotest(args, data_loader)
         return
 
-    model, model_info, loss_func = model_setup(args, data_config)
+    model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin = model_setup(args, data_config)
 
     # TODO: load checkpoint
     # if args.backend is not None:
@@ -771,12 +778,14 @@ def _main(args):
             from weaver.utils.lr_finder import LRFinder
             lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=train_input_names,
                                  label_names=train_label_names)
+            # HERE lr_finder is a complemetnary feature
+            # maybe put lr_finder where instead of labels put aux_labels and change loss function
             lr_finder.range_test(train_loader, start_lr=float(start_lr), end_lr=float(end_lr), num_iter=int(num_iter))
             lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
             return
 
         # training loop
-        best_valid_metric = np.inf if args.regression_mode else 0
+        best_valid_metric = np.inf if args.regression_mode else -1
         grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
         start_epoch=1e9
         end_epoch=-1
@@ -800,7 +809,7 @@ def _main(args):
 
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
+            train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
                   steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
@@ -822,6 +831,7 @@ def _main(args):
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric, valid_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                                    aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr, aux_loss_func_bin=aux_loss_func_bin,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(

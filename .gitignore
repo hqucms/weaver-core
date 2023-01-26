@@ -141,3 +141,4 @@ performance/
 *.pt
 *.txt
 !requirements.txt
+tree.py

@@ -714,22 +714,22 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
     def no_weight_decay(self):
         return {'part.cls_token', }
 
-    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None,  pf_ef_idx=None, pf_ef=None):
+    def forward(self, pf_x, pf_v=None, pf_mask=None, sv_x=None, sv_v=None, sv_mask=None,  track_ef_idx=None, track_ef=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
 
         with torch.no_grad():
             if not self.for_inference:
-                if pf_ef_idx is not None:
-                    pf_ef = build_sparse_tensor(pf_ef, pf_ef_idx, pf_x.size(-1))
+                if track_ef_idx is not None:
+                    track_ef = build_sparse_tensor(track_ef, track_ef_idx, pf_x.size(-1))
 
-            pf_x, pf_v, pf_mask, pf_ef = self.pf_trimmer(pf_x, pf_v, pf_mask, pf_ef)
+            pf_x, pf_v, pf_mask, track_ef = self.pf_trimmer(pf_x, pf_v, pf_mask, track_ef)
             sv_x, sv_v, sv_mask, _ = self.sv_trimmer(sv_x, sv_v, sv_mask)
             v = torch.cat([pf_v, sv_v], dim=2)
             mask = torch.cat([pf_mask, sv_mask], dim=2)
-            ef = torch.zeros(v.size(0), pf_ef.size(1), v.size(2), v.size(2), dtype=v.dtype, device=v.device)
-            ef[:, :, :pf_x.size(2), :pf_x.size(2)] = pf_ef
+            ef = torch.zeros(v.size(0), track_ef.size(1), v.size(2), v.size(2), dtype=v.dtype, device=v.device)
+            ef[:, :, :pf_x.size(2), :pf_x.size(2)] = track_ef
 
         with torch.cuda.amp.autocast(enabled=self.use_amp):
             pf_x = self.pf_embed(pf_x)  # after embed: (seq_len, batch, embed_dim)

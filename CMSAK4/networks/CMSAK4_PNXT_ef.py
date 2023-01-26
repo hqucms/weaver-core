@@ -7,8 +7,10 @@ def get_model(data_config, **kwargs):
     cfg = dict(
         pf_features_dims=len(data_config.input_dicts['pf_features']),
         sv_features_dims=len(data_config.input_dicts['sv_features']),
-        edge_input_dim=len(data_config.input_dicts['pf_ef']),
+        edge_input_dim=len(data_config.input_dicts['track_ef']),
         num_classes=len(data_config.label_value),
+        num_aux_classes=len(data_config.aux_label_value),
+        num_aux_classes_pair=len(data_config.aux_label_value_pair),
         # network configurations
         node_dim=32,
         edge_dim=24, #8
@@ -45,4 +47,13 @@ def get_model(data_config, **kwargs):
 
 
 def get_loss(data_config, **kwargs):
-    return torch.nn.CrossEntropyLoss()
+    return torch.nn.CrossEntropyLoss(reduction='none')
+
+def get_aux_loss_clas(data_config, **kwargs):
+    return torch.nn.CrossEntropyLoss(reduction='none')
+
+def get_aux_loss_regr(data_config, **kwargs):
+    return torch.nn.MSELoss(reduction='none')
+
+def get_aux_loss_bin(data_config, **kwargs):
+    return torch.nn.BCELoss(reduction='none')

@@ -41,6 +41,10 @@ def roc_auc_score_ovo(y_true, y_score):
 
 
 def confusion_matrix(y_true, y_score):
+    if y_true is None or y_score is None:
+        return None
+    if isinstance(y_true, dict):
+        y_true = y_true['aux_label_pf_clas']
     if y_score.ndim == 1:
         y_pred = y_score > 0.5
     else:
@@ -61,7 +65,7 @@ _metric_dict = {
     'roc_auc_score_matrix': roc_auc_score_ovo,
     'confusion_matrix': confusion_matrix,
     'save_labels': save_labels,
-    }
+}
 
 
 def _get_metric(metric):
@@ -71,7 +75,7 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=-1, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score, eval_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
@@ -81,4 +85,6 @@ def evaluate_metrics(y_true, y_score, eval_metrics=[], epoch=-1, roc_prefix=None
             results[metric] = None
             _logger.error(str(e))
             _logger.debug(traceback.format_exc())
+
+    results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true, aux_y_score)
     return results

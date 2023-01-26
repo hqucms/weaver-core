@@ -788,7 +788,7 @@ class ParticleEdgeNetTagger(nn.Module):
                               use_fts_bn=use_fts_bn,
                               use_counts=use_counts,
                               for_inference=for_inference)
-    def forward(self, pf_points, pf_features, pf_mask, sv_points, sv_features, sv_mask, pf_ef_idx, pf_ef):
+    def forward(self, pf_points, pf_features, pf_mask, sv_points, sv_features, sv_mask, track_ef_idx, track_ef):
 
         if self.pf_input_dropout:
             pf_mask = (self.pf_input_dropout(pf_mask) != 0).float()
@@ -808,4 +808,4 @@ class ParticleEdgeNetTagger(nn.Module):
         #edge_features= self.ef_conv(edge_features* edge_features_mask)*edge_features_mask
         #print('features tagger:\n', features.size())
 
-        return self.pn(points, features, pf_ef_idx, pf_ef, mask) # call the forward of particle net
+        return self.pn(points, features, track_ef_idx, track_ef, mask) # call the forward of particle net

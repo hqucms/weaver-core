@@ -39,6 +39,7 @@ class DataConfig(object):
             'new_variables': {},
             'inputs': {},
             'labels': {},
+            'aux_labels': {},
             'observers': [],
             'monitor_variables': [],
             'weights': None,
@@ -93,8 +94,42 @@ class DataConfig(object):
                         self._missing_standardization_info = True
                     self.preprocess_params[v[0]] = params
         # labels
+        #HERE
         self.label_type = opts['labels']['type']
         self.label_value = opts['labels']['value']
+        aux_label_exprs = []
+        try:
+            self.aux_label_type = opts['aux_labels']['type']
+            self.aux_label_value = opts['aux_labels']['value']
+            if self.aux_label_type == 'simple':
+                assert (isinstance(self.aux_label_value, list))
+                #HERE change how _auxlabel_ is defined
+                self.aux_label_names = ('_auxlabel_',)
+                aux_label_exprs = ['ak.to_numpy(%s)' % k for k in self.aux_label_value]
+                self.var_funcs['_auxlabel_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+                self.var_funcs['_auxlabelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+            else:
+                self.aux_label_names = tuple(self.aux_label_value.keys())
+                self.var_funcs.update(self.aux_label_value)
+        except KeyError:
+            #self.aux_label_type = []
+            self.aux_label_value = []
+            self.aux_label_names = ()
+
+        try:
+            self.aux_label_value_pair = opts['aux_labels']['value_pair']
+            if self.aux_label_type == 'simple':
+                if isinstance(self.aux_label_value_pair, list):
+                    self.aux_label_names = ('_auxlabel_',)
+                    aux_label_exprs.append('ak.to_numpy(%s)' % k for k in self.aux_label_value_pair)
+                    self.var_funcs['_auxlabel_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+                    self.var_funcs['_auxlabelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+            else:
+                self.aux_label_names += tuple(self.aux_label_value_pair.keys())
+                self.var_funcs.update(self.aux_label_value_pair)
+        except KeyError:
+            self.aux_label_value_pair = []
+
         if self.label_type == 'simple':
             assert (isinstance(self.label_value, list))
             self.label_names = ('_label_',)
@@ -152,6 +187,7 @@ class DataConfig(object):
             _log('input_shapes:\n - %s', '\n - '.join(str(it) for it in self.input_shapes.items()))
             _log('preprocess_params:\n - %s', '\n - '.join(str(it) for it in self.preprocess_params.items()))
             _log('label_names: %s', str(self.label_names))
+            _log('aux_label_names: %s', str(self.aux_label_names))
             _log('observer_names: %s', str(self.observer_names))
             _log('monitor_variables: %s', str(self.monitor_variables))
             if opts['weights'] is not None:
@@ -181,6 +217,7 @@ class DataConfig(object):
             self.keep_branches.update(names)
         # labels
         self.keep_branches.update(self.label_names)
+        self.keep_branches.update(self.aux_label_names)
         # weight
         if self.weight_name:
             self.keep_branches.add(self.weight_name)
@@ -232,7 +269,7 @@ class DataConfig(object):
 
     def export_json(self, fp):
         import json
-        j = {'output_names': self.label_value, 'input_names': self.input_names}
+        j = {'output_names': self.label_value,'aux_output_names': self.aux_label_value, 'input_names': self.input_names}
         for k, v in self.input_dicts.items():
             j[k] = {'var_names': v, 'var_infos': {}}
             for var_name in v:

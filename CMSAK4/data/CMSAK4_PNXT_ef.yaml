@@ -16,7 +16,8 @@ new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: ak.ones_like(pfcand_etarel)
-   pf_ef_mask: ak.ones_like(pca_distance)
+   track_ef_mask: ak.ones_like(pca_significance)
+
    # FIXME: use (px, py, pz, energy) directly once they are available in the ntuples
    pfp4: _p4_from_ptetaphie(pfcand_pt_nopuppi, ak.where(jet_eta >= 0, 1, -1) * pfcand_etarel + jet_eta, pfcand_phirel, np.exp(pfcand_e_log_nopuppi))
    pfcand_px: pfp4.px
@@ -29,6 +30,8 @@ new_variables:
    sv_py: svp4.py
    sv_pz: svp4.pz
    sv_energy: svp4.energy
+
+   #labels
    label_b:     (jet_genjet_pt>0) & (jet_nBHadrons==1)
    label_bb:    (jet_genjet_pt>0) & (jet_nBHadrons>1)
    label_c:     (jet_genjet_pt>0) & (jet_nBHadrons==0) & (jet_nCHadrons==1)
@@ -39,11 +42,31 @@ new_variables:
    label_pu:    (jet_genjet_pt<=0)
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
-   #label_pf_from_b: pfcand_from_b
-   #label_pf_from_c: pfcand_from_c
-   #label_pf_from_g: pfcand_from_g
 
+   aux_label_mask: (pfcand_from_b != -1) -1
+   from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
+   from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
 
+   #auxiliary labels
+   pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1, axis=-1)
+   pf_c: ak.fill_none(ak.pad_none((from_c_bool & ~from_b_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
+   pf_bc: ak.fill_none(ak.pad_none((from_b_bool & from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
+   pf_other: ak.fill_none(ak.pad_none((~from_b_bool & ~from_c_bool)+2*aux_label_mask, 50, axis=1, clip=True),-1)
+
+   pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
+   pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
+   pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
+   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
+
+   #pad_dist: ak.to_numpy(ak.fill_none(ak.pad_none(dist_vtx_12, 2500, axis=1, clip=True),-2))
+   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(np.reshape(ak.to_numpy(ak.fill_none(ak.pad_none(dist_vtx_12, n_pfcands[0]**2, axis=1, clip=True),-2)), (90,n_pfcands[0], n_pfcands[0])), 50, axis=1, clip=True), 50, axis=2, clip=True),-1)
+   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(ak.fromiter(dist_vtx_12).reshape(n_pfcands, n_pfcands), 50, axis=1, clip=True), 50, axis=2, clip=True),-1)
+   num_pf: ak.values_astype(np.sqrt(ak.num(dist_vtx_12, 1)), np.int_)
+   unflat_dist: ak.unflatten(dist_vtx_12, np.repeat(num_pf, num_pf, axis=0), axis=1)
+   pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2)
+   #pad_dist: ak.pad_none(ak.pad_none(unflat_dist, 50, axis=1, clip=True), 50, axis=2, clip=True)
+
+   #pad_dist: ak.count(dist_vtx_12, 1)
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
   method: manual
@@ -127,12 +150,12 @@ inputs:
       length: 5
       vars:
          - [sv_mask, null]
-   pf_ef_idx:
+   track_ef_idx:
       length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [track1_index, null]
          - [track2_index, null]
-   pf_ef:
+   track_ef:
       length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [pca_distance, null]
@@ -161,10 +184,10 @@ inputs:
          - [pca_jetAxis_dotprod, null]
          - [pca_jetAxis_dEta, null]
          - [pca_jetAxis_dPhi_, null]
-   pf_ef_mask:
+   track_ef_mask:
       length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
-         - [pf_ef_mask, null]
+         - [track_ef_mask, null]
 
 
 labels:
@@ -178,7 +201,21 @@ labels:
       # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass)
 
 
-#auxiliary_labels
+aux_labels:
+   type: custom
+   value:
+      aux_label_pf_clas_b: pf_b
+      aux_label_pf_clas_c: pf_c
+      aux_label_pf_clas_bc: pf_bc
+      aux_label_pf_clas_other: pf_other
+      aux_labels_pf_regr_dist_pv: pf_dist_pv
+      aux_label_pf_regr_vtx_x: pf_vtx_x
+      aux_label_pf_regr_vtx_y: pf_vtx_y
+      aux_label_pf_regr_vtx_z: pf_vtx_z
+   #value_pair:
+      #aux_label_pair_bin_dist_vtx: pair_dist_vtx
+      #aux_label_pair_bin_dist_vtx2: pair_dist_vtx
+
 
 observers:
    - event_no
