@@ -830,7 +830,7 @@ def _main(args):
             #     save_checkpoint()
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric, valid_loss,valid_aux_metric, valid_aux_dist, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+            valid_metric, valid_comb_loss, valid_loss,valid_aux_metric, valid_aux_dist, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr, aux_loss_func_bin=aux_loss_func_bin,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
@@ -838,6 +838,7 @@ def _main(args):
                 valid_metric > best_valid_metric)
             if is_best_epoch:
                 best_valid_metric = valid_metric
+                best_valid_comb_loss = valid_comb_loss
                 best_valid_loss = valid_loss
                 best_valid_aux_metric= valid_aux_metric
                 best_valid_aux_dist= valid_aux_dist
@@ -852,8 +853,8 @@ def _main(args):
 
             _logger.info('Epoch #%d: info saved in log file:\n%s' % (epoch, args.log))
 
-            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f) //  Current validation loss: %.5f (in best epoch: %.5f)' %
-                         (epoch, valid_metric, best_valid_metric, valid_loss, best_valid_loss), color='bold')
+            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)  //  Current validation combined loss: %.5f (in best epoch: %.5f)  //  Current validation loss: %.5f (in best epoch: %.5f)' %
+                         (epoch, valid_metric, best_valid_metric, valid_comb_loss, best_valid_comb_loss, valid_loss, best_valid_loss), color='bold')
             _logger.info('Epoch #%d: Current validation aux metric: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_aux_metric, best_valid_aux_metric, valid_aux_dist, best_valid_aux_dist, valid_aux_loss, best_valid_aux_loss), color='bold')
 
