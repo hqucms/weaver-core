@@ -471,10 +471,10 @@ class MultiScaleEdgeConv(nn.Module):
             ef_tensor = torch.cat([ef_tensor[:, :, :, s] for s in self.slices], dim=-1)
             null_edge_pos = torch.cat([null_edge_pos[:, :, :, s] for s in self.slices], dim=-1)
 
-        print('ef_tensor:\n', ef_tensor.size())
+        #print('ef_tensor:\n', ef_tensor.size())
 
         message = self.edge_mlp(ef_tensor)
-        print('message1:\n', message.size())
+        #print('message1:\n', message.size())
         if self.pair_fc is not None:
             #fts_out_label_pair=self.pair_fc(message)[:, :num_pf, :num_pf, :].permute(0,2,3,1)
             fts_out_label_pair = 0
@@ -537,15 +537,15 @@ class MultiScaleEdgeConv(nn.Module):
             node_inputs.append(self.lv_encode(torch.cat(node_lv_inputs, dim=1)))
 
         node_inputs = torch.cat(node_inputs, dim=1)
-        print('node_inputs:\n', node_inputs.size())
+        #print('node_inputs:\n', node_inputs.size())
         node_fts = self.node_mlp(node_inputs)
-        print('node_fts:\n', node_fts.size())
+        #print('node_fts:\n', node_fts.size())
 
         if self.node_se is not None:
             node_fts = self.node_se(node_fts, mask.unsqueeze(-1))
 
         fts_out = self.shortcut(features) + self.gamma * node_fts
-        print('fts_out:\n', fts_out.size()) # batch size, out_dim, num_pf, 1
+        #print('fts_out:\n', fts_out.size()) # batch size, out_dim, num_pf, 1
 
         #HERE
         if self.node_fc is not None:
@@ -554,7 +554,7 @@ class MultiScaleEdgeConv(nn.Module):
             fts_out_label = 0
         fts_out_label_pair = torch.rand(fts_out_label.size(0), 30,30, 2, device=fts_out_label.device)
 
-        print('fts_out_label:\n', fts_out_label, fts_out_label.size())
+        #print('fts_out_label:\n', fts_out_label, fts_out_label.size())
         return pts_out, fts_out, fts_out_label, fts_out_label_pair
 
 

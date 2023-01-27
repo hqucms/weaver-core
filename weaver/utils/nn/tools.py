@@ -61,10 +61,10 @@ def _aux_halder(aux_output, aux_label_pf, aux_mask_pf, aux_loss_func,
 
     if num_aux_examples_pf == 0:
         num_aux_examples_pf = aux_label_pf.size(0)
-    print('\n aux_label_pf2\n', aux_label_pf.size(), aux_label_pf)
+    #print('\n aux_label_pf2\n', aux_label_pf.size(), aux_label_pf)
     #print('\n aux_mask_pf1\n', aux_mask_pf, aux_mask_pf.size())
     #print('\n num_aux_examples_pf\n', num_aux_examples_pf)
-    print('\n aux_logits_pf_clas\n', aux_logits_pf, aux_logits_pf.size())
+    #print('\n aux_logits_pf_clas\n', aux_logits_pf, aux_logits_pf.size())
 
     #HERE? scores
     if aux_label_counter is not None:
@@ -214,13 +214,13 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         # pf sono unmatched
 
                         '''num_pf = (aux_label_pair_bin[:, 0, :, 0] == -2).nonzero(as_tuple=False)
-                        print('\n num_pf', num_pf, num_pf.size())
+                        #print('\n num_pf', num_pf, num_pf.size())
 
                         x=torch.cat(( torch.where(num_pf[:-1, 0] != num_pf[1:, 0])), dim=0)
-                        print('\n X', x, x.size())
+                        #print('\n X', x, x.size())
 
                         num_pf= torch.cat((num_pf[0, 1].unsqueeze(dim=0), num_pf[x+1, 1]))
-                        print('\n num_pf', num_pf.size())'''
+                        #print('\n num_pf', num_pf.size())'''
 
                         mask= ((aux_label_pair_bin[:,0,:,0] != -2))# & (aux_label_pair_bin[:,0,:,0] != -1))
                         aux_label_pair_bin= (aux_label_pair_bin[mask])
