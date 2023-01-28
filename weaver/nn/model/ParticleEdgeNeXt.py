@@ -7,9 +7,9 @@ from functools import partial
 
 import sys
 
-#orig_stdout = sys.stdout
-#f = open('out_log.txt', 'w')
-#sys.stdout = f
+'''orig_stdout = sys.stdout
+f = open('out_log.txt', 'w')
+sys.stdout = f'''
 
 torch.set_printoptions(profile="full")
 
@@ -124,7 +124,7 @@ def gather(x, k, idx, cpu_mode=False):
         fts = fts.permute(0, 3, 1, 2).contiguous()  # (batch_size, num_dims, num_points, k)
     return fts
 
-
+#TODO compute idx once and use gather for the various tensor
 def gather_edges(x, y=None, k=16):
     #print("x gather_edges\n", x.size() , "\n", x) # (bs, num_ef, num_pf, num_pf)
     num_dims = x.size(1)
@@ -141,7 +141,7 @@ def gather_edges(x, y=None, k=16):
     x_final=x.gather(-1, idx) #(bs, num_ef, num_pf, k)
     #print("x_final gather_edges\n", x_final.size() , "\n", x_final)
 
-    return x_final
+    return x_final, idx
 
 
 def pairwise_lv_fts(xi, xj, use_polarization_angle=False, eps=1e-8, for_onnx=False):
@@ -182,7 +182,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
         mask_ngbs = mask_ngbs & mask.unsqueeze(-1)
         null_edge_pos = ~mask_ngbs
         if ef_mask_tensor is not None:
-            ef_mask_ngbs=gather_edges(x=ef_mask_tensor, y=ef_tensor, k=k).bool()
+            ef_mask_ngbs=gather_edges(x=ef_mask_tensor, y=ef_tensor, k=k)[0].bool()
             ef_null_edge_pos= ~ef_mask_ngbs
             null_edge_pos = torch.cat([null_edge_pos, ef_null_edge_pos], dim=3)
 
@@ -221,8 +221,9 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
     else:
         outputs = None
 
+    idx_tensor = None
     if ef_tensor is not None:
-        ef_outputs=gather_edges(x=ef_tensor, k=k)
+        ef_outputs, idx_tensor=gather_edges(x=ef_tensor, k=k)
 
         batch_size, num_efts, num_points, _= ef_outputs.size()
         dummy_outputs= torch.zeros(batch_size, num_efts, num_points, k, device=ef_outputs.device)
@@ -240,8 +241,51 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
     #print("outputs2\n", outputs.size() , "\n")
 
 
-    return outputs, rel_coords, lvs_ngbs, null_edge_pos
+    return outputs, rel_coords, lvs_ngbs, null_edge_pos, idx_tensor
 
+def build_sparse_aux(x, idx, ef_idx):
+
+    #dim in = batch_size, num_aux_label_pair, num_pf, k+k
+    # dim out= batch_size, num_aux_label_pair, num_pf, num_pf
+    batch_size, num_aux, num_pf, k = x.size()
+    num_pairs= num_pf * k
+    #print('x_aux:\n', x.size(), x)
+    #print('idx_aux:\n', idx.size(), idx)
+    idx = torch.min(idx, torch.ones_like(idx) * num_pf) # oppure num_pf-1
+    ef_idx = torch.min(ef_idx, torch.ones_like(ef_idx) * num_pf) # oppure num_pf-1
+    idx=idx[:, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
+    #print('idx:\n', idx.size(), idx)
+    ef_idx=ef_idx[:,0, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
+    #print('ef_mask_tensor2:\n', ef_idx.size(), ef_idx)
+    idx_tot=torch.cat((idx, ef_idx), dim=2).flatten(start_dim=1).unsqueeze(1)
+    #print('idx_tot:\n', idx_tot.size(), idx_tot)
+    i_aux=torch.arange(0, num_pf, device=x.device).repeat_interleave(k).repeat(batch_size, 1).unsqueeze(1)
+    #print('i_aux:\n', i_aux.size(), i_aux)
+
+    i2=torch.cat((i_aux, idx_tot), dim=1)
+    #print('i2_aux:\n', i2.size(), i2)
+    x=x.flatten(start_dim=2)
+    #print('x2:\n', x.size(), x)
+
+    i = torch.cat((
+        torch.arange(0, batch_size, device=x.device).repeat_interleave(num_aux * num_pairs).unsqueeze(0),
+        torch.arange(0, num_aux, device=x.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0),
+        i2[:, :1, :].expand_as(x).flatten().unsqueeze(0),
+        i2[:, 1:, :].expand_as(x).flatten().unsqueeze(0),
+    ), dim=0)
+    #print('i:\n', i.size(), i)
+    #idx=idx.unsqueeze(3).expand(-1, -1, -1, num_aux)
+    #print('idx2:\n', idx.size(), idx)
+    #x=x[:, :, :int(k_/2), :].flatten()
+
+    #out = torch.sparse_coo_tensor(idx, x)#, (batch_size, num_pf, num_pf, num_aux))
+    x_final=torch.sparse_coo_tensor(
+        i, x.flatten(),
+        size=(batch_size, num_aux, num_pf + 1, num_pf + 1),
+        device=x.device).to_dense()[:, :, :num_pf, :num_pf]
+    #print("\n x_final", x_final.size(), x_final)
+
+    return
 
 def build_sparse_tensor(ef, idx, seq_len):
     # inputs: ef (N, C, num_pairs), idx (N, 2, num_pairs)
@@ -253,7 +297,18 @@ def build_sparse_tensor(ef, idx, seq_len):
         torch.arange(0, num_fts, device=ef.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0),
         idx[:, :1, :].expand_as(ef).flatten().unsqueeze(0),
         idx[:, 1:, :].expand_as(ef).flatten().unsqueeze(0),
-    ), dim=0)
+    ), dim=0) #(4, num_pairs*batch_size*C)
+    first=torch.arange(0, batch_size, device=ef.device).repeat_interleave(num_fts * num_pairs).unsqueeze(0)
+    second=  torch.arange(0, num_fts, device=ef.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0)
+    third=idx[:, :1, :].expand_as(ef).flatten().unsqueeze(0)
+    fourth=idx[:, 1:, :].expand_as(ef).flatten().unsqueeze(0)
+
+    '''print('first', first.size(), first)
+    #print('seconda', second.size(), second)
+    #print('thrid', third.size(), third)
+    #print('fourth', fourth.size(), fourth)'''
+
+    #print('i', i.size(), i)
     return torch.sparse_coo_tensor(
         i, ef.flatten(),
         size=(batch_size, num_fts, seq_len + 1, seq_len + 1),
@@ -307,7 +362,8 @@ class MultiScaleEdgeConv(nn.Module):
 
     def __init__(self, node_dim, edge_dim,
                  num_neighbors, out_dim,
-                 num_aux_classes,
+                 num_aux_classes_clas,
+                 num_aux_classes_regr,
                  num_aux_classes_pair,
                  reduction_dilation=None,
                  message_dim=None,
@@ -421,14 +477,23 @@ class MultiScaleEdgeConv(nn.Module):
 
         self.gamma = nn.Parameter(init_scale * torch.ones((out_dim, 1, 1)))
 
-        self.node_fc = nn.Sequential(
+        self.node_fc_clas = nn.Sequential(
             nn.BatchNorm2d(out_dim),
             nn.ReLU(),
-            nn.Conv2d(out_dim, num_aux_classes, kernel_size=1, bias=False),
-            nn.BatchNorm2d(num_aux_classes),
+            nn.Conv2d(out_dim, num_aux_classes_clas, kernel_size=1, bias=False),
+            nn.BatchNorm2d(num_aux_classes_clas),
             nn.ReLU(),
-            nn.Conv2d(num_aux_classes, num_aux_classes, kernel_size=1, bias=False),
-        ) if num_aux_classes != 0 else None
+            nn.Conv2d(num_aux_classes_clas, num_aux_classes_clas, kernel_size=1, bias=False),
+        ) if num_aux_classes_clas != 0 else None
+
+        self.node_fc_regr = nn.Sequential(
+            nn.BatchNorm2d(out_dim),
+            nn.ReLU(),
+            nn.Conv2d(out_dim, num_aux_classes_regr, kernel_size=1, bias=False),
+            nn.BatchNorm2d(num_aux_classes_regr),
+            nn.ReLU(),
+            nn.Conv2d(num_aux_classes_regr, num_aux_classes_regr, kernel_size=1, bias=False),
+        ) if num_aux_classes_regr != 0 else None
 
         #todo
         self.pair_fc = nn.Sequential(
@@ -449,7 +514,7 @@ class MultiScaleEdgeConv(nn.Module):
 
         if idx is None:
             idx = self.knn(points)
-            ef_tensor, rel_coords, lvs_ngbs, null_edge_pos = self.get_graph_feature(
+            ef_tensor, rel_coords, lvs_ngbs, null_edge_pos,_ = self.get_graph_feature(
                 points, fts_encode, lorentz_vectors, mask, ef_tensor, idx, null_edge_pos)
         else:
             if self.k < self.num_neighbors_in:
@@ -474,10 +539,11 @@ class MultiScaleEdgeConv(nn.Module):
         #print('ef_tensor:\n', ef_tensor.size())
 
         message = self.edge_mlp(ef_tensor)
-        #print('message1:\n', message.size())
+       #print('message1:\n', message.size())
+
         if self.pair_fc is not None:
-            #fts_out_label_pair=self.pair_fc(message)[:, :num_pf, :num_pf, :].permute(0,2,3,1)
-            fts_out_label_pair = 0
+            fts_out_label_pair=self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
+            #fts_out_label_pair = 0
         else :
             fts_out_label_pair = 0
 
@@ -548,14 +614,19 @@ class MultiScaleEdgeConv(nn.Module):
         #print('fts_out:\n', fts_out.size()) # batch size, out_dim, num_pf, 1
 
         #HERE
-        if self.node_fc is not None:
-            fts_out_label=self.node_fc(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
+        if self.node_fc_clas is not None:
+            fts_out_label_clas=self.node_fc_clas(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
         else :
-            fts_out_label = 0
-        fts_out_label_pair = torch.rand(fts_out_label.size(0), 30,30, 2, device=fts_out_label.device)
+            fts_out_label_clas = 0
+        if self.node_fc_regr is not None:
+            fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
+        else :
+            fts_out_label_regr = 0
 
+        #fts_out_label_pair = torch.rand(fts_out_label_clas.size(0), 30,30, 2, device=fts_out_label_clas.device)
+        #fts_out_label_pair = 0
         #print('fts_out_label:\n', fts_out_label, fts_out_label.size())
-        return pts_out, fts_out, fts_out_label, fts_out_label_pair
+        return pts_out, fts_out, fts_out_label_clas, fts_out_label_regr, fts_out_label_pair
 
 
         # size(fts_out_label)=(batch_size, num_auxiliary_labels, num_nodes)
@@ -568,7 +639,8 @@ class ParticleEdgeNeXt(nn.Module):
                  feature_input_dim=None,
                  edge_input_dim=0,
                  num_classes=None,
-                 num_aux_classes=None,
+                 num_aux_classes_clas=None,
+                 num_aux_classes_regr=None,
                  num_aux_classes_pair=None,
                  # network configurations
                  node_dim=32,
@@ -654,7 +726,8 @@ class ParticleEdgeNeXt(nn.Module):
                 MultiScaleEdgeConv(
                     node_dim=input_dim, edge_dim=edge_dim,
                     num_neighbors=k, out_dim=out_dim,
-                    num_aux_classes=num_aux_classes,
+                    num_aux_classes_clas=num_aux_classes_clas,
+                    num_aux_classes_regr=num_aux_classes_regr,
                     num_aux_classes_pair=num_aux_classes_pair,
                     reduction_dilation=rd,
                     message_dim=msg_dim,
@@ -815,7 +888,7 @@ class ParticleEdgeNeXt(nn.Module):
                             ef_mask_tensor = ef_mask_tensor[:, :, :maxlen, :maxlen]
                             #print('ef_mask_tensor:\n', ef_mask_tensor)
                             ef_mask_tensor = ef_mask_tensor.bool()
-                            #print('ef_mask_tensor2:\n', ef_mask_tensor)
+            #print('ef_mask_tensor2:\n', ef_mask_tensor)
 
 
             if self.global_aggregation == 'mean':
@@ -839,7 +912,9 @@ class ParticleEdgeNeXt(nn.Module):
             if self.knn is not None:
                 # using static graph
                 idx = self.knn(points)
-                edge_inputs, _, lvs_ngbs, null_edge_pos = self.get_graph_feature(
+                #print('idx:\n', idx)
+                #print('features:\n', features)
+                edge_inputs, _, lvs_ngbs, null_edge_pos, idx_tensor = self.get_graph_feature(
                     lvs=lorentz_vectors, mask=mask, ef_tensor=ef_tensor,
                     ef_mask_tensor=ef_mask_tensor, idx=idx, null_edge_pos=None)
                 ef_tensor = None
@@ -865,7 +940,7 @@ class ParticleEdgeNeXt(nn.Module):
 
         for layer in self.layers:
             #HERE features_label
-            points, features, features_label, features_label_pair = layer(
+            points, features, features_label_clas, features_label_regr, features_label_pair = layer(
                 points=points, features=features, lorentz_vectors=lorentz_vectors,
                 num_pf=num_pf, mask=mask, ef_tensor=ef_tensor,
                 idx=idx, null_edge_pos=null_edge_pos, edge_inputs=edge_inputs, lvs_ngbs=lvs_ngbs)
@@ -901,8 +976,14 @@ class ParticleEdgeNeXt(nn.Module):
             output = torch.softmax(output, dim=1)
         #print('features_label:\n', features_label, features_label_pair)
 
+        #HERE! use idx and ef_mask_tensor to build sparse tensor
+        #print('\n ef_mask_tensor', ef_mask_tensor.size(), ef_mask_tensor)
+        if not isinstance(features_label_pair, int):
+            features_label_pair = build_sparse_aux(features_label_pair, idx, idx_tensor)
+
+
         #HERE
-        return output, features_label, features_label_pair
+        return output, features_label_clas, features_label_regr, features_label_pair
 
 
 class ParticleEdgeNeXtTagger(nn.Module):
@@ -912,7 +993,8 @@ class ParticleEdgeNeXtTagger(nn.Module):
                  sv_features_dims=None,
                  edge_input_dim=0,
                  num_classes=None,
-                 num_aux_classes=None,
+                 num_aux_classes_clas=None,
+                 num_aux_classes_regr=None,
                  num_aux_classes_pair=None,
                  # network configurations
                  node_dim=32,
@@ -953,7 +1035,8 @@ class ParticleEdgeNeXtTagger(nn.Module):
         self.pn = ParticleEdgeNeXt(feature_input_dim=node_dim,
                                edge_input_dim=edge_input_dim,
                                num_classes=num_classes,
-                               num_aux_classes=num_aux_classes,
+                               num_aux_classes_clas=num_aux_classes_clas,
+                               num_aux_classes_regr=num_aux_classes_regr,
                                num_aux_classes_pair=num_aux_classes_pair,
                                # network configurations
                                node_dim=0,

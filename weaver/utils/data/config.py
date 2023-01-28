@@ -100,22 +100,36 @@ class DataConfig(object):
         aux_label_exprs = []
         try:
             self.aux_label_type = opts['aux_labels']['type']
-            self.aux_label_value = opts['aux_labels']['value']
+            self.aux_label_value_clas = opts['aux_labels']['value_clas']
             if self.aux_label_type == 'simple':
-                assert (isinstance(self.aux_label_value, list))
+                assert (isinstance(self.aux_label_value_clas, list))
                 #HERE change how _auxlabel_ is defined
                 self.aux_label_names = ('_auxlabel_',)
-                aux_label_exprs = ['ak.to_numpy(%s)' % k for k in self.aux_label_value]
+                aux_label_exprs = ['ak.to_numpy(%s)' % k for k in self.aux_label_value_clas]
                 self.var_funcs['_auxlabel_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
                 self.var_funcs['_auxlabelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
             else:
-                self.aux_label_names = tuple(self.aux_label_value.keys())
-                self.var_funcs.update(self.aux_label_value)
+                self.aux_label_names = tuple(self.aux_label_value_clas.keys())
+                self.var_funcs.update(self.aux_label_value_clas)
         except KeyError:
             #self.aux_label_type = []
-            self.aux_label_value = []
+            self.aux_label_value_clas = []
             self.aux_label_names = ()
 
+        try:
+            self.aux_label_value_regr = opts['aux_labels']['value_regr']
+            if self.aux_label_type == 'simple':
+                if isinstance(self.aux_label_value_regr, list):
+                    self.aux_label_names = ('_auxlabel_',)
+                    aux_label_exprs.append('ak.to_numpy(%s)' % k for k in self.aux_label_value_regr)
+                    self.var_funcs['_auxlabel_'] = 'np.argmax(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+                    self.var_funcs['_auxlabelcheck_'] = 'np.sum(np.stack([%s], axis=1), axis=1)' % (','.join(aux_label_exprs))
+            else:
+                self.aux_label_names += tuple(self.aux_label_value_regr.keys())
+                self.var_funcs.update(self.aux_label_value_regr)
+        except KeyError:
+            self.aux_label_value_regr = []
+            
         try:
             self.aux_label_value_pair = opts['aux_labels']['value_pair']
             if self.aux_label_type == 'simple':

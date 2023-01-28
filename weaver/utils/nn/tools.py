@@ -158,12 +158,13 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 opt.zero_grad()
                 with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
                     #HERE
-                    model_output_tot = model(*inputs)
+                    model_output = model(*inputs)
 
-                    if isinstance(model_output_tot, tuple):
-                        model_output = model_output_tot[0]
-                        aux_output = model_output_tot[1]
-                        aux_output_pair = model_output_tot[2]
+                    if isinstance(model_output, tuple):
+                        aux_output_clas = model_output[1]
+                        aux_output_regr = model_output[2]
+                        aux_output_pair = model_output[3]
+                        model_output = model_output[0]
                         #print('\n\aux_output\n', aux_output_pair, aux_output_pair.size())
 
                     logits = _flatten_preds(model_output, label_mask)
@@ -175,37 +176,31 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     aux_mask_pf = None
                     num_aux_examples_pf = 0
                     aux_correct_pf_clas = 0
-                    index_i = 0
-                    index_f = 0
                     aux_loss = 0
                     comb_loss=loss
 
                     if aux_label_pf_clas is not None:
-                        index_f += aux_label_pf_clas.size(2)
                         _, aux_mask_pf, comb_loss, aux_loss, aux_correct_pf_clas, \
                             total_aux_correct_pf_clas, num_aux_examples_pf,\
                             aux_label_counter, _ = \
-                            _aux_halder(aux_output[:, :, index_i:index_f],
-                                        aux_label_pf_clas[:, :aux_output.size(1), :],
+                            _aux_halder(aux_output_clas,
+                                        aux_label_pf_clas[:, :aux_output_clas.size(1), :],
                                         aux_mask_pf, aux_loss_func_clas,
                                         num_aux_examples_pf,total_aux_correct_pf_clas,
                                         comb_loss, aux_loss, dev, aux_label_counter)
-                        index_i += aux_label_pf_clas.size(2)
 
                     if aux_label_pf_regr is not None:
                         #print('aux_label_pf_regr', aux_label_pf_regr[:, :aux_output.size(1), :].size())
                         #print('aux_output_pf_regr', aux_output[:, :, index_i:index_f].size())
 
-                        index_f += aux_label_pf_regr.size(2)
                         _, aux_mask_pf, comb_loss, aux_loss, aux_correct_pf_regr, \
                             total_aux_correct_pf_regr,\
                             num_aux_examples_pf, _, _ = \
-                            _aux_halder(aux_output[:, :, index_i:index_f],
-                                        aux_label_pf_regr[:, :aux_output.size(1), :],
+                            _aux_halder(aux_output_regr,
+                                        aux_label_pf_regr[:, :aux_output_regr.size(1), :],
                                         aux_mask_pf, aux_loss_func_regr,
                                         num_aux_examples_pf,total_aux_correct_pf_regr,
                                         comb_loss, aux_loss, dev)
-                        index_i+=aux_label_pf_regr.size(2)
 
                     """if aux_label_pair_bin is not None:
                         #HERE flatten aux_output_pair
@@ -432,14 +427,14 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 label = label.to(dev)
 
                 #HERE
-                model_output_tot = model(*inputs)
+                model_output = model(*inputs)
 
-                if isinstance(model_output_tot, tuple):
-                    model_output = model_output_tot[0]
-                    aux_output = model_output_tot[1]
-                    aux_output_pair = model_output_tot[2]
+                if isinstance(model_output, tuple):
+                    aux_output_clas = model_output[1]
+                    aux_output_regr = model_output[2]
+                    aux_output_pair = model_output[3]
+                    model_output = model_output[0]
                     #print('\n\aux_output\n', aux_output, aux_output_pair)
-
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 loss = 0 if loss_func is None else loss_func(logits, label)
@@ -448,35 +443,29 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 aux_mask_pf = None
                 num_aux_examples_pf = 0
                 aux_correct_pf_clas = 0
-                index_i = 0
-                index_f = 0
                 aux_loss = 0
                 comb_loss=loss
 
                 if aux_label_pf_clas is not None:
-                    index_f += aux_label_pf_clas.size(2)
                     aux_label_pf_clas_mask, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_clas, \
                         total_aux_correct_pf_clas,\
                         num_aux_examples_pf, aux_label_counter, aux_scores = \
-                        _aux_halder(aux_output[:, :, index_i:index_f],
-                                    aux_label_pf_clas[:, :aux_output.size(1), :],
+                        _aux_halder(aux_output_clas,
+                                    aux_label_pf_clas[:, :aux_output_clas.size(1), :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
                                     comb_loss, aux_loss, dev, aux_label_counter, aux_scores)
-                    index_i += aux_label_pf_clas.size(2)
                     aux_labels['aux_label_pf_clas'].append(aux_label_pf_clas_mask.cpu().numpy())
 
                 if aux_label_pf_regr is not None:
-                    index_f += aux_label_pf_regr.size(2)
                     _, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, _ = \
-                        _aux_halder(aux_output[:, :, index_i:index_f],
-                                    aux_label_pf_regr[:, :aux_output.size(1), :],
+                        _aux_halder(aux_output_regr,
+                                    aux_label_pf_regr[:, :aux_output_regr.size(1), :],
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
                                     comb_loss, aux_loss, dev)
-                    index_i += aux_label_pf_regr.size(2)
 
 
                 aux_count_pf += num_aux_examples_pf

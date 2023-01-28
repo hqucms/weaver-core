@@ -9,7 +9,8 @@ def get_model(data_config, **kwargs):
         sv_features_dims=len(data_config.input_dicts['sv_features']),
         edge_input_dim=len(data_config.input_dicts['track_ef']),
         num_classes=len(data_config.label_value),
-        num_aux_classes=len(data_config.aux_label_value),
+        num_aux_classes_clas=len(data_config.aux_label_value_clas),
+        num_aux_classes_regr=len(data_config.aux_label_value_regr),
         num_aux_classes_pair=len(data_config.aux_label_value_pair),
         # network configurations
         node_dim=32,
