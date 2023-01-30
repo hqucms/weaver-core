@@ -124,7 +124,7 @@ def gather(x, k, idx, cpu_mode=False):
         fts = fts.permute(0, 3, 1, 2).contiguous()  # (batch_size, num_dims, num_points, k)
     return fts
 
-#TODO compute idx once and use gather for the various tensor
+#HERE! compute idx once and use gather for the various tensor
 def gather_edges(x, y=None, k=16):
     #print("x gather_edges\n", x.size() , "\n", x) # (bs, num_ef, num_pf, num_pf)
     num_dims = x.size(1)
@@ -545,7 +545,7 @@ class MultiScaleEdgeConv(nn.Module):
             fts_out_label_pair=self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
             #fts_out_label_pair = 0
         else :
-            fts_out_label_pair = 0
+            fts_out_label_pair = None
 
 
         if self.edge_se is not None:
@@ -617,11 +617,11 @@ class MultiScaleEdgeConv(nn.Module):
         if self.node_fc_clas is not None:
             fts_out_label_clas=self.node_fc_clas(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
         else :
-            fts_out_label_clas = 0
+            fts_out_label_clas = None
         if self.node_fc_regr is not None:
             fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
         else :
-            fts_out_label_regr = 0
+            fts_out_label_regr = None
 
         #fts_out_label_pair = torch.rand(fts_out_label_clas.size(0), 30,30, 2, device=fts_out_label_clas.device)
         #fts_out_label_pair = 0
@@ -639,9 +639,9 @@ class ParticleEdgeNeXt(nn.Module):
                  feature_input_dim=None,
                  edge_input_dim=0,
                  num_classes=None,
-                 num_aux_classes_clas=None,
-                 num_aux_classes_regr=None,
-                 num_aux_classes_pair=None,
+                 num_aux_classes_clas=0,
+                 num_aux_classes_regr=0,
+                 num_aux_classes_pair=0,
                  # network configurations
                  node_dim=32,
                  edge_dim=8,
@@ -978,12 +978,12 @@ class ParticleEdgeNeXt(nn.Module):
 
         #HERE! use idx and ef_mask_tensor to build sparse tensor
         #print('\n ef_mask_tensor', ef_mask_tensor.size(), ef_mask_tensor)
-        if not isinstance(features_label_pair, int):
+        if features_label_pair is not None:
             features_label_pair = build_sparse_aux(features_label_pair, idx, idx_tensor)
 
 
         #HERE
-        return output, features_label_clas, features_label_regr, features_label_pair
+        return (output, features_label_clas, features_label_regr, features_label_pair)
 
 
 class ParticleEdgeNeXtTagger(nn.Module):
@@ -993,9 +993,9 @@ class ParticleEdgeNeXtTagger(nn.Module):
                  sv_features_dims=None,
                  edge_input_dim=0,
                  num_classes=None,
-                 num_aux_classes_clas=None,
-                 num_aux_classes_regr=None,
-                 num_aux_classes_pair=None,
+                 num_aux_classes_clas=0,
+                 num_aux_classes_regr=0,
+                 num_aux_classes_pair=0,
                  # network configurations
                  node_dim=32,
                  edge_dim=8,
