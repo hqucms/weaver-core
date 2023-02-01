@@ -802,11 +802,16 @@ def _main(args):
                             for line in f:
                                 if 'validation metric' in line :
                                     best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
-                                    best_valid_loss=float(line.split('(in best epoch: ',1)[1].split(')')[0])
+                                    best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
+                                    best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
+                                if 'validation aux metric' in line :
+                                    best_valid_aux_metric=float(line.split('(in best epoch: ')[1].split(')')[0])
+                                    best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
+                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[3].split(')')[0])
 
                 if epoch <= args.load_epoch:
                     continue
-
+            print(best_valid_metric, best_valid_comb_loss, best_valid_loss, best_valid_aux_metric, best_valid_aux_dist, best_valid_aux_loss)
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
