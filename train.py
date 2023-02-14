@@ -583,7 +583,7 @@ def model_setup(args, data_config):
         loss_func = torch.nn.CrossEntropyLoss()
         aux_loss_func_clas = torch.nn.CrossEntropyLoss()
         aux_loss_func_regr = torch.nn.MSELoss()
-        aux_loss_func_bin = torch.nn.BCELoss()
+        aux_loss_func_bin = torch.nn.BCEWithLogitsLoss()
         _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` and `torch.nn.MSELoss()` by default.',
                         args.network_config)
     return model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin
@@ -778,7 +778,7 @@ def _main(args):
             from weaver.utils.lr_finder import LRFinder
             lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=train_input_names,
                                  label_names=train_label_names)
-            # HERE lr_finder is a complemetnary feature
+            # HERE lr_finder is a complementary feature
             # maybe put lr_finder where instead of labels put aux_labels and change loss function
             lr_finder.range_test(train_loader, start_lr=float(start_lr), end_lr=float(end_lr), num_iter=int(num_iter))
             lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
@@ -805,13 +805,14 @@ def _main(args):
                                     best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
                                     best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
                                 if 'validation aux metric' in line :
-                                    best_valid_aux_metric=float(line.split('(in best epoch: ')[1].split(')')[0])
+                                    best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
                                     best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
-                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[3].split(')')[0])
+                                    best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
+                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
 
                 if epoch <= args.load_epoch:
                     continue
-            print(best_valid_metric, best_valid_comb_loss, best_valid_loss, best_valid_aux_metric, best_valid_aux_dist, best_valid_aux_loss)
+            #print(best_valid_metric, best_valid_comb_loss, best_valid_loss, best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss)
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
@@ -835,7 +836,7 @@ def _main(args):
             #     save_checkpoint()
 
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric, valid_comb_loss, valid_loss,valid_aux_metric, valid_aux_dist, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+            valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf, valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr, aux_loss_func_bin=aux_loss_func_bin,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
@@ -845,8 +846,9 @@ def _main(args):
                 best_valid_metric = valid_metric
                 best_valid_comb_loss = valid_comb_loss
                 best_valid_loss = valid_loss
-                best_valid_aux_metric= valid_aux_metric
+                best_valid_aux_metric_pf= valid_aux_metric_pf
                 best_valid_aux_dist= valid_aux_dist
+                best_valid_aux_metric_pair= valid_aux_metric_pair
                 best_valid_aux_loss = valid_aux_loss
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
@@ -860,8 +862,8 @@ def _main(args):
 
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)  //  Current validation combined loss: %.5f (in best epoch: %.5f)  //  Current validation loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_metric, best_valid_metric, valid_comb_loss, best_valid_comb_loss, valid_loss, best_valid_loss), color='bold')
-            _logger.info('Epoch #%d: Current validation aux metric: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
-                         (epoch, valid_aux_metric, best_valid_aux_metric, valid_aux_dist, best_valid_aux_dist, valid_aux_loss, best_valid_aux_loss), color='bold')
+            _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux metric pair: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
+                         (epoch, valid_aux_metric_pf, best_valid_aux_metric_pf, valid_aux_dist, best_valid_aux_dist, valid_aux_metric_pair, best_valid_aux_metric_pair, valid_aux_loss, best_valid_aux_loss), color='bold')
 
 
             if epoch<start_epoch: start_epoch=epoch

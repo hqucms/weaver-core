@@ -244,9 +244,9 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
     return outputs, rel_coords, lvs_ngbs, null_edge_pos, idx_tensor
 
 def build_sparse_aux(x, idx, ef_idx):
-
     #dim in = batch_size, num_aux_label_pair, num_pf, k+k
     # dim out= batch_size, num_aux_label_pair, num_pf, num_pf
+
     batch_size, num_aux, num_pf, k = x.size()
     num_pairs= num_pf * k
     #print('x_aux:\n', x.size(), x)
@@ -282,10 +282,11 @@ def build_sparse_aux(x, idx, ef_idx):
     x_final=torch.sparse_coo_tensor(
         i, x.flatten(),
         size=(batch_size, num_aux, num_pf + 1, num_pf + 1),
-        device=x.device).to_dense()[:, :, :num_pf, :num_pf]
-    #print("\n x_final", x_final.size(), x_final)
+        device=x.device).to_dense()[:, :, :num_pf, :num_pf].permute(0,2,3,1)
+    # (batch_size, num_pf, num_pf, num_aux_pair_label)
+    #print("x_final\n", x_final.size(), x_final)
 
-    return
+    return x_final
 
 def build_sparse_tensor(ef, idx, seq_len):
     # inputs: ef (N, C, num_pairs), idx (N, 2, num_pairs)
@@ -298,15 +299,6 @@ def build_sparse_tensor(ef, idx, seq_len):
         idx[:, :1, :].expand_as(ef).flatten().unsqueeze(0),
         idx[:, 1:, :].expand_as(ef).flatten().unsqueeze(0),
     ), dim=0) #(4, num_pairs*batch_size*C)
-    first=torch.arange(0, batch_size, device=ef.device).repeat_interleave(num_fts * num_pairs).unsqueeze(0)
-    second=  torch.arange(0, num_fts, device=ef.device).repeat_interleave(num_pairs).repeat(batch_size).unsqueeze(0)
-    third=idx[:, :1, :].expand_as(ef).flatten().unsqueeze(0)
-    fourth=idx[:, 1:, :].expand_as(ef).flatten().unsqueeze(0)
-
-    '''print('first', first.size(), first)
-    #print('seconda', second.size(), second)
-    #print('thrid', third.size(), third)
-    #print('fourth', fourth.size(), fourth)'''
 
     #print('i', i.size(), i)
     return torch.sparse_coo_tensor(
@@ -504,7 +496,6 @@ class MultiScaleEdgeConv(nn.Module):
             nn.ReLU(),
             nn.Conv2d(num_aux_classes_pair, num_aux_classes_pair, kernel_size=1, bias=False),
         ) if num_aux_classes_pair != 0 else None
-        #self.pair_fc = None
 
 
     def forward(self, points, features, lorentz_vectors, num_pf, mask=None, ef_tensor=None,
@@ -542,10 +533,11 @@ class MultiScaleEdgeConv(nn.Module):
        #print('message1:\n', message.size())
 
         if self.pair_fc is not None:
-            fts_out_label_pair=self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
+            fts_out_label_pair = self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
             #fts_out_label_pair = 0
         else :
             fts_out_label_pair = None
+        #print('fts_out_label_pair:\n', fts_out_label_pair.size(), fts_out_label_pair)
 
 
         if self.edge_se is not None:
@@ -610,26 +602,25 @@ class MultiScaleEdgeConv(nn.Module):
         if self.node_se is not None:
             node_fts = self.node_se(node_fts, mask.unsqueeze(-1))
 
-        fts_out = self.shortcut(features) + self.gamma * node_fts
-        #print('fts_out:\n', fts_out.size()) # batch size, out_dim, num_pf, 1
+        fts_out = self.shortcut(features) + self.gamma * node_fts # batch size, out_dim, num_pf, 1
+        #print('fts_out:\n', fts_out.size())
 
         #HERE
         if self.node_fc_clas is not None:
-            fts_out_label_clas=self.node_fc_clas(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
+            fts_out_label_clas=self.node_fc_clas(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_pf, num_aux_label
         else :
             fts_out_label_clas = None
         if self.node_fc_regr is not None:
-            fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_aux_label, num_pf
+            fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_pf, num_aux_label
         else :
             fts_out_label_regr = None
 
-        #fts_out_label_pair = torch.rand(fts_out_label_clas.size(0), 30,30, 2, device=fts_out_label_clas.device)
-        #fts_out_label_pair = 0
-        #print('fts_out_label:\n', fts_out_label, fts_out_label.size())
+
+        #print('fts_out_label:\n', fts_out_label_clas, fts_out_label_clas.size())
         return pts_out, fts_out, fts_out_label_clas, fts_out_label_regr, fts_out_label_pair
 
 
-        # size(fts_out_label)=(batch_size, num_auxiliary_labels, num_nodes)
+        #size(fts_out_label)=(batch_size, num_nodes, num_auxiliary_labels)
 
 
 
@@ -976,10 +967,11 @@ class ParticleEdgeNeXt(nn.Module):
             output = torch.softmax(output, dim=1)
         #print('features_label:\n', features_label, features_label_pair)
 
-        #HERE! use idx and ef_mask_tensor to build sparse tensor
+        #HERE use idx and ef_mask_tensor to build sparse tensor
         #print('\n ef_mask_tensor', ef_mask_tensor.size(), ef_mask_tensor)
         if features_label_pair is not None:
             features_label_pair = build_sparse_aux(features_label_pair, idx, idx_tensor)
+            #HERE sigmoid?
 
 
         #HERE

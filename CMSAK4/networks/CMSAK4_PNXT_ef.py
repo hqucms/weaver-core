@@ -11,7 +11,7 @@ def get_model(data_config, **kwargs):
         num_classes=len(data_config.label_value),
         num_aux_classes_clas=len(data_config.aux_label_value_clas),
         num_aux_classes_regr=len(data_config.aux_label_value_regr),
-        num_aux_classes_pair=len(data_config.aux_label_value_pair),
+        num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'threshold' not in k]),
         # network configurations
         node_dim=32,
         edge_dim=24, #8
@@ -57,4 +57,4 @@ def get_aux_loss_regr(data_config, **kwargs):
     return torch.nn.MSELoss(reduction='none')
 
 def get_aux_loss_bin(data_config, **kwargs):
-    return torch.nn.BCELoss(reduction='none')
+    return torch.nn.BCEWithLogitsLoss(reduction='none')

@@ -58,14 +58,10 @@ new_variables:
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
    pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
 
-   #num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
-   #unflat_dist: ak.unflatten(pfcand_dist_vtx_12, np.repeat(num_pf, num_pf, axis=0), axis=1)
-   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 30, axis=2, clip=True), 30, axis=1, clip=True),-2, axis=2)
-
-   #pad_dist: ak.to_numpy(ak.fill_none(ak.pad_none(dist_vtx_12, 2500, axis=1, clip=True),-2))
-   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(np.reshape(ak.to_numpy(ak.fill_none(ak.pad_none(dist_vtx_12, n_pfcands[0]**2, axis=1, clip=True),-2)), (90,n_pfcands[0], n_pfcands[0])), 50, axis=1, clip=True), 50, axis=2, clip=True),-1)
-   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(ak.fromiter(dist_vtx_12).reshape(n_pfcands, n_pfcands), 50, axis=1, clip=True), 50, axis=2, clip=True),-1)
-   #pad_dist: ak.pad_none(ak.pad_none(unflat_dist, 50, axis=1, clip=True), 50, axis=2, clip=True)
+   num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
+   unflat_dist: ak.unflatten(pfcand_dist_vtx_12, np.repeat(num_pf, num_pf, axis=0), axis=1)
+   pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2)
+   pair_dist_threshold: ak.Array([0.02])
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
@@ -214,8 +210,8 @@ aux_labels:
       #aux_label_pf_regr_vtx_y: pf_vtx_y
       #aux_label_pf_regr_vtx_z: pf_vtx_z
    #value_pair:
-      #aux_label_pair_bin_dist_vtx: pair_dist_vtx
-      #aux_label_pair_bin_dist_vtx2: pair_dist_vtx
+   #   aux_label_pair_bin_dist_vtx: pair_dist_vtx
+   #   pair_threshold: pair_dist_threshold
 
 
 observers:
