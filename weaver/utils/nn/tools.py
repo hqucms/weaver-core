@@ -13,9 +13,9 @@ from ..logger import _logger
 
 from torch.profiler import profile, record_function, ProfilerActivity
 
-orig_stdout = sys.stdout
+'''orig_stdout = sys.stdout
 f = open('out_log2.txt', 'w')
-sys.stdout = f
+sys.stdout = f'''
 
 
 def _flatten_label(label, mask=None):
@@ -33,7 +33,7 @@ def _flatten_aux(aux_label, aux_output, dev, aux_mask=None):
         aux_label=(aux_label.max(2)[1]).flatten().masked_select(aux_mask).long()
         _, aux_preds = aux_logits.max(1)
         aux_correct = (aux_preds == aux_label).sum().item()
-        print('\n aux_label0\n', aux_label.size(), aux_label)
+        #print('\n aux_label0\n', aux_label.size(), aux_label)
 
     elif isinstance(aux_label,(torch.FloatTensor, torch.cuda.FloatTensor)):
         aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
@@ -44,7 +44,7 @@ def _flatten_aux(aux_label, aux_output, dev, aux_mask=None):
         aux_label=aux_label[aux_mask].float()
         aux_preds = (aux_logits > 0.5).int()
         aux_correct = (aux_preds == aux_label).sum().item()
-        print('\n aux_label1\n', aux_label.size(), aux_label)
+        #print('\n aux_label1\n', aux_label.size(), aux_label)
 
     else:
         raise ValueError
@@ -241,8 +241,8 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         aux_label_pair_bin = (aux_label_pair_bin < y['pair_threshold'][0]).int() #0.02
 
                     '''print('\n\ aux_label_pair_bin_cut2\n','\n', aux_label_pair_bin.size(), aux_label_pair_bin)
-                    print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
-                    print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)'''
+                    #print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
+                    #print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)'''
 
                     _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
@@ -421,7 +421,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 if len([k for k in data_config.aux_label_names if 'pair_bin' in k]) > 0:
                     aux_label_pair_bin= torch.stack([y[k].float() for k in data_config.aux_label_names if 'pair_bin' in k]).permute(1,2,3,0).to(dev).float()
-                    print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
+                    #print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
                 else:
                     aux_label_pair_bin= None
 
@@ -457,9 +457,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_output_regr = model_output[2]
                     aux_output_pair = model_output[3]
                     model_output = model_output[0]
-                    print('\n aux_output pair\n', aux_output_pair.size(), aux_output_pair)
-                    print('\n model_output\n', model_output.size(), model_output)
-                    print('\n aux_output_clas\n', aux_output_clas.size(), aux_output_clas)
+                    #print('\n aux_output pair\n', aux_output_pair.size(), aux_output_pair)
+                    #print('\n model_output\n', model_output.size(), model_output)
+                    #print('\n aux_output_clas\n', aux_output_clas.size(), aux_output_clas)
 
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
@@ -507,9 +507,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     if len([k for k in data_config.aux_label_names if 'pair_threshold' in k]) == 1:
                         aux_label_pair_bin = (aux_label_pair_bin < y['pair_threshold'][0]).int() #0.02
 
-                    print('\n\ aux_label_pair_bin_cut2\n','\n', aux_label_pair_bin.size(), aux_label_pair_bin)
-                    print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
-                    print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)
+                    #print('\n\ aux_label_pair_bin_cut2\n','\n', aux_label_pair_bin.size(), aux_label_pair_bin)
+                    #print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
+                    #print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)
 
                     _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
@@ -581,7 +581,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair
                     avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair
                 else:
-                    print('\n WARNING \n')
+                    #print('\n WARNING \n')
                     aux_acc_pair=0
                     avg_aux_acc_pair=0
 
