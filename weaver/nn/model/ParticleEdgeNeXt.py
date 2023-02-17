@@ -7,9 +7,9 @@ from functools import partial
 
 import sys
 
-orig_stdout = sys.stdout
+'''orig_stdout = sys.stdout
 f = open('out_log.txt', 'w')
-sys.stdout = f
+sys.stdout = f'''
 
 torch.set_printoptions(profile="full")
 
@@ -530,14 +530,14 @@ class MultiScaleEdgeConv(nn.Module):
 
 
         message = self.edge_mlp(ef_tensor)
-        print('message1:\n', message.size(), message)
+        #print('message1:\n', message.size(), message)
 
         if self.pair_fc is not None:
             fts_out_label_pair = self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
             #fts_out_label_pair = 0
         else :
             fts_out_label_pair = None
-        print('fts_out_label_pair:\n', fts_out_label_pair.size(), fts_out_label_pair)
+        #print('fts_out_label_pair:\n', fts_out_label_pair.size(), fts_out_label_pair)
 
         if self.edge_se is not None:
             message = self.edge_se(message, ~null_edge_pos)

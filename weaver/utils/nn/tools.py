@@ -43,7 +43,7 @@ def _flatten_aux(aux_label, aux_output, dev, aux_mask=None, aux_scores=None):
         aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
         aux_label=aux_label.flatten(end_dim=1)[aux_mask, :].float()
         aux_correct = (aux_logits - aux_label).square().sum().item()
-        print(aux_correct)
+        #print(aux_correct)
         if aux_scores is not None:
             aux_scores.append(aux_logits.detach().cpu().numpy())
 
@@ -101,7 +101,7 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
     #HERE? scores
     if aux_label_counter is not None:
         aux_label_counter.update(aux_label.cpu().numpy())
-    print('aux_logits\n', aux_logits.size(), aux_logits)
+    #print('aux_logits\n', aux_logits.size(), aux_logits)
 
     aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev).flatten()
     #print('\naux_loss\n', aux_loss)

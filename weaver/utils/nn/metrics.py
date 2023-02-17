@@ -47,8 +47,8 @@ def confusion_matrix(y_true, y_score):
         return None
     if y_score.ndim == 1:
         y_pred = y_score > 0.5
-        print('y_score', y_score )
-        print('y_pred', y_pred )
+        #print('y_score', y_score )
+        #print('y_pred', y_pred )
     else:
         y_pred = y_score.argmax(1)
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
