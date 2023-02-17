@@ -142,7 +142,8 @@ parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], defa
                     help='backend for distributed training')
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%k`')
-
+parser.add_argument('--val', action='store_true', default=False,
+                    help='Perform only validation on the model state given in `--model-prefix`')
 
 def to_filelist(args, mode='train'):
     if mode == 'train':
@@ -662,11 +663,11 @@ def save_parquet(args, output_path, scores, labels, observers):
     ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
-def copy_log(args, start_epoch, end_epoch):
+def copy_log(args, start_epoch, end_epoch, val=""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
     log_name=os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch}.log')
+        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch}{val}.log')
     shutil.copy2(args.log, log_name)
     try:
         os.remove(os.path.join(performance_dir,
@@ -701,7 +702,7 @@ def _main(args):
     from weaver.utils.nn.tools import save_labels_best_epoch
 
     # training/testing mode
-    training_mode = not args.predict
+    training_mode = not args.predict and not args.val
 
     # device
     if args.gpus:
@@ -835,10 +836,17 @@ def _main(args):
             # TODO: save checkpoint
             #     save_checkpoint()
 
+            if epoch<start_epoch: start_epoch=epoch
+            if epoch>end_epoch: end_epoch=epoch
+            copy_log(args, start_epoch, end_epoch)
+
             _logger.info('Epoch #%d validating' % epoch)
-            valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf, valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
-                                    aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr, aux_loss_func_bin=aux_loss_func_bin,
-                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+            valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+            valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                    evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                        aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                        aux_loss_func_bin=aux_loss_func_bin,
+                        steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)
@@ -865,10 +873,6 @@ def _main(args):
             _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux metric pair: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_aux_metric_pf, best_valid_aux_metric_pf, valid_aux_dist, best_valid_aux_dist, valid_aux_metric_pair, best_valid_aux_metric_pair, valid_aux_loss, best_valid_aux_loss), color='bold')
 
-
-            if epoch<start_epoch: start_epoch=epoch
-            if epoch>end_epoch: end_epoch=epoch
-
             copy_log(args, start_epoch, end_epoch)
 
     if args.data_test:
@@ -888,6 +892,10 @@ def _main(args):
             model = orig_model.to(dev)
             model_path = args.model_prefix if args.model_prefix.endswith(
                 '.pt') else args.model_prefix + '_best_epoch_state.pt'
+            if args.model_prefix.endswith('.pt'):
+                epoch = int(model_path.split('epoch-')[1].split('_')[-2])
+            else:
+                epoch = -1
             _logger.info('Loading model %s for eval' % model_path)
             model.load_state_dict(torch.load(model_path, map_location=dev))
             if gpus is not None and len(gpus) > 1:
@@ -910,9 +918,24 @@ def _main(args):
                 from weaver.utils.nn.tools import evaluate_onnx
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
             else:
-                test_metric, test_loss, scores, labels, observers = evaluate(
-                    model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
-            _logger.info('Test metric %.5f   //   Test loss %.5f' % (test_metric, test_loss), color='bold')
+                if args.val:
+                    valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                    valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                        evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
+                            aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                            aux_loss_func_bin=aux_loss_func_bin,
+                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+                    _logger.info('Epoch #%d: Current validation metric: %.5f (best: ???)  //  Current validation combined loss: %.5f (in best epoch: ???)  //  Current validation loss: %.5f (in best epoch: ???)' %
+                         (epoch, valid_metric, valid_comb_loss, valid_loss), color='bold')
+                    _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: ???)  //  Current validation aux distance: %.5f (in best epoch: ???)  //  Current validation aux metric pair: %.5f (in best epoch: ???)  //  Current validation aux loss: %.5f (in best epoch: ???)' %
+                         (epoch, valid_aux_metric_pf, valid_aux_dist, valid_aux_metric_pair, valid_aux_loss), color='bold')
+                    copy_log(args, epoch, epoch, "val")
+
+                else:
+                    test_metric, test_loss, scores, labels, observers = evaluate(
+                        model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
+            if not args.val:
+                _logger.info('Test metric %.5f   //   Test loss %.5f' % (test_metric, test_loss), color='bold')
             del test_loader
 
             if args.predict_output:
@@ -954,6 +977,8 @@ def main():
         args.steps_per_epoch_val = round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split)
     if args.steps_per_epoch_val is not None and args.steps_per_epoch_val < 0:
         args.steps_per_epoch_val = None
+
+
 
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib

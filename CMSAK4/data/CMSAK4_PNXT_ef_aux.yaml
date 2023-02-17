@@ -204,14 +204,15 @@ aux_labels:
       aux_label_pf_clas_c: pf_c
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
-   #value_regr:
-      #aux_labels_pf_regr_dist_pv: pf_dist_pv
-      #aux_label_pf_regr_vtx_x: pf_vtx_x
-      #aux_label_pf_regr_vtx_y: pf_vtx_y
-      #aux_label_pf_regr_vtx_z: pf_vtx_z
-   #value_pair:
-   #   aux_label_pair_bin_dist_vtx: pair_dist_vtx
-   #   pair_threshold: pair_dist_threshold
+   value_regr:
+      aux_labels_pf_regr_dist_pv: pf_dist_pv
+      aux_label_pf_regr_vtx_x: pf_vtx_x
+      aux_label_pf_regr_vtx_y: pf_vtx_y
+      aux_label_pf_regr_vtx_z: pf_vtx_z
+   value_pair:
+      aux_label_pair_bin_dist_vtx: pair_dist_vtx
+      #aux_label_pair_bin_dist_vtx2: pair_dist_vtx
+      pair_threshold: pair_dist_threshold
 
 
 observers:

@@ -27,28 +27,40 @@ def _flatten_label(label, mask=None):
     #print('label', label.shape, label)
     return label
 
-def _flatten_aux(aux_label, aux_output, dev, aux_mask=None):
+def _flatten_aux(aux_label, aux_output, dev, aux_mask=None, aux_scores=None):
+    #PF classification
     if isinstance(aux_label,(torch.LongTensor, torch.cuda.LongTensor)):
         aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
         aux_label=(aux_label.max(2)[1]).flatten().masked_select(aux_mask).long()
         _, aux_preds = aux_logits.max(1)
         aux_correct = (aux_preds == aux_label).sum().item()
+        if aux_scores is not None:
+            aux_scores.append(torch.softmax(aux_logits, dim=1).detach().cpu().numpy())
         #print('\n aux_label0\n', aux_label.size(), aux_label)
 
+    #PF regression
     elif isinstance(aux_label,(torch.FloatTensor, torch.cuda.FloatTensor)):
         aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
         aux_label=aux_label.flatten(end_dim=1)[aux_mask, :].float()
         aux_correct = (aux_logits - aux_label).square().sum().item()
+        print(aux_correct)
+        if aux_scores is not None:
+            aux_scores.append(aux_logits.detach().cpu().numpy())
+
+    #Pair binary classification
     elif isinstance(aux_label,(torch.IntTensor, torch.cuda.IntTensor)):
         aux_logits=aux_output[aux_mask]
         aux_label=aux_label[aux_mask].float()
         aux_preds = (aux_logits > 0.5).int()
         aux_correct = (aux_preds == aux_label).sum().item()
-        #print('\n aux_label1\n', aux_label.size(), aux_label)
+        if aux_scores is not None:
+            aux_scores.append(torch.sigmoid(aux_logits).detach().cpu().numpy())
 
+        #print('\n aux_label1\n', aux_label.size(), aux_label)
     else:
         raise ValueError
-    return aux_label, aux_logits, aux_correct
+
+    return aux_label, aux_logits, aux_correct, aux_scores
 
 def _flatten_preds(preds, mask=None, label_axis=1):
     if preds.ndim > 2:
@@ -68,15 +80,16 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
                 num_aux_examples,total_aux_correct, loss, aux_loss_tot, dev,
                 aux_label_counter=None, aux_scores=None):
 
-    #WARNING the mask is not valid if the tensor in question is the pf_vtx beacuse
+    #WARNING the mask is not valid if the tensor in question is the pf_vtx because
     # in that case the invalid value is 0 and not -1
     if aux_mask is None:
         aux_mask = (aux_label[:, :, 0] != -1).flatten()
     #print('\n aux_label1\n', aux_label.size(), aux_label)
 
     #aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
-    aux_label, aux_logits, aux_correct = _flatten_aux(aux_label, aux_output, dev, aux_mask)
+    aux_label, aux_logits, aux_correct, aux_scores = _flatten_aux(aux_label, aux_output, dev, aux_mask, aux_scores)
     total_aux_correct += aux_correct
+
 
     if num_aux_examples == 0:
         num_aux_examples = aux_label.size(0)
@@ -88,8 +101,7 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
     #HERE? scores
     if aux_label_counter is not None:
         aux_label_counter.update(aux_label.cpu().numpy())
-    if aux_scores is not None:
-        aux_scores.append(torch.softmax(aux_logits, dim=1).detach().cpu().numpy())
+    print('aux_logits\n', aux_logits.size(), aux_logits)
 
     aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev).flatten()
     #print('\naux_loss\n', aux_loss)
@@ -103,17 +115,6 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
         except TypeError:
             aux_loss_tot = aux_loss
     #print('\nloss_sum\n', loss)
-
-    '''if isinstance(aux_label,(torch.LongTensor, torch.cuda.LongTensor)):
-        _, aux_preds = aux_logits.max(1)
-        aux_correct = (aux_preds == aux_label).sum().item()
-    elif isinstance(aux_label,(torch.FloatTensor, torch.cuda.FloatTensor)):
-        #HERE sqrt? avg?
-        aux_correct = (aux_logits - aux_label).square().sum().item()
-    elif isinstance(aux_label,(torch.IntTensor, torch.cuda.IntTensor)):
-        aux_preds = aux_logits > 0.5
-        aux_correct = (aux_preds == aux_label).sum().item()'''
-
 
     return aux_label, aux_mask, loss, aux_loss, aux_correct, total_aux_correct, num_aux_examples, aux_label_counter, aux_scores
 
@@ -395,7 +396,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     aux_count_pf = 0
     aux_count_pair = 0
     scores = []
-    aux_scores = []
+    aux_scores_pf_clas = []
+    aux_scores_pf_regr = []
+    aux_scores_pair_bin = []
     #HERE aux_labels to pass to metrics
     labels = defaultdict(list)
     aux_labels = defaultdict(list)
@@ -475,25 +478,26 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 comb_loss = loss
 
                 if aux_label_pf_clas is not None:
-                    aux_label_pf_clas_mask, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_clas, \
+                    aux_label_pf_clas_masked, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_clas, \
                         total_aux_correct_pf_clas,\
-                        num_aux_examples_pf, aux_label_counter_pf, aux_scores = \
+                        num_aux_examples_pf, aux_label_counter_pf, aux_scores_pf_clas = \
                         _aux_halder(aux_output_clas,
                                     aux_label_pf_clas[:, :aux_output_clas.size(1), :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pf, aux_scores)
-                    aux_labels['aux_label_pf_clas'].append(aux_label_pf_clas_mask.cpu().numpy())
+                                    comb_loss, aux_loss, dev, aux_label_counter_pf, aux_scores_pf_clas)
+                    aux_labels['pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
 
                 if aux_label_pf_regr is not None:
-                    _, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_regr, \
+                    aux_label_pf_regr_masked, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
-                        num_aux_examples_pf, _, _ = \
+                        num_aux_examples_pf, _, aux_scores_pf_regr = \
                         _aux_halder(aux_output_regr,
                                     aux_label_pf_regr[:, :aux_output_regr.size(1), :],
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
-                                    comb_loss, aux_loss, dev)
+                                    comb_loss, aux_loss, dev, aux_scores=aux_scores_pf_regr)
+                    aux_labels['pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
 
                 if aux_label_pair_bin is not None:
                     aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
@@ -511,15 +515,16 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     #print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
                     #print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)
 
-                    _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
+                    aux_label_pair_bin_masked, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
                         num_aux_examples_pair, \
-                        aux_label_counter_pair, _ = \
+                        aux_label_counter_pair, aux_scores_pair_bin = \
                         _aux_halder(aux_output_pair,
                                     aux_label_pair_bin,
                                     aux_mask_pair_or, aux_loss_func_bin,
                                     num_aux_examples_pair,total_aux_correct_pair_bin,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pair)
+                                    comb_loss, aux_loss, dev, aux_label_counter_pair, aux_scores_pair_bin)
+                    aux_labels['pair_bin'].append(aux_label_pair_bin_masked.cpu().numpy())
 
 
                 aux_count_pf += num_aux_examples_pf
@@ -637,19 +642,31 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     labels = {k: _concat(v) for k, v in labels.items()}
     #print('labels2', labels)
     #print('aux_labels', aux_labels)
-    #print('aux_scores\n', aux_scores)
+    #print('aux_scores_pf_clas\n', aux_scores_pf_clas)
+
+    aux_labels = {k: _concat(v) for k, v in aux_labels.items()}
 
     try:
-        aux_scores = np.concatenate(aux_scores)
-        aux_labels = {k: _concat(v) for k, v in aux_labels.items()}
+        aux_scores_pf_clas = np.concatenate(aux_scores_pf_clas)
     except ValueError:
-        aux_scores = None
-        aux_labels = None
+        aux_scores_pf_clas = None
+
+    try:
+        aux_scores_pf_regr = np.concatenate(aux_scores_pf_regr)
+    except ValueError:
+        aux_scores_pf_regr = None
+
+    try:
+        aux_scores_pair_bin = np.concatenate(aux_scores_pair_bin)
+    except ValueError:
+        aux_scores_pair_bin = None
+
     #print('aux_labels2', aux_labels)
-    #print('aux_scores\n', aux_scores)
+    #print('aux_scores_pf_clas\n', aux_scores_pf_clas)
 
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores,
-                        aux_labels, aux_scores, eval_metrics, epoch, roc_prefix)
+                        aux_labels, aux_scores_pf_clas, aux_scores_pf_regr,
+                        aux_scores_pair_bin, eval_metrics, epoch, roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 

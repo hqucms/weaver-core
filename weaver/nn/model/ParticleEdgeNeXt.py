@@ -7,9 +7,9 @@ from functools import partial
 
 import sys
 
-'''orig_stdout = sys.stdout
+orig_stdout = sys.stdout
 f = open('out_log.txt', 'w')
-sys.stdout = f'''
+sys.stdout = f
 
 torch.set_printoptions(profile="full")
 
@@ -492,11 +492,10 @@ class MultiScaleEdgeConv(nn.Module):
             nn.BatchNorm2d(message_dim),
             nn.ReLU(),
             nn.Conv2d(message_dim, num_aux_classes_pair, kernel_size=1, bias=False),
-            nn.BatchNorm2d(num_aux_classes_pair),
-            nn.ReLU(),
-            nn.Conv2d(num_aux_classes_pair, num_aux_classes_pair, kernel_size=1, bias=False),
+            #nn.BatchNorm2d(num_aux_classes_pair),
+            #nn.ReLU(),
+            #nn.Conv2d(num_aux_classes_pair, num_aux_classes_pair, kernel_size=1, bias=False),
         ) if num_aux_classes_pair != 0 else None
-
 
     def forward(self, points, features, lorentz_vectors, num_pf, mask=None, ef_tensor=None,
                 idx=None, null_edge_pos=None, edge_inputs=None, lvs_ngbs=None):
@@ -529,16 +528,16 @@ class MultiScaleEdgeConv(nn.Module):
 
         #print('ef_tensor:\n', ef_tensor.size())
 
+
         message = self.edge_mlp(ef_tensor)
-       #print('message1:\n', message.size())
+        print('message1:\n', message.size(), message)
 
         if self.pair_fc is not None:
             fts_out_label_pair = self.pair_fc(message)[:, :, :num_pf, :]#.permute(0,2,3,1)
             #fts_out_label_pair = 0
         else :
             fts_out_label_pair = None
-        #print('fts_out_label_pair:\n', fts_out_label_pair.size(), fts_out_label_pair)
-
+        print('fts_out_label_pair:\n', fts_out_label_pair.size(), fts_out_label_pair)
 
         if self.edge_se is not None:
             message = self.edge_se(message, ~null_edge_pos)
@@ -616,7 +615,8 @@ class MultiScaleEdgeConv(nn.Module):
             fts_out_label_regr = None
 
 
-        #print('fts_out_label:\n', fts_out_label_clas, fts_out_label_clas.size())
+        #print('fts_out_label_clas:\n', fts_out_label_clas, fts_out_label_clas.size())
+        #print('fts_out_label_regr:\n', fts_out_label_regr, fts_out_label_regr.size())
         return pts_out, fts_out, fts_out_label_clas, fts_out_label_regr, fts_out_label_pair
 
 

@@ -63,25 +63,12 @@ suffix_specs=$2
 
 $CMD \
     --data-train \
-    "BulkGravitonToHHTo4Q_part1:${DATADIR}/BulkGravitonToHHTo4Q_MX-600to6000_MH-15to250_part1_TuneCP5_13TeV-madgraph_pythia8/*/*/*/output_*.root" \
-    "BulkGravitonToHHTo4Q_part2:${DATADIR}/BulkGravitonToHHTo4Q_MX-600to6000_MH-15to250_part2_TuneCP5_13TeV-madgraph_pythia8/*/*/*/output_*.root" \
-    "BulkGravitonToHHTo4Q_part3:${DATADIR}/BulkGravitonToHHTo4Q_MX-600to6000_MH-15to250_part3_TuneCP5_13TeV-madgraph_pythia8/*/*/*/output_*.root" \
-    "TTToSemiLeptonic_mtop171p5:${DATADIR}/TTToSemiLeptonic_mtop171p5_TuneCP5_13TeV-powheg-pythia8/*/*/*/output_*.root" \
-    "TTToSemiLeptonic_mtop173p5:${DATADIR}/TTToSemiLeptonic_mtop173p5_TuneCP5_13TeV-powheg-pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_30to50_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_30to50_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_50to80_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_50to80_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_80to120_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_80to120_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_120to170_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_120to170_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_170to300_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_170to300_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_300to470_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_300to470_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_470to600_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_470to600_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_600to800_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_600to800_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_800to1000_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_800to1000_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
-    "QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8:${DATADIR}/QCD_Pt_1000to1400_TuneCP5_13TeV_pythia8/*/*/*/output_*.root" \
+    "ttjets:${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
+    "qcd:${CINECA_SCRATCH}/output_big/QCD_Pt-15to7000_TuneCP5_Flat2018_13TeV_pythia8/output_10Mevents_*.root" \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
     --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0,1,2,3 \
-    --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log --predict-output pred.root \
+    --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix} \
     "${@:3}"

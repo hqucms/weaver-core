@@ -7,6 +7,8 @@ import sklearn.metrics as _m
 
 from ..logger import _logger
 
+np.set_printoptions(threshold=np.inf)
+
 # def _bkg_rejection(y_true, y_score, sig_eff):
 #     fpr, tpr, _ = _m.roc_curve(y_true, y_score)
 #     idx = next(idx for idx, v in enumerate(tpr) if v > sig_eff)
@@ -43,10 +45,10 @@ def roc_auc_score_ovo(y_true, y_score):
 def confusion_matrix(y_true, y_score):
     if y_true is None or y_score is None:
         return None
-    if isinstance(y_true, dict):
-        y_true = y_true['aux_label_pf_clas']
     if y_score.ndim == 1:
         y_pred = y_score > 0.5
+        print('y_score', y_score )
+        print('y_pred', y_pred )
     else:
         y_pred = y_score.argmax(1)
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
@@ -75,7 +77,7 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score, eval_metrics=[], epoch=-1, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_score_pf_regr, aux_y_score_pair_bin,  eval_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
@@ -86,5 +88,9 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score, eval_metrics=[], 
             _logger.error(str(e))
             _logger.debug(traceback.format_exc())
 
-    results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true, aux_y_score)
+    results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true['pf_clas'], aux_y_score_pf_clas)
+    results['aux_confusion_matrix_pair_bin'] = confusion_matrix(aux_y_true['pair_bin'], aux_y_score_pair_bin)
+    results['aux_save_labels_pf_clas'] = save_labels(aux_y_true['pf_clas'], aux_y_score_pf_clas, epoch, f'{roc_prefix}_pf_clas')
+    results['aux_save_labels_pf_regr'] = save_labels(aux_y_true['pf_regr'], aux_y_score_pf_regr, epoch, f'{roc_prefix}_pf_regr')
+    results['aux_save_labels_pair_bin'] = save_labels(aux_y_true['pair_bin'], (aux_y_score_pair_bin>0.5).astype(int), epoch, f'{roc_prefix}_pair_bin')
     return results
