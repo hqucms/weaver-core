@@ -290,28 +290,26 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
             total_comb_loss += comb_loss
             total_correct += correct
 
-
             if aux_label_pf_clas is not None:
-                aux_acc_pf=aux_correct_pf_clas / num_aux_examples_pf
-                avg_aux_acc_pf=total_aux_correct_pf_clas / aux_count_pf
+                    aux_acc_pf=aux_correct_pf_clas / num_aux_examples_pf if num_aux_examples_pf != 0 else 0
+                    avg_aux_acc_pf=total_aux_correct_pf_clas / aux_count_pf if aux_count_pf != 0 else 0
             else:
                 aux_acc_pf=0
                 avg_aux_acc_pf=0
 
             if aux_label_pf_regr is not None:
-                aux_dist=aux_correct_pf_regr / num_aux_examples_pf
-                avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf
+                aux_dist=aux_correct_pf_regr / num_aux_examples_pf if num_aux_examples_pf != 0 else 0
+                avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf if aux_count_pf != 0 else 0
             else:
                 aux_dist=0
                 avg_aux_dist=0
 
             if aux_label_pair_bin is not None:
-                aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair
-                avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair
+                aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair if num_aux_examples_pair != 0 else 0
+                avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair if aux_count_pair != 0 else 0
             else:
                 aux_acc_pair=0
                 avg_aux_acc_pair=0
-                #print('\n WARNING \n')
 
 
             tq.set_postfix({
@@ -573,24 +571,23 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     avg_aux_loss=0
 
                 if aux_label_pf_clas is not None:
-                        aux_acc_pf=aux_correct_pf_clas / num_aux_examples_pf
-                        avg_aux_acc_pf=total_aux_correct_pf_clas / aux_count_pf
+                    aux_acc_pf=aux_correct_pf_clas / num_aux_examples_pf if num_aux_examples_pf != 0 else 0
+                    avg_aux_acc_pf=total_aux_correct_pf_clas / aux_count_pf if aux_count_pf != 0 else 0
                 else:
                     aux_acc_pf=0
                     avg_aux_acc_pf=0
 
                 if aux_label_pf_regr is not None:
-                    aux_dist=aux_correct_pf_regr / num_aux_examples_pf
-                    avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf
+                    aux_dist=aux_correct_pf_regr / num_aux_examples_pf if num_aux_examples_pf != 0 else 0
+                    avg_aux_dist=total_aux_correct_pf_regr / aux_count_pf if aux_count_pf != 0 else 0
                 else:
                     aux_dist=0
                     avg_aux_dist=0
 
                 if aux_label_pair_bin is not None:
-                    aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair
-                    avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair
+                    aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair if num_aux_examples_pair != 0 else 0
+                    avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair if aux_count_pair != 0 else 0
                 else:
-                    #print('\n WARNING \n')
                     aux_acc_pair=0
                     avg_aux_acc_pair=0
 

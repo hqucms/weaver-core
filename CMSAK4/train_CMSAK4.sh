@@ -74,8 +74,6 @@ $CMD \
     --data-train \
     "ttjets:${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
     "qcd:${CINECA_SCRATCH}/output_big/QCD_Pt-15to7000_TuneCP5_Flat2018_13TeV_pythia8/output_10Mevents_*.root" \
-    --data-val \
-    "all:${CINECA_SCRATCH}/output_big/*/output_10Mevents_*.root" \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
     --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
