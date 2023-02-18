@@ -51,6 +51,15 @@ elif [[ "$model" == "PNXT" ]]; then
 elif [[ "$model" == "PNXT_ef" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
+elif [[ "$model" == "PNXT_ef_aux_clas" ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef.py"
+    batchopts="--batch-size 512 --start-lr 1e-2"
+elif [[ "$model" == "PNXT_ef_aux_regr" ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef.py"
+    batchopts="--batch-size 512 --start-lr 1e-2"
+elif [[ "$model" == "PNXT_ef_aux_bin" ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef.py"
+    batchopts="--batch-size 512 --start-lr 1e-2"
 elif [[ "$model" == "PNXT_ef_aux" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
@@ -65,10 +74,13 @@ $CMD \
     --data-train \
     "ttjets:${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
     "qcd:${CINECA_SCRATCH}/output_big/QCD_Pt-15to7000_TuneCP5_Flat2018_13TeV_pythia8/output_10Mevents_*.root" \
+    --data-val \
+    "all:${CINECA_SCRATCH}/output_big/*/output_10Mevents_*.root" \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
     --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
-    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} --num-epochs $epochs --gpus 0,1,2,3 \
+    --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
+    --num-epochs $epochs --gpus 0,1,2,3 \
     --optimizer ranger --log logs/CMSAK4_${model}_{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix} \
     "${@:3}"

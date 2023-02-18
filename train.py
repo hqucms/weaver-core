@@ -667,11 +667,11 @@ def copy_log(args, start_epoch, end_epoch, val=""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
     log_name=os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch}{val}.log')
+        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}{val}.log')
     shutil.copy2(args.log, log_name)
     try:
         os.remove(os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}_{start_epoch}-{end_epoch-1}.log'))
+        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{val}.log'))
     except FileNotFoundError:
         pass
     _logger.info('log file copied to: \n%s' % log_name)
@@ -864,9 +864,10 @@ def _main(args):
                     # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
 
                 #save labels for roc curve of best epoch
-                save_labels_best_epoch(f'{roc_prefix}_labels_epoch{epoch}.npz')
+                for label_type in ["", "pf_clas_", "pf_regr_", "pair_bin_"]:
+                    save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch}.npz')
 
-            _logger.info('Epoch #%d: info saved in log file:\n%s' % (epoch, args.log))
+            _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
 
             _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)  //  Current validation combined loss: %.5f (in best epoch: %.5f)  //  Current validation loss: %.5f (in best epoch: %.5f)' %
                          (epoch, valid_metric, best_valid_metric, valid_comb_loss, best_valid_comb_loss, valid_loss, best_valid_loss), color='bold')
@@ -919,6 +920,7 @@ def _main(args):
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
             else:
                 if args.val:
+                    _logger.info('Epoch #%d validating only' % epoch)
                     valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
                     valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
                         evaluate(model, test_loader, dev, epoch, loss_func=loss_func,

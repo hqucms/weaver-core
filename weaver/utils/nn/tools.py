@@ -5,6 +5,7 @@ import time
 import torch
 import os
 import sys
+import shutil
 
 from collections import defaultdict, Counter
 from .metrics import evaluate_metrics
@@ -118,6 +119,12 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
 
     return aux_label, aux_mask, loss, aux_loss, aux_correct, total_aux_correct, num_aux_examples, aux_label_counter, aux_scores
 
+
+def save_labels_best_epoch(infile):
+    try:
+        shutil.copy2(infile,f'{infile.split("epoch")[0]}best_epoch{os.path.splitext(infile)[1]}')
+    except FileNotFoundError:
+        _logger.info('File %s not found! Moving on to the next one.', infile)
 
 
 def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None, tb_helper=None):
@@ -236,14 +243,8 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     aux_output_pair = (aux_output_pair[aux_mask_pair])
                     aux_mask_pair_or = (aux_label_pair_bin != -1) & (aux_label_pair_bin != -2) & (aux_output_pair != 0)
 
-                    #print('\n\ aux_label_pair_bin_cut1\n','\n', aux_label_pair_bin.size(), aux_label_pair_bin)
-
                     if len([k for k in data_config.aux_label_names if 'pair_threshold' in k]) == 1:
                         aux_label_pair_bin = (aux_label_pair_bin < y['pair_threshold'][0]).int() #0.02
-
-                    '''print('\n\ aux_label_pair_bin_cut2\n','\n', aux_label_pair_bin.size(), aux_label_pair_bin)
-                    #print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
-                    #print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)'''
 
                     _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
@@ -304,7 +305,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_dist=0
                 avg_aux_dist=0
 
-            if aux_label_pair_bin is not None and num_aux_examples_pair != 0:
+            if aux_label_pair_bin is not None:
                 aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair
                 avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair
             else:
@@ -393,6 +394,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     total_aux_correct_pair_bin = 0
     entry_count = 0
     count = 0
+    count_comb = 0
     aux_count_pf = 0
     aux_count_pair = 0
     scores = []
@@ -543,6 +545,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 num_batches += 1
                 count += num_examples
+                num_examples_comb = num_examples + num_aux_examples_pf + num_aux_examples_pair
+                count_comb += num_examples_comb
                 correct = (preds == label).sum().item()
 
                 if not isinstance(loss, int):
@@ -557,14 +561,14 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_loss = aux_loss.mean()
                     aux_loss = aux_loss.item()
 
-                total_aux_loss += aux_loss * num_aux_examples_pf
+                total_aux_loss += aux_loss * (num_aux_examples_pf+num_aux_examples_pair)
 
                 total_loss += loss * num_examples
-                total_comb_loss += comb_loss * num_examples
+                total_comb_loss += comb_loss * num_examples_comb
                 total_correct += correct
 
                 try:
-                    avg_aux_loss = total_aux_loss / aux_count_pf
+                    avg_aux_loss = total_aux_loss / (aux_count_pf+aux_count_pair)
                 except ZeroDivisionError:
                     avg_aux_loss=0
 
@@ -582,7 +586,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_dist=0
                     avg_aux_dist=0
 
-                if aux_label_pair_bin is not None and num_aux_examples_pair != 0:
+                if aux_label_pair_bin is not None:
                     aux_acc_pair=aux_correct_pair_bin / num_aux_examples_pair
                     avg_aux_acc_pair=total_aux_correct_pair_bin / aux_count_pair
                 else:
@@ -594,7 +598,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     'Val epoch':epoch,
                     'Steps':steps_per_epoch,
                     'CombLoss': '%.5f' % comb_loss,
-                    'AvgCombLoss': '%.5f' % (total_comb_loss / count),
+                    'AvgCombLoss': '%.5f' % (total_comb_loss / count_comb),
                     'Loss': '%.5f' % loss,
                     'AvgLoss': '%.5f' % (total_loss / count),
                     'Acc': '%.5f' % (correct / num_examples),
@@ -671,7 +675,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 
     if for_training:
-        return total_correct / count, total_comb_loss / count, total_loss / count, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair, avg_aux_loss
+        return total_correct / count, total_comb_loss / count_comb, total_loss / count, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair, avg_aux_loss
     else:
         # convert 2D labels/scores
         if len(scores) != entry_count:
@@ -686,17 +690,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 for k, v in labels.items():
                     labels[k] = v.reshape((entry_count, -1))
         observers = {k: _concat(v) for k, v in observers.items()}
-        return total_correct / count, total_comb_loss / count, scores, labels, observers
-
-
-def save_labels_best_epoch(infile):
-    with open(infile, 'rb') as in_f:
-        label_file=np.load(in_f)
-        y_true=label_file['y_true']
-        y_score=label_file['y_score']
-
-    with open(f'{infile.split("epoch")[0]}best_epoch{os.path.splitext(infile)[1]}', 'wb') as out_f:
-        np.savez(out_f, y_true=y_true, y_score=y_score)
+        return total_correct / count, total_comb_loss / count_comb, scores, labels, observers
 
 
 def evaluate_onnx(model_path, test_loader,
