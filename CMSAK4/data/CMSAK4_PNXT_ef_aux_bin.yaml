@@ -43,10 +43,6 @@ new_variables:
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
 
-   aux_label_mask: (pfcand_from_b != -1) -1
-   from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
-   from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
-
    ## auxiliary labels
    num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
    unflat_dist: ak.unflatten(pfcand_dist_vtx_12, np.repeat(num_pf, num_pf, axis=0), axis=1)

@@ -43,10 +43,6 @@ new_variables:
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
 
-   aux_label_mask: (pfcand_from_b != -1) -1
-   from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
-   from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
-
    ## auxiliary labels
    pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
    pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)

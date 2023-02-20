@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
+from weaver.utils.nn.tools import save_labels_best_epoch
 
 
 '''orig_stdout = sys.stdout
@@ -143,6 +144,8 @@ parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], defa
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%k`')
 parser.add_argument('--val', action='store_true', default=False,
+                    help='Perform only validation on the model state given in `--model-prefix`')
+parser.add_argument('--train', action='store_true', default=False,
                     help='Perform only validation on the model state given in `--model-prefix`')
 
 def to_filelist(args, mode='train'):
@@ -663,19 +666,62 @@ def save_parquet(args, output_path, scores, labels, observers):
     ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
-def copy_log(args, start_epoch, end_epoch, val=""):
+def copy_log(args, start_epoch, end_epoch, type_log = ""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
+    try:
+        os.remove(os.path.join(performance_dir,
+        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
+    except FileNotFoundError:
+        pass
     log_name=os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}{val}.log')
+        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}{type_log}.log')
     shutil.copy2(args.log, log_name)
     try:
         os.remove(os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{val}.log'))
+        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{type_log}.log'))
     except FileNotFoundError:
         pass
     _logger.info('log file copied to: \n%s' % log_name)
     _logger.info('Performance data are stored in directoy: \n%s/' % performance_dir)
+
+def best_epoch_handler(args, best_valid_metric, valid_metric,
+                       best_valid_comb_loss, valid_comb_loss,
+                       best_valid_loss, valid_loss,
+                       best_valid_aux_metric_pf, valid_aux_metric_pf,
+                       best_valid_aux_dist, valid_aux_dist,
+                       best_valid_aux_metric_pair, valid_aux_metric_pair,
+                       best_valid_aux_loss, valid_aux_loss,
+                       local_rank, epoch, roc_prefix):
+    is_best_epoch = (
+        valid_metric < best_valid_metric) if args.regression_mode else(
+        valid_metric > best_valid_metric)
+    if is_best_epoch:
+        best_valid_metric = valid_metric
+        best_valid_comb_loss = valid_comb_loss
+        best_valid_loss = valid_loss
+        best_valid_aux_metric_pf= valid_aux_metric_pf
+        best_valid_aux_dist= valid_aux_dist
+        best_valid_aux_metric_pair= valid_aux_metric_pair
+        best_valid_aux_loss = valid_aux_loss
+        if args.model_prefix and (args.backend is None or local_rank == 0):
+            shutil.copy2((args.model_prefix).split('_epoch')[0] + '_epoch-%d_state.pt' %
+                            epoch, args.model_prefix + '_best_epoch_state.pt')
+            # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
+
+        #save labels for roc curve of best epoch
+        for label_type in ["", "pf_clas_", "pf_regr_", "pair_bin_"]:
+            save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch}.npz')
+
+    _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
+
+    _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)  //  Current validation combined loss: %.5f (in best epoch: %.5f)  //  Current validation loss: %.5f (in best epoch: %.5f)' %
+                    (epoch, valid_metric, best_valid_metric, valid_comb_loss,
+                    best_valid_comb_loss, valid_loss, best_valid_loss), color='bold')
+    _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux metric pair: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
+                    (epoch, valid_aux_metric_pf, best_valid_aux_metric_pf,
+                    valid_aux_dist, best_valid_aux_dist, valid_aux_metric_pair,
+                    best_valid_aux_metric_pair, valid_aux_loss, best_valid_aux_loss), color='bold')
 
 
 def _main(args):
@@ -699,11 +745,11 @@ def _main(args):
         from weaver.utils.nn.tools import train_classification as train
         from weaver.utils.nn.tools import evaluate_classification as evaluate
 
-    from weaver.utils.nn.tools import save_labels_best_epoch
-
     # training/testing mode
     training_mode = not args.predict and not args.val
-
+    if args.val:
+        args.data_test = args.data_val
+    local_rank = None
     # device
     if args.gpus:
         # distributed training
@@ -755,6 +801,33 @@ def _main(args):
     # so we do not convert it to nn.DataParallel now
     orig_model = model
 
+    best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+    best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+    best_valid_aux_metric_pair = np.inf if args.regression_mode else -1, 0,0,0,0,0,0
+
+    for epoch in range(args.num_epochs):
+        if args.load_epoch is not None:
+            if epoch==0:
+                dirname = os.path.dirname(args.model_prefix)
+                suffix=dirname.split('/')[-1].strip()
+                performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
+                for file in os.listdir(performance_dir):
+                    for log_name in [f'{args.load_epoch}val.log', f'{args.load_epoch}.log']:
+                        if log_name in file:
+                            with open(os.path.join(performance_dir,file)) as f:
+                                f = f.readlines()
+                            for line in f:
+                                if 'validation metric' in line :
+                                    best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
+                                    best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
+                                    best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
+                                if 'validation aux metric' in line :
+                                    best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
+                                    best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
+                                    best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
+                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
+
+
     if training_mode:
         model = orig_model.to(dev)
 
@@ -786,34 +859,13 @@ def _main(args):
             return
 
         # training loop
-        best_valid_metric = np.inf if args.regression_mode else -1
         grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
         start_epoch=1e9
         end_epoch=-1
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
-                if epoch==0:
-                    dirname = os.path.dirname(args.model_prefix)
-                    suffix=dirname.split('/')[-1].strip()
-                    performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
-                    for file in os.listdir(performance_dir):
-                        if f'{args.load_epoch}.log' in file:
-                            with open(os.path.join(performance_dir,file)) as f:
-                                f = f.readlines()
-                            for line in f:
-                                if 'validation metric' in line :
-                                    best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
-                                    best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
-                                    best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
-                                if 'validation aux metric' in line :
-                                    best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
-                                    best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
-                                    best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
-                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
-
                 if epoch <= args.load_epoch:
                     continue
-            #print(best_valid_metric, best_valid_comb_loss, best_valid_loss, best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss)
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
@@ -838,43 +890,26 @@ def _main(args):
 
             if epoch<start_epoch: start_epoch=epoch
             if epoch>end_epoch: end_epoch=epoch
-            copy_log(args, start_epoch, end_epoch)
+            copy_log(args, start_epoch, end_epoch, 'train')
 
-            _logger.info('Epoch #%d validating' % epoch)
-            valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
-            valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                    evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
-                        aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
-                        aux_loss_func_bin=aux_loss_func_bin,
-                        steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
-            is_best_epoch = (
-                valid_metric < best_valid_metric) if args.regression_mode else(
-                valid_metric > best_valid_metric)
-            if is_best_epoch:
-                best_valid_metric = valid_metric
-                best_valid_comb_loss = valid_comb_loss
-                best_valid_loss = valid_loss
-                best_valid_aux_metric_pf= valid_aux_metric_pf
-                best_valid_aux_dist= valid_aux_dist
-                best_valid_aux_metric_pair= valid_aux_metric_pair
-                best_valid_aux_loss = valid_aux_loss
-                if args.model_prefix and (args.backend is None or local_rank == 0):
-                    shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
-                                 epoch, args.model_prefix + '_best_epoch_state.pt')
-                    # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
+            if args.train is False:
+                _logger.info('Epoch #%d validating' % epoch)
+                valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                        evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                            aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                            aux_loss_func_bin=aux_loss_func_bin,
+                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
 
-                #save labels for roc curve of best epoch
-                for label_type in ["", "pf_clas_", "pf_regr_", "pair_bin_"]:
-                    save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch}.npz')
-
-            _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
-
-            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)  //  Current validation combined loss: %.5f (in best epoch: %.5f)  //  Current validation loss: %.5f (in best epoch: %.5f)' %
-                         (epoch, valid_metric, best_valid_metric, valid_comb_loss, best_valid_comb_loss, valid_loss, best_valid_loss), color='bold')
-            _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: %.5f)  //  Current validation aux distance: %.5f (in best epoch: %.5f)  //  Current validation aux metric pair: %.5f (in best epoch: %.5f)  //  Current validation aux loss: %.5f (in best epoch: %.5f)' %
-                         (epoch, valid_aux_metric_pf, best_valid_aux_metric_pf, valid_aux_dist, best_valid_aux_dist, valid_aux_metric_pair, best_valid_aux_metric_pair, valid_aux_loss, best_valid_aux_loss), color='bold')
-
-            copy_log(args, start_epoch, end_epoch)
+                best_epoch_handler(args, best_valid_metric, valid_metric,
+                        best_valid_comb_loss, valid_comb_loss,
+                        best_valid_loss, valid_loss,
+                        best_valid_aux_metric_pf, valid_aux_metric_pf,
+                        best_valid_aux_dist, valid_aux_dist,
+                        best_valid_aux_metric_pair, valid_aux_metric_pair,
+                        best_valid_aux_loss, valid_aux_loss,
+                        local_rank, epoch, roc_prefix)
+                copy_log(args, start_epoch, end_epoch)
 
     if args.data_test:
         if args.backend is not None and local_rank != 0:
@@ -927,10 +962,15 @@ def _main(args):
                             aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
                             aux_loss_func_bin=aux_loss_func_bin,
                             steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
-                    _logger.info('Epoch #%d: Current validation metric: %.5f (best: ???)  //  Current validation combined loss: %.5f (in best epoch: ???)  //  Current validation loss: %.5f (in best epoch: ???)' %
-                         (epoch, valid_metric, valid_comb_loss, valid_loss), color='bold')
-                    _logger.info('Epoch #%d: Current validation aux metric PF: %.5f (in best epoch: ???)  //  Current validation aux distance: %.5f (in best epoch: ???)  //  Current validation aux metric pair: %.5f (in best epoch: ???)  //  Current validation aux loss: %.5f (in best epoch: ???)' %
-                         (epoch, valid_aux_metric_pf, valid_aux_dist, valid_aux_metric_pair, valid_aux_loss), color='bold')
+
+                    best_epoch_handler(args, best_valid_metric, valid_metric,
+                       best_valid_comb_loss, valid_comb_loss,
+                       best_valid_loss, valid_loss,
+                       best_valid_aux_metric_pf, valid_aux_metric_pf,
+                       best_valid_aux_dist, valid_aux_dist,
+                       best_valid_aux_metric_pair, valid_aux_metric_pair,
+                       best_valid_aux_loss, valid_aux_loss,
+                       local_rank, epoch, roc_prefix)
                     copy_log(args, epoch, epoch, "val")
 
                 else:

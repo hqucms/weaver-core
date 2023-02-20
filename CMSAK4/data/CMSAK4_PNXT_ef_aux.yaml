@@ -43,11 +43,11 @@ new_variables:
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
 
+   ## auxiliary labels
    aux_label_mask: (pfcand_from_b != -1) -1
    from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
    from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
 
-   ## auxiliary labels
    pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1, axis=-1)
    pf_c: ak.fill_none(ak.pad_none((from_c_bool & ~from_b_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_bc: ak.fill_none(ak.pad_none((from_b_bool & from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
@@ -58,10 +58,10 @@ new_variables:
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
    pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
 
-   #num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
-   #unflat_dist: ak.unflatten(pfcand_dist_vtx_12,np.repeat(num_pf, num_pf, axis=0), axis=1)
-   #pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2)
-   #pair_dist_threshold: ak.Array([0.02])
+   num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
+   unflat_dist: ak.unflatten(pfcand_dist_vtx_12,np.repeat(num_pf, num_pf, axis=0), axis=1)
+   pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2)
+   pair_dist_threshold: ak.Array([0.02])
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
