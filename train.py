@@ -249,21 +249,25 @@ def train_load(args):
                                    infinity_mode=args.steps_per_epoch is not None,
                                    in_memory=args.in_memory,
                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
-                                 extra_selection=args.extra_selection,
-                                 load_range_and_fraction=(val_range, args.data_fraction),
-                                 file_fraction=args.file_fraction,
-                                 fetch_by_files=args.fetch_by_files,
-                                 fetch_step=args.fetch_step,
-                                 infinity_mode=args.steps_per_epoch_val is not None,
-                                 in_memory=args.in_memory,
-                                 name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
     train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                               num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
                               persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
-                            num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
-                            persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
+    if not args.train:
+        val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
+                                    extra_selection=args.extra_selection,
+                                    load_range_and_fraction=(val_range, args.data_fraction),
+                                    file_fraction=args.file_fraction,
+                                    fetch_by_files=args.fetch_by_files,
+                                    fetch_step=args.fetch_step,
+                                    infinity_mode=args.steps_per_epoch_val is not None,
+                                    in_memory=args.in_memory,
+                                    name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
+        val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
+                                num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
+                                persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
+    else:
+        val_data = None
+        val_loader = None
     data_config = train_data.config
     train_input_names = train_data.config.input_names
     train_label_names = train_data.config.label_names
