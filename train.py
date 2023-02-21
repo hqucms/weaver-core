@@ -144,9 +144,15 @@ parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], defa
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%k`')
 parser.add_argument('--val', action='store_true', default=False,
-                    help='Perform only validation on the model state given in `--model-prefix`')
+                    help='perform only validation on the model state given in `--model-prefix`')
 parser.add_argument('--train', action='store_true', default=False,
-                    help='Perform only validation on the model state given in `--model-prefix`')
+                    help='perform only training on the model state given in `--model-prefix`')
+parser.add_argument('--val-epochs', type=str, default='-1',
+                    help='epochs on which the validation is performed'
+                    'if not provided perform on every epoch'
+                    'separate the epochs with `,` in order to indicate them one by one'
+                    'separate the epochs with `:` in order to indicate an interval'
+                    'if set to `best` the validation is performed on the best epoch')
 
 def to_filelist(args, mode='train'):
     if mode == 'train':
@@ -214,8 +220,13 @@ def train_load(args):
     :param args:
     :return: train_loader, val_loader, data_config, train_inputs
     """
+    if args.data_train:
+        train_file_dict, train_files = to_filelist(args, 'train')
+    else:
+        train_file_dict, train_files =  to_filelist(args, 'val')
+        train_range = (0, args.train_val_split)
+        val_range = (args.train_val_split, 1)
 
-    train_file_dict, train_files = to_filelist(args, 'train')
     if args.data_val:
         val_file_dict, val_files = to_filelist(args, 'val')
         train_range = val_range = (0, 1)
@@ -223,6 +234,7 @@ def train_load(args):
         val_file_dict, val_files = train_file_dict, train_files
         train_range = (0, args.train_val_split)
         val_range = (args.train_val_split, 1)
+
     _logger.info('Using %d files for training, range: %s' % (len(train_files), str(train_range)))
     _logger.info('Using %d files for validation, range: %s' % (len(val_files), str(val_range)))
 
@@ -238,20 +250,24 @@ def train_load(args):
 
     if args.in_memory and (args.steps_per_epoch is None or args.steps_per_epoch_val is None):
         raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+    if not args.val:
+        train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
+                                    extra_selection=args.extra_selection,
+                                    remake_weights=not args.no_remake_weights,
+                                    load_range_and_fraction=(train_range, args.data_fraction),
+                                    file_fraction=args.file_fraction,
+                                    fetch_by_files=args.fetch_by_files,
+                                    fetch_step=args.fetch_step,
+                                    infinity_mode=args.steps_per_epoch is not None,
+                                    in_memory=args.in_memory,
+                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
+        train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
+                                num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
+                                persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
+    else:
+        train_data = None
+        train_loader = None
 
-    train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
-                                   extra_selection=args.extra_selection,
-                                   remake_weights=not args.no_remake_weights,
-                                   load_range_and_fraction=(train_range, args.data_fraction),
-                                   file_fraction=args.file_fraction,
-                                   fetch_by_files=args.fetch_by_files,
-                                   fetch_step=args.fetch_step,
-                                   infinity_mode=args.steps_per_epoch is not None,
-                                   in_memory=args.in_memory,
-                                   name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
-                              num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
-                              persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
     if not args.train:
         val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
                                     extra_selection=args.extra_selection,
@@ -673,14 +689,15 @@ def save_parquet(args, output_path, scores, labels, observers):
 def copy_log(args, start_epoch, end_epoch, type_log = ""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
-    try:
-        os.remove(os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
-    except FileNotFoundError:
-        pass
     log_name=os.path.join(performance_dir,
         f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}{type_log}.log')
     shutil.copy2(args.log, log_name)
+    if type_log is "":
+        try:
+            os.remove(os.path.join(performance_dir,
+                f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
+        except FileNotFoundError:
+            pass
     try:
         os.remove(os.path.join(performance_dir,
         f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{type_log}.log'))
@@ -871,7 +888,10 @@ def _main(args):
                 if epoch <= args.load_epoch:
                     continue
             _logger.info('-' * 50)
-            _logger.info('Epoch #%d training' % epoch)
+            if args.train:
+                _logger.info('Epoch #%d training only' % epoch)
+            else:
+                _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
                   steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
             if args.model_prefix and (args.backend is None or local_rank == 0):
@@ -896,7 +916,7 @@ def _main(args):
             if epoch>end_epoch: end_epoch=epoch
             copy_log(args, start_epoch, end_epoch, 'train')
 
-            if args.train is False:
+            if not args.train:
                 _logger.info('Epoch #%d validating' % epoch)
                 valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
                 valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
@@ -930,17 +950,18 @@ def _main(args):
                 gpus = None
                 dev = torch.device('cpu')
             model = orig_model.to(dev)
-            model_path = args.model_prefix if args.model_prefix.endswith(
-                '.pt') else args.model_prefix + '_best_epoch_state.pt'
-            if args.model_prefix.endswith('.pt'):
-                epoch = int(model_path.split('epoch-')[1].split('_')[-2])
+
+            if ',' in args.val_epochs:
+                val_epochs = [int(i) for i in args.val_epochs.split(',')]
+            elif ':' in args.val_epochs:
+                val_epochs_ext= [int(i) for i in args.val_epochs.split(':')]
+                val_epochs = [i for i in range(val_epochs_ext[0], val_epochs_ext[1]+1)]
+            elif args.val_epochs == '-1':
+                val_epoch_len = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
+                                    if '_state.pt' in filename and 'best' not in filename])
+                val_epochs = [int(i) for i in range(val_epoch_len)]
             else:
-                epoch = -1
-            _logger.info('Loading model %s for eval' % model_path)
-            model.load_state_dict(torch.load(model_path, map_location=dev))
-            if gpus is not None and len(gpus) > 1:
-                model = torch.nn.DataParallel(model, device_ids=gpus)
-            model = model.to(dev)
+                val_epochs = [int(args.val_epochs)]
 
         if args.model_prefix and (args.backend is None or local_rank == 0):
             dirname = os.path.dirname(args.model_prefix)
@@ -959,23 +980,39 @@ def _main(args):
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
             else:
                 if args.val:
-                    _logger.info('Epoch #%d validating only' % epoch)
-                    valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
-                    valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                        evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
-                            aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
-                            aux_loss_func_bin=aux_loss_func_bin,
-                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+                    start_epoch=1e9
+                    end_epoch=-1
+                    for epoch in val_epochs:
+                        if ',' in args.val_epochs:
+                            start_epoch=epoch
+                            end_epoch=epoch
+                        else:
+                            if epoch<start_epoch: start_epoch=epoch
+                            if epoch>end_epoch: end_epoch=epoch
+                        model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
+                        _logger.info('Loading model %s for eval' % model_path)
+                        model.load_state_dict(torch.load(model_path, map_location=dev))
+                        if gpus is not None and len(gpus) > 1:
+                            model = torch.nn.DataParallel(model, device_ids=gpus)
+                        model = model.to(dev)
+                        _logger.info('Epoch #%d validating only' % epoch)
 
-                    best_epoch_handler(args, best_valid_metric, valid_metric,
-                       best_valid_comb_loss, valid_comb_loss,
-                       best_valid_loss, valid_loss,
-                       best_valid_aux_metric_pf, valid_aux_metric_pf,
-                       best_valid_aux_dist, valid_aux_dist,
-                       best_valid_aux_metric_pair, valid_aux_metric_pair,
-                       best_valid_aux_loss, valid_aux_loss,
-                       local_rank, epoch, roc_prefix)
-                    copy_log(args, epoch, epoch, "val")
+                        valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                        valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                        evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
+                                aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                                aux_loss_func_bin=aux_loss_func_bin,
+                                steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+
+                        best_epoch_handler(args, best_valid_metric, valid_metric,
+                            best_valid_comb_loss, valid_comb_loss,
+                            best_valid_loss, valid_loss,
+                            best_valid_aux_metric_pf, valid_aux_metric_pf,
+                            best_valid_aux_dist, valid_aux_dist,
+                            best_valid_aux_metric_pair, valid_aux_metric_pair,
+                            best_valid_aux_loss, valid_aux_loss,
+                            local_rank, epoch, roc_prefix)
+                        copy_log(args, start_epoch, end_epoch, "val")
 
                 else:
                     test_metric, test_loss, scores, labels, observers = evaluate(

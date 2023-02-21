@@ -134,12 +134,12 @@ models*/
 *.auto.yaml
 CMSAK4/runs/
 CMSAK4/training/
-performance/
+#performance/
 *history*
 *.png
 *roc*
 *.pt
 *.txt
 !requirements.txt
-tree.py
 monitor.py
+*.npz
