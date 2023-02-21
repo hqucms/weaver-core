@@ -46,7 +46,7 @@ new_variables:
    ## auxiliary labels
    num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
    unflat_dist: ak.unflatten(pfcand_dist_vtx_12, np.repeat(num_pf, num_pf, axis=0), axis=1)
-   pair_dist_vtx: ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2)
+   pair_dist_vtx: np.array(ak.to_numpy(ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2), allow_missing=True))
    pair_dist_threshold: ak.Array([0.02])
 
 preprocess:

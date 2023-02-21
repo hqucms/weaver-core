@@ -237,6 +237,16 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                                     comb_loss, aux_loss, dev)
 
                 if aux_label_pair_bin is not None:
+                    '''aux_mask_pair = aux_label_pair_bin != -2
+                    aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
+                    print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
+                    pair_num_pf = y['pair_num_pf']
+                    print('\n\ pair_num_pf\n', pair_num_pf.size(),'\n', pair_num_pf)
+
+                    aux_output_pair = (aux_output_pair[aux_mask_pair])
+                    aux_mask_pair_or = (aux_label_pair_bin != -1) & (aux_label_pair_bin != -2) & (aux_output_pair != 0)'''
+
+
                     aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
                     aux_mask_pair = aux_label_pair_bin[:,0,:,0] != -2
                     aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
@@ -245,6 +255,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
                     if len([k for k in data_config.aux_label_names if 'pair_threshold' in k]) == 1:
                         aux_label_pair_bin = (aux_label_pair_bin < y['pair_threshold'][0]).int() #0.02
+
 
                     _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
