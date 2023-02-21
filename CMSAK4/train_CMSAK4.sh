@@ -63,6 +63,9 @@ elif [[ "$model" == "PNXT_ef_aux_bin" ]]; then
 elif [[ "$model" == "PNXT_ef_aux" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
+elif [[ "$model" == "PNXT_ef_aux_tot" ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef.py"
+    batchopts="--batch-size 512 --start-lr 1e-2"
 else
     echo "Invalid model $model!"
     exit 1

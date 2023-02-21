@@ -209,9 +209,9 @@ aux_labels:
       aux_label_pf_regr_vtx_x: pf_vtx_x
       aux_label_pf_regr_vtx_y: pf_vtx_y
       aux_label_pf_regr_vtx_z: pf_vtx_z
-   #value_pair:
-   #   aux_label_pair_bin_dist_vtx: pair_dist_vtx
-   #   pair_threshold: pair_dist_threshold
+   value_pair:
+      aux_label_pair_bin_dist_vtx: pair_dist_vtx
+      pair_threshold: pair_dist_threshold
 
 
 observers:
