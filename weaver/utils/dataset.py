@@ -376,3 +376,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
                 kwargs = {k: copy.deepcopy(self.__dict__[k]) for k in self._init_args}
                 self._iters[worker_id] = _SimpleIter(**kwargs)
                 return self._iters[worker_id]
+
+class DataLoader(torch.utils.data.DataLoader):
+    def __getitem__(self, *args, **kwargs):
+        return np.array(super().__getitem__(self, *args, **kwargs))

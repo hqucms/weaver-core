@@ -11,11 +11,11 @@ import numpy as np
 import math
 import torch
 
-from torch.utils.data import DataLoader
+#from torch.utils.data import DataLoader
 
 #sys.path.append(os.path.join("..", ""))
 from weaver.utils.logger import _logger, _configLogger
-from weaver.utils.dataset import SimpleIterDataset
+from weaver.utils.dataset import SimpleIterDataset, DataLoader
 from weaver.utils.import_tools import import_module
 from weaver.utils.nn.tools import save_labels_best_epoch
 
