@@ -135,11 +135,14 @@ models*/
 CMSAK4/runs/
 CMSAK4/training/
 #performance/
-*history*
+#*history*
 *.png
-*roc*
+#*roc*
 *.pt
 *.txt
 !requirements.txt
-monitor.py
+monitor/
 *.npz
+*.npy
+*.log
+*.pickle
