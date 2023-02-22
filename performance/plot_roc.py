@@ -26,22 +26,31 @@ args = parser.parse_args()
 
 label_dict={
     #'performance_20230118-110210_CMSAK4_PNXT_ef_ranger_lr0.01_batch3072_10e6_noweights_230k_attn_batch3000':
-    #    [[],[],'pnxt_ef_noweights_10e6_batch'],
+    #    [defaultdict(list),defaultdict(list),'pnxt_ef_noweights_10e6_batch'],
     #'performance_20230121-000830_CMSAK4_PNXT_ranger_lr0.01_batch512_10e6_noweights_230k_attn':
-    #    [[],[],'pnxt_noweights_10e6'],
+    #    [defaultdict(list),defaultdict(list),'pnxt_noweights_10e6'],
     #'performance_20230123-102909_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_avg':
-    #    [[],[],'pnxt_ef_avg_noweights_10e6', 'g-'],
+    #    [defaultdict(list),defaultdict(list),'pnxt_ef_avg_noweights_10e6', 'g-'],
 
-    #'performance_20230111-124803_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn':
-    #    [[],[],'pnxt_ef_attn_noweights_10e6', 'r-'],
-    #'performance_20230119-235723_CMSAK4_PNXT_ranger_lr0.01_batch3072_10e6_noweights_230k_attn_batch3000':
-    #    [[],[],'pnxt_noweights_10e6_batch', 'b-'],
-    'performance_20230122-094627_CMSAK4_PN_ranger_lr0.01_batch512_10e6_noweights_230k':
-        [defaultdict(list),defaultdict(list),'pn_noweights_10e6', 'k-'],
+    # 'performance_20230111-124803_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn':
+    #    [defaultdict(list),defaultdict(list),'ef', 'r-'],
+    # 'performance_20230119-235723_CMSAK4_PNXT_ranger_lr0.01_batch3072_10e6_noweights_230k_attn_batch3000':
+    #    [defaultdict(list),defaultdict(list),'pnxt', 'b-'],
+    # 'performance_20230122-094627_CMSAK4_PN_ranger_lr0.01_batch512_10e6_noweights_230k':
+    #    [defaultdict(list),defaultdict(list),'pn', 'k-'],
     # 'performance_20230127-171444_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn_auxpf':
-    #     [[],[],'pnxt_ef_attn_noweights_10e6_auxpf', 'g-'],
-    #'../../CMSAK4/training/CMSAK4/PNXT_ef_aux/20230218-142254_CMSAK4_PNXT_ef_ranger_lr0.01_batch2_/performance_20230218-142254_CMSAK4_PNXT_ef_ranger_lr0.01_batch2_':
-    #    [defaultdict(list),defaultdict(list),'pnxt_ef_aux', 'g-'],
+    #     [defaultdict(list),defaultdict(list),'clas', 'g-'],
+
+    'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+       [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
+    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection':
+        [defaultdict(list),defaultdict(list),'clas', 'b-'],
+    'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+       [defaultdict(list),defaultdict(list),'ef', 'g-'],
+    # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
+    #     [defaultdict(list),defaultdict(list),'aux', 'r-'],
+    # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr':
+    #    [defaultdict(list),defaultdict(list),'regr', 'c-'],
 }
 
 epoch_list= [0,1,2,3,4,12,16,19]
@@ -56,7 +65,7 @@ roc_type_dict=OrderedDict([
         "pf_regr" : [[0,2], [1,3]]
     }),
     ("bin",{
-        "pair_bin" : [[0,2], [1,3]]
+        "pair_bin" : [[1], [0]]
     }),
     ("label",{
         "bVSuds":[[0,1], [4]],
@@ -108,9 +117,10 @@ if __name__ == "__main__":
     for dir_name, info in label_dict.items():
         dir_name=os.path.join("input", dir_name)
         files = [filename for filename in os.listdir(dir_name)
-                 if 'labels_epoch' in filename]
-        best_files = [filename for filename in os.listdir(dir_name) if 'labels_best' in filename]
-        files.sort()#key=lambda s: int(re.findall(r'\d+', s)[-2]))
+                 if ( 'labels_epoch' in filename and 'regr'  not in filename and 'bin' not in filename and 'clas'  not in filename)]
+        best_files = [filename for filename in os.listdir(dir_name) if ('labels_best' in filename and 'regr' not in filename and 'bin' not in filename and 'clas'  not in filename)]
+        files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
+        best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
         if args.e:
             for infile in files:
                 epoch = int(infile.split(".np")[0][-2:] if infile.split(".np")[0][-2].isnumeric() else infile.split(".np")[0][-1])
@@ -123,7 +133,6 @@ if __name__ == "__main__":
                                     info[0][label_type].append(np.load(f)['y_true'])
                                     info[1][label_type].append(np.load(f)['y_score'])
                                     break
-            print(info)
 
         for best_file in best_files:
             for label_type, labels_info in roc_type_dict.items():
@@ -140,19 +149,17 @@ if __name__ == "__main__":
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
-                    print(labels)
 
                     if args.e:
                         fig_handle = plt.figure()
                         for num in range(len(info[0][label_type])):
-                            print(len(info[0][label_type]))
                             fpr, tpr, roc_auc=get_rates(
                                 info[0][label_type][num],info[1][label_type][num],
                                 labels[0], labels[1])
 
                             plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
 
-                        plt_fts(roc_type, info[2], fig_handle)
+                        plt_fts(roc_type, dir_name, fig_handle)
 
     for roc_type, net_dict in best_dict.items():
         fig_handle = plt.figure()

@@ -56,19 +56,19 @@ def confusion_matrix(y_true, y_score, aux_type=None):
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
 
-def save_labels(y_true, y_score, epoch,roc_prefix, aux_type=""):
+def save_labels(y_true, y_score, epoch, roc_prefix, label_type):
     if y_true is None or y_score is None:
         return None
-    if aux_type == "pair_bin":
+    if label_type == "pair_bin":
         y_score = (y_score>0.5).astype(int)
 
     outfile=f'{roc_prefix}labels_epoch_{epoch}.npz'
     if isinstance(y_true,dict):
-        y_true = y_true[aux_type]
+        y_true = y_true[label_type]
     with open(outfile, 'wb') as f:
         np.savez(f, y_true=y_true, y_score=y_score)
 
-    return f'y_true and y_score {aux_type} for epoch {epoch} properly saved in file: \n {outfile}\n'
+    return f'y_true and y_score {label_type} for epoch {epoch} properly saved in file: \n {outfile}\n'
 
 
 _metric_dict = {
@@ -91,7 +91,7 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
     for metric in eval_metrics:
         func = _get_metric(metric)
         try:
-            results[metric] = func(y_true, y_score, epoch, roc_prefix) if 'label' in metric else func(y_true, y_score)
+            results[metric] = func(y_true, y_score, epoch, roc_prefix, 'jet') if 'label' in metric else func(y_true, y_score)
         except Exception as e:
             results[metric] = None
             _logger.error(str(e))

@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 #sys.path.append(os.path.join("..", ""))
 from weaver.utils.logger import _logger, _configLogger
-from weaver.utils.dataset import SimpleIterDataset 
+from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
 from weaver.utils.nn.tools import save_labels_best_epoch
 
@@ -250,6 +250,12 @@ def train_load(args):
 
     if args.in_memory and (args.steps_per_epoch is None or args.steps_per_epoch_val is None):
         raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+
+    data_config = None
+    train_input_names = None
+    train_label_names = None
+    train_aux_label_names = None
+
     if not args.val:
         train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
                                     extra_selection=args.extra_selection,
@@ -264,6 +270,11 @@ def train_load(args):
         train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                                 num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
                                 persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
+
+        data_config = train_data.config
+        train_input_names = train_data.config.input_names
+        train_label_names = train_data.config.label_names
+        train_aux_label_names = train_data.config.aux_label_names
     else:
         train_data = None
         train_loader = None
@@ -281,13 +292,11 @@ def train_load(args):
         val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                                 num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
                                 persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
+        data_config = val_data.config
+
     else:
         val_data = None
         val_loader = None
-    data_config = train_data.config
-    train_input_names = train_data.config.input_names
-    train_label_names = train_data.config.label_names
-    train_aux_label_names = train_data.config.aux_label_names
 
     return train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names
 
@@ -744,6 +753,31 @@ def best_epoch_handler(args, best_valid_metric, valid_metric,
                     valid_aux_dist, best_valid_aux_dist, valid_aux_metric_pair,
                     best_valid_aux_metric_pair, valid_aux_loss, best_valid_aux_loss), color='bold')
 
+def get_best_metrics(args, last_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+        best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+        best_valid_aux_metric_pair):
+    dirname = os.path.dirname(args.model_prefix)
+    suffix=dirname.split('/')[-1].strip()
+    performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
+    for file in os.listdir(performance_dir):
+        for log_name in [f'{last_epoch}val.log', f'{last_epoch}.log']:
+            if log_name in file:
+                with open(os.path.join(performance_dir,file)) as f:
+                    f = f.readlines()
+                for line in f:
+                    if 'validation metric' in line :
+                        best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
+                        best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
+                        best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
+                    if 'validation aux metric' in line :
+                        best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
+                        best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
+                        best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
+                        best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
+
+    return best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+        best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+        best_valid_aux_metric_pair
 
 def _main(args):
     _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
@@ -791,6 +825,8 @@ def _main(args):
     # load data
     if training_mode:
         train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names = train_load(args)
+    elif args.val:
+        _, test_loaders, data_config, *_ = train_load(args)
     else:
         test_loaders, data_config = test_load(args)
 
@@ -826,27 +862,20 @@ def _main(args):
     best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
     best_valid_aux_metric_pair = np.inf if args.regression_mode else -1, 0,0,0,0,0,0
 
-    for epoch in range(args.num_epochs):
-        if args.load_epoch is not None:
-            if epoch==0:
-                dirname = os.path.dirname(args.model_prefix)
-                suffix=dirname.split('/')[-1].strip()
-                performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
-                for file in os.listdir(performance_dir):
-                    for log_name in [f'{args.load_epoch}val.log', f'{args.load_epoch}.log']:
-                        if log_name in file:
-                            with open(os.path.join(performance_dir,file)) as f:
-                                f = f.readlines()
-                            for line in f:
-                                if 'validation metric' in line :
-                                    best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
-                                    best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
-                                    best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
-                                if 'validation aux metric' in line :
-                                    best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
-                                    best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
-                                    best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
-                                    best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
+    if args.load_epoch is not None:
+        get_best_metrics(args, args.load_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+                best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+                best_valid_aux_metric_pair)
+    elif args.val:
+        try:
+            get_best_metrics(args, int(args.val_epochs[:2]) - 1, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+                best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+                best_valid_aux_metric_pair)
+        except:
+            get_best_metrics(args, int(args.val_epochs[0]) - 1, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+                best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+                best_valid_aux_metric_pair)
+
 
 
     if training_mode:
@@ -971,74 +1000,72 @@ def _main(args):
                 os.makedirs(performance_dir)
             roc_prefix=os.path.join(performance_dir,suffix)
 
-        for name, get_test_loader in test_loaders.items():
-            test_loader = get_test_loader()
-            # run prediction
-            if args.model_prefix.endswith('.onnx'):
-                _logger.info('Loading model %s for eval' % args.model_prefix)
-                from weaver.utils.nn.tools import evaluate_onnx
-                test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
+            if args.val:
+                start_epoch=1e9
+                end_epoch=-1
+                for epoch in val_epochs:
+                    if ',' in args.val_epochs:
+                        start_epoch=epoch
+                        end_epoch=epoch
+                    else:
+                        if epoch<start_epoch: start_epoch=epoch
+                        if epoch>end_epoch: end_epoch=epoch
+                    model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
+                    _logger.info('Loading model %s for eval' % model_path)
+                    model.load_state_dict(torch.load(model_path, map_location=dev))
+                    if gpus is not None and len(gpus) > 1:
+                        model = torch.nn.DataParallel(model, device_ids=gpus)
+                    model = model.to(dev)
+                    _logger.info('Epoch #%d validating only' % epoch)
+
+                    valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                    valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                    evaluate(model, test_loaders, dev, epoch, loss_func=loss_func,
+                            aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                            aux_loss_func_bin=aux_loss_func_bin,
+                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+
+                    best_epoch_handler(args, best_valid_metric, valid_metric,
+                        best_valid_comb_loss, valid_comb_loss,
+                        best_valid_loss, valid_loss,
+                        best_valid_aux_metric_pf, valid_aux_metric_pf,
+                        best_valid_aux_dist, valid_aux_dist,
+                        best_valid_aux_metric_pair, valid_aux_metric_pair,
+                        best_valid_aux_loss, valid_aux_loss,
+                        local_rank, epoch, roc_prefix)
+                    copy_log(args, start_epoch, end_epoch, "val")
             else:
-                if args.val:
-                    start_epoch=1e9
-                    end_epoch=-1
-                    for epoch in val_epochs:
-                        if ',' in args.val_epochs:
-                            start_epoch=epoch
-                            end_epoch=epoch
+                for name, get_test_loader in test_loaders.items():
+                    test_loader = get_test_loader()
+                    # run prediction
+                    if args.model_prefix.endswith('.onnx'):
+                        _logger.info('Loading model %s for eval' % args.model_prefix)
+                        from weaver.utils.nn.tools import evaluate_onnx
+                        test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader,epoch=-1, roc_prefix=roc_prefix)
+                    else:
+                            test_metric, test_loss, scores, labels, observers = evaluate(
+                                model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
+                    _logger.info('Test metric %.5f   //   Test loss %.5f' % (test_metric, test_loss), color='bold')
+                    del test_loader
+
+                    if args.predict_output:
+                        if '/' not in args.predict_output:
+                            predict_output = os.path.join(
+                                os.path.dirname(args.model_prefix),
+                                'predict_output', args.predict_output)
                         else:
-                            if epoch<start_epoch: start_epoch=epoch
-                            if epoch>end_epoch: end_epoch=epoch
-                        model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
-                        _logger.info('Loading model %s for eval' % model_path)
-                        model.load_state_dict(torch.load(model_path, map_location=dev))
-                        if gpus is not None and len(gpus) > 1:
-                            model = torch.nn.DataParallel(model, device_ids=gpus)
-                        model = model.to(dev)
-                        _logger.info('Epoch #%d validating only' % epoch)
-
-                        valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
-                        valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                        evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
-                                aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
-                                aux_loss_func_bin=aux_loss_func_bin,
-                                steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
-
-                        best_epoch_handler(args, best_valid_metric, valid_metric,
-                            best_valid_comb_loss, valid_comb_loss,
-                            best_valid_loss, valid_loss,
-                            best_valid_aux_metric_pf, valid_aux_metric_pf,
-                            best_valid_aux_dist, valid_aux_dist,
-                            best_valid_aux_metric_pair, valid_aux_metric_pair,
-                            best_valid_aux_loss, valid_aux_loss,
-                            local_rank, epoch, roc_prefix)
-                        copy_log(args, start_epoch, end_epoch, "val")
-
-                else:
-                    test_metric, test_loss, scores, labels, observers = evaluate(
-                        model, test_loader, dev, epoch=-1, for_training=False, tb_helper=tb, roc_prefix=roc_prefix)
-            if not args.val:
-                _logger.info('Test metric %.5f   //   Test loss %.5f' % (test_metric, test_loss), color='bold')
-            del test_loader
-
-            if args.predict_output:
-                if '/' not in args.predict_output:
-                    predict_output = os.path.join(
-                        os.path.dirname(args.model_prefix),
-                        'predict_output', args.predict_output)
-                else:
-                    predict_output = args.predict_output
-                os.makedirs(os.path.dirname(predict_output), exist_ok=True)
-                if name == '':
-                    output_path = predict_output
-                else:
-                    base, ext = os.path.splitext(predict_output)
-                    output_path = base + '_' + name + ext
-                if output_path.endswith('.root'):
-                    save_root(args, output_path, data_config, scores, labels, observers)
-                else:
-                    save_parquet(args, output_path, scores, labels, observers)
-                _logger.info('Written output to %s' % output_path, color='bold')
+                            predict_output = args.predict_output
+                        os.makedirs(os.path.dirname(predict_output), exist_ok=True)
+                        if name == '':
+                            output_path = predict_output
+                        else:
+                            base, ext = os.path.splitext(predict_output)
+                            output_path = base + '_' + name + ext
+                        if output_path.endswith('.root'):
+                            save_root(args, output_path, data_config, scores, labels, observers)
+                        else:
+                            save_parquet(args, output_path, scores, labels, observers)
+                        _logger.info('Written output to %s' % output_path, color='bold')
 
 
 def main():
@@ -1066,7 +1093,7 @@ def main():
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
         import time
-        model_name = time.strftime('%Y%m%d-%H%M%S') + "_" + os.path.basename(args.network_config).replace('.py', '')
+        model_name = time.strftime('%Y%m%d-%H%M%S') + "_" + os.path.basename(args.data_config).replace('.yaml', '')
         if len(args.network_option):
             model_name = model_name + "_" + hashlib.md5(str(args.network_option).encode('utf-8')).hexdigest()
         model_name += '_{optim}_lr{lr}_batch{batch}'.format(lr=args.start_lr,
