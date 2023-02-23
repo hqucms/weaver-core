@@ -53,10 +53,10 @@ new_variables:
    pf_bc: ak.fill_none(ak.pad_none((from_b_bool & from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_other: ak.fill_none(ak.pad_none((~from_b_bool & ~from_c_bool)+2*aux_label_mask, 50, axis=1, clip=True),-1)
 
+   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
    pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
    pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
-   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
 
    num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
    unflat_dist: ak.unflatten(pfcand_dist_vtx_12,np.repeat(num_pf, num_pf, axis=0), axis=1)

@@ -8,12 +8,11 @@ import pickle
 import argparse
 from collections import defaultdict, OrderedDict
 
-
-'''orig_stdout = sys.stdout
+orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
-sys.stdout = f'''
+sys.stdout = f
 
-#np.set_printoptions(threshold=np.inf)
+np.set_printoptions(threshold=np.inf)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', action='store_true', default=False,
@@ -41,38 +40,46 @@ label_dict={
     # 'performance_20230127-171444_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn_auxpf':
     #     [defaultdict(list),defaultdict(list),'clas', 'g-'],
 
-    'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-       [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
+    # 'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+    #    [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
     'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection':
-        [defaultdict(list),defaultdict(list),'clas', 'b-'],
-    'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-       [defaultdict(list),defaultdict(list),'ef', 'g-'],
-    # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
-    #     [defaultdict(list),defaultdict(list),'aux', 'r-'],
-    # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr':
-    #    [defaultdict(list),defaultdict(list),'regr', 'c-'],
+         [defaultdict(list),defaultdict(list),'clas', 'b-'],
+    # 'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+    #    [defaultdict(list),defaultdict(list),'ef', 'g-'],
+    'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
+         [defaultdict(list),defaultdict(list),'aux', 'r'],
+    'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
+        [defaultdict(list),defaultdict(list),'regr', 'c'],
 }
 
 epoch_list= [0,1,2,3,4,12,16,19]
-
+roc_type_list=["regr"]
 best_dict=defaultdict(defaultdict)
 
 roc_type_dict=OrderedDict([
-    ("clas",{
-        "pf_clas" : [[0,2], [1,3]]
+    # ("pf_clas",{
+    #     "pf_clas" : [[0,2], [1,3]]
+    # }),
+    ("pf_regr",{
+        "pf_regr" : [None, None]
     }),
-    ("regr",{
-        "pf_regr" : [[0,2], [1,3]]
-    }),
-    ("bin",{
+    ("pair_bin",{
         "pair_bin" : [[1], [0]]
     }),
-    ("label",{
-        "bVSuds":[[0,1], [4]],
-        "bVSg":[[0,1], [5]],
-        "bVSudsg":[[0,1], [4,5]]
-    }),
+    #jet
+    # ("label",{
+    #     "bVSuds":[[0,1], [4]],
+    #     "bVSg":[[0,1], [5]],
+    #     "bVSudsg":[[0,1], [4,5]]
+    # }),
 ])
+
+axis_limits ={
+    0: ((600, 600),(0,6,0,6), '_dist_pv'),
+    1: ((300, 300),(-0.3,0.3,-0.3,0.3), '_vtx_x'),
+    2: ((300, 300),(-0.3,0.3,-0.3,0.3), '_vtx_y'),
+    3: ((600, 600),(-4,4,-4,4), '_vtx_z')
+}
 
 def get_labels(y_true, y_score, labels_s, labels_b):
     y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
@@ -87,25 +94,34 @@ def get_labels(y_true, y_score, labels_s, labels_b):
     return y_true_tot, y_score_tot
 
 def get_rates(y_t, y_s, l_s, l_b):
-    y_true, y_score=get_labels(y_t,  y_s, l_s, l_b)
-    fpr, tpr, thresh=_m.roc_curve(y_true, y_score)
-    roc_auc = _m.roc_auc_score(y_true, y_score)
+    if l_s is None or l_b is None:
+        fpr, tpr, roc_auc = y_s, y_t, np.nan
+    else:
+        y_true, y_score=get_labels(y_t,  y_s, l_s, l_b)
+        fpr, tpr, thresh=_m.roc_curve(y_true, y_score)
+        roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
-def plt_fts(roc_type, network, fig_handle):
-    #plt.plot([0, 1], [0, 1], 'k--', label='chance level (AUC = 0.5)')
-    #plt.axis('square')
-    plt.xlabel('Efficency for b-jet (TP)')
-    plt.ylabel('Mistagging prob (FP)')
-    plt.ylim([0.0005, 1.05])
-    plt.xlim([0.55, 1.0005])
-    plt.yscale('log')
-    plt.title(f'{roc_type}_{network}')
+def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
+    if 'regr' in roc_type:
+        plt.plot([-40, 40], [-40, 40], 'y--', label='True == Reco')
+        #plt.axis('square')
+        plt.xlabel('True')
+        plt.ylabel('Reco')
+        plt.xlim([axis_lim[0], axis_lim[1]])
+        plt.ylim([axis_lim[2], axis_lim[3]])
+    else:
+        plt.xlabel('Efficency for b-jet (TP)')
+        plt.ylabel('Mistagging prob (FP)')
+        plt.ylim([0.0005, 1.05])
+        plt.xlim([0.55, 1.0005])
+        plt.yscale('log')
+    plt.title(f'{roc_type}_{network}{name}')
     plt.legend()
     if args.s:
-        with open(f'roc_curve/roc_curve_{roc_type}_{network}.pickle', 'wb') as f:
+        with open(f'roc_curve/roc_curve_{roc_type}_{network}{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
-        plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}.png')
+        plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}{name}.png')
     if args.p:
         plt.show()
     plt.close()
@@ -114,16 +130,17 @@ def plt_fts(roc_type, network, fig_handle):
 
 if __name__ == "__main__":
     #print(roc_type_dict)
-    for dir_name, info in label_dict.items():
-        dir_name=os.path.join("input", dir_name)
+    for input_name, info in label_dict.items():
+        dir_name=os.path.join("input", input_name)
         files = [filename for filename in os.listdir(dir_name)
-                 if ( 'labels_epoch' in filename and 'regr'  not in filename and 'bin' not in filename and 'clas'  not in filename)]
-        best_files = [filename for filename in os.listdir(dir_name) if ('labels_best' in filename and 'regr' not in filename and 'bin' not in filename and 'clas'  not in filename)]
+                 if ('labels_epoch' in filename)]
+        best_files = [filename for filename in os.listdir(dir_name)
+                    if ('labels_best' in filename)]
         files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
         best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
         if args.e:
             for infile in files:
-                epoch = int(infile.split(".np")[0][-2:] if infile.split(".np")[0][-2].isnumeric() else infile.split(".np")[0][-1])
+                epoch = int(infile.split(".npz")[0][-2:] if infile.split(".npz")[0][-2].isnumeric() else infile.split(".npz")[0][-1])
                 #print(epoch)
                 if epoch in epoch_list:
                     for label_type, labels_info in roc_type_dict.items():
@@ -141,15 +158,15 @@ if __name__ == "__main__":
                         y_true_best=np.load(f)['y_true']
                         y_score_best=np.load(f)['y_score']
                         for roc_type, labels in labels_info.items():
-                            print(labels)
+                            print(best_file, labels)
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
                                                         labels[0], labels[1])
                             best_dict[roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
+                    break
 
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
-
                     if args.e:
                         fig_handle = plt.figure()
                         for num in range(len(info[0][label_type])):
@@ -159,10 +176,27 @@ if __name__ == "__main__":
 
                             plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
 
-                        plt_fts(roc_type, dir_name, fig_handle)
+                        plt_fts(roc_type, input_name, fig_handle)
 
     for roc_type, net_dict in best_dict.items():
-        fig_handle = plt.figure()
-        for network, rates in net_dict.items():
-            plt.plot(rates[1],rates[0],rates[3], label=f'ROC {network} best, auc=%0.4f'% rates[2])
-        plt_fts(roc_type, "best", fig_handle)
+        if "regr" not in roc_type:
+            fig_handle = plt.figure()
+            for network, rates in net_dict.items():
+                plt.plot(rates[1],rates[0],rates[3]+'-',label=f'ROC {network} best, auc=%0.4f'% rates[2])
+            plt_fts(roc_type, "best", fig_handle)
+
+for roc_type, net_dict in best_dict.items():
+    for i in range(4):
+        if "regr" in roc_type:
+            fig_handle = plt.figure()
+            for network, rates in net_dict.items():
+                x_t=rates[1][:, i]
+                y_r=rates[0][:, i]
+                mask= (x_t!=0.)
+                x_t =x_t[mask]
+                y_r=y_r[mask]
+                if i == 2 or i==1: print(x_t, y_r, type(x_t))
+                #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
+                plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
+            plt.colorbar().set_label('Density')
+            plt_fts(roc_type, "best", fig_handle, axis_limits[i][1], axis_limits[i][2])

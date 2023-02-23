@@ -44,10 +44,10 @@ new_variables:
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
 
    ## auxiliary labels
+   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
    pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
    pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
-   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
 
 
 preprocess:

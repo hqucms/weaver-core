@@ -104,8 +104,8 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
         aux_label_counter.update(aux_label.cpu().numpy())
     #print('aux_logits\n', aux_logits.size(), aux_logits)
 
-    aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev).flatten()
-    #print('\naux_loss\n', aux_loss)
+    aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)#.flatten()
+    #print('\naux_loss\n', aux_loss.size())
     if not isinstance(aux_loss, int):
         try:
             loss = torch.cat((loss, aux_loss), dim=0)
@@ -117,7 +117,8 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
             aux_loss_tot = aux_loss
     #print('\nloss_sum\n', loss)
 
-    return aux_label, aux_mask, loss, aux_loss, aux_correct, total_aux_correct, num_aux_examples, aux_label_counter, aux_scores
+    return aux_label, aux_mask, loss, aux_loss_tot, aux_correct,\
+        total_aux_correct, num_aux_examples, aux_label_counter, aux_scores
 
 
 def save_labels_best_epoch(infile):
@@ -272,7 +273,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_count_pair += num_aux_examples_pair
 
             loss = loss.mean()
-            comb_loss=comb_loss.mean()
+            comb_loss = comb_loss.mean()
             if grad_scaler is None:
                 comb_loss.backward()
                 opt.step()

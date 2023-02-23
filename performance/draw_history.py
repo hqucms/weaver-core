@@ -30,11 +30,11 @@ infile_dict = {
 }'''
 
 infile_dict = {
-#'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k': [defaultdict(list),'ef', 'b'],
-'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k' : [defaultdict(list),'pnxt', 'b'],
+'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection': [defaultdict(list),'ef', 'b'],
+'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection' : [defaultdict(list),'pnxt', 'b'],
 #'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr' : [defaultdict(list),'regr', 'b'],
-#'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas' : [defaultdict(list),'clas', 'b'],
-'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux' : [defaultdict(list),'aux', 'b'],
+'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection' : [defaultdict(list),'clas', 'b'],
+#'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux' : [defaultdict(list),'aux', 'b'],
 #'performance_20230220-232814_CMSAK4_PN_ranger_lr0.01_batch512_50M_noweights_230k': [defaultdict(list),'pn', 'b'],
 #'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin': [defaultdict(list),'bin', 'b'],
 #'performance_20230221-202602_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux_tot': [defaultdict(list),'aux_tot', 'b'],

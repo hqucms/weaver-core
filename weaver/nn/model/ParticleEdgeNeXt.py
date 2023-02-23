@@ -485,9 +485,9 @@ class MultiScaleEdgeConv(nn.Module):
             nn.BatchNorm2d(num_aux_classes_regr),
             nn.ReLU(),
             nn.Conv2d(num_aux_classes_regr, num_aux_classes_regr, kernel_size=1, bias=False),
+            #nn.Linear(num_aux_classes_regr, num_aux_classes_regr, bias=False),
         ) if num_aux_classes_regr != 0 else None
 
-        #todo
         self.pair_fc = nn.Sequential(
             nn.BatchNorm2d(message_dim),
             nn.ReLU(),
