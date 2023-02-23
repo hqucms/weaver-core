@@ -110,9 +110,9 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
     if aux_label_counter is not None:
         aux_label_counter.update(aux_label.cpu().numpy())
         #rel_freqs = _counter_to_relative(aux_label_counter, aux_output.size(2))
-        aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
+        aux_loss = 0. if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
     else:
-        aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
+        aux_loss = 0. if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
     #print('\naux_loss  ', aux_loss)
 
     return aux_label, aux_mask, aux_loss, aux_correct,\
@@ -287,8 +287,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
             loss = loss.item()
             comb_loss = comb_loss.item()
 
-            if not isinstance(aux_loss, int):
-                aux_loss = aux_loss.mean()
+            if not isinstance(aux_loss, float):
                 aux_loss = aux_loss.item()
 
             total_aux_loss += aux_loss
@@ -476,7 +475,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
-                loss = 0 if loss_func is None else loss_func(logits, label)
+                loss = 0. if loss_func is None else loss_func(logits, label)
 
                 #HERE
                 aux_mask_pf = None
@@ -559,16 +558,16 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 count_comb += num_examples_comb
                 correct = (preds == label).sum().item()
 
-                if not isinstance(loss, int):
+                if not isinstance(loss, float):
                     loss = loss.item()
 
                 aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
                 comb_loss = loss + aux_loss
 
-                if not isinstance(comb_loss, int):
+                if not isinstance(comb_loss, float):
                     comb_loss = comb_loss.item()
 
-                if not isinstance(aux_loss, int):
+                if not isinstance(aux_loss, float):
                     aux_loss = aux_loss.item()
 
                 total_aux_loss += aux_loss * (num_aux_examples_pf+num_aux_examples_pair)
