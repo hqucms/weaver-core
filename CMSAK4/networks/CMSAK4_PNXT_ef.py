@@ -48,13 +48,13 @@ def get_model(data_config, **kwargs):
 
 
 def get_loss(data_config, **kwargs):
-    return torch.nn.CrossEntropyLoss(reduction='none')
+    return torch.nn.CrossEntropyLoss()
 
-def get_aux_loss_clas(data_config, **kwargs):
-    return torch.nn.CrossEntropyLoss(reduction='none')
+def get_aux_loss_clas(data_config, dev, **kwargs):
+    return torch.nn.CrossEntropyLoss(weight=torch.FloatTensor([5, 10, 40, 1.5]).to(dev))
 
 def get_aux_loss_regr(data_config, **kwargs):
-    return torch.nn.MSELoss(reduction='none')
+    return torch.nn.MSELoss()
 
 def get_aux_loss_bin(data_config, **kwargs):
-    return torch.nn.BCEWithLogitsLoss(reduction='none')
+    return torch.nn.BCEWithLogitsLoss()

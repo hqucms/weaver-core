@@ -147,6 +147,8 @@ parser.add_argument('--val', action='store_true', default=False,
                     help='perform only validation on the model state given in `--model-prefix`')
 parser.add_argument('--train', action='store_true', default=False,
                     help='perform only training on the model state given in `--model-prefix`')
+parser.add_argument('--no-aux', action='store_true', default=False,
+                    help='do not consider auxiliary loss when training')
 parser.add_argument('--val-epochs', type=str, default='-1',
                     help='epochs on which the validation is performed'
                     'if not provided perform on every epoch'
@@ -365,7 +367,7 @@ def onnx(args):
 
     from weaver.utils.dataset import DataConfig
     data_config = DataConfig.load(args.data_config, load_observers=False, load_reweight_info=False)
-    model, model_info, _ = model_setup(args, data_config)
+    model, model_info, _ = model_setup(args, data_config, torch.device('cpu'))
     model.load_state_dict(torch.load(model_path, map_location='cpu'))
     model = model.cpu()
     model.eval()
@@ -583,7 +585,7 @@ def optim(args, model, device):
     return opt, scheduler
 
 
-def model_setup(args, data_config):
+def model_setup(args, data_config, dev):
     """
     Loads the model
     :param args:
@@ -608,7 +610,7 @@ def model_setup(args, data_config):
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
-        aux_loss_func_clas = network_module.get_aux_loss_clas(data_config, **network_options)
+        aux_loss_func_clas = network_module.get_aux_loss_clas(data_config, dev, **network_options)
         aux_loss_func_regr = network_module.get_aux_loss_regr(data_config, **network_options)
         aux_loss_func_bin = network_module.get_aux_loss_bin(data_config, **network_options)
         _logger.info('Using loss function %s with options %s' % (loss_func, network_options))
@@ -695,23 +697,30 @@ def save_parquet(args, output_path, scores, labels, observers):
     ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
 
 
-def copy_log(args, start_epoch, end_epoch, type_log = ""):
+def copy_log(args, epoch, type_log = ""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
     log_name=os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}{type_log}.log')
-    shutil.copy2(args.log, log_name)
-    if type_log == "":
-        try:
-            os.remove(os.path.join(performance_dir,
-                f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
-        except FileNotFoundError:
-            pass
-    try:
-        os.remove(os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{type_log}.log'))
-    except FileNotFoundError:
-        pass
+        f'{dirname.split("/")[-1].strip()}{epoch}{type_log}.log')
+    old_log_file=open(args.log).read()
+    with open(log_name, 'w') as f:
+        new_log = old_log_file[:old_log_file.index('Epoch #')]
+        new_log += old_log_file[old_log_file.index(f'Epoch #{epoch} {type_log}'):]
+        f.write(new_log)
+
+    # shutil.copy2(args.log, log_name)
+    # if type_log == "":
+    #     try:
+    #         os.remove(os.path.join(performance_dir,
+    #             f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
+    #     except FileNotFoundError:
+    #         pass
+    # try:
+    #     os.remove(os.path.join(performance_dir,
+    #     f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{type_log}.log'))
+    # except FileNotFoundError:
+    #     pass
+
     _logger.info('log file copied to: \n%s' % log_name)
     _logger.info('Performance data are stored in directoy: \n%s/' % performance_dir)
 
@@ -835,7 +844,7 @@ def _main(args):
         iotest(args, data_loader)
         return
 
-    model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin = model_setup(args, data_config)
+    model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin = model_setup(args, data_config, dev)
 
     # TODO: load checkpoint
     # if args.backend is not None:
@@ -922,7 +931,7 @@ def _main(args):
             else:
                 _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=args.no_aux)
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 suffix=dirname.split('/')[-1].strip()
@@ -943,7 +952,7 @@ def _main(args):
 
             if epoch<start_epoch: start_epoch=epoch
             if epoch>end_epoch: end_epoch=epoch
-            copy_log(args, start_epoch, end_epoch, 'train')
+            copy_log(args, epoch, 'train')
 
             if not args.train:
                 _logger.info('Epoch #%d validating' % epoch)
@@ -962,7 +971,7 @@ def _main(args):
                         best_valid_aux_metric_pair, valid_aux_metric_pair,
                         best_valid_aux_loss, valid_aux_loss,
                         local_rank, epoch, roc_prefix)
-                copy_log(args, start_epoch, end_epoch)
+                copy_log(args,epoch, 'val')
 
     if args.data_test:
         if args.backend is not None and local_rank != 0:
@@ -1033,7 +1042,7 @@ def _main(args):
                         best_valid_aux_metric_pair, valid_aux_metric_pair,
                         best_valid_aux_loss, valid_aux_loss,
                         local_rank, epoch, roc_prefix)
-                    copy_log(args, start_epoch, end_epoch, "val")
+                    copy_log(args, epoch, "val")
             else:
                 for name, get_test_loader in test_loaders.items():
                     test_loader = get_test_loader()

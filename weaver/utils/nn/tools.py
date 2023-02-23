@@ -77,8 +77,17 @@ def _trace_handler(prof):
     #print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=-1))
     pass
 
+def _counter_to_relative(counter, lenght):
+    total_count = sum(counter.values())
+    relative = torch.zeros([lenght], dtype=torch.float64)
+    #print(counter.keys())
+    for key in counter.keys():
+        relative[key] = total_count / counter[key]
+    #print(relative)
+    return relative
+
 def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
-                num_aux_examples,total_aux_correct, loss, aux_loss_tot, dev,
+                num_aux_examples,total_aux_correct, dev,
                 aux_label_counter=None, aux_scores=None):
 
     #WARNING the mask is not valid if the tensor in question is the pf_vtx because
@@ -87,7 +96,6 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
         aux_mask = (aux_label[:, :, 0] != -1).flatten()
     #print('\n aux_label1\n', aux_label.size(), aux_label)
 
-    #aux_logits=aux_output.flatten(end_dim=1).to(dev)[aux_mask, :]
     aux_label, aux_logits, aux_correct, aux_scores = _flatten_aux(aux_label, aux_output, dev, aux_mask, aux_scores)
     total_aux_correct += aux_correct
 
@@ -99,25 +107,15 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
     #print('\n num_aux_examples\n', num_aux_examples)
     #print('\n aux_logits_clas\n', aux_logits, aux_logits.size())
 
-    #HERE? scores
     if aux_label_counter is not None:
         aux_label_counter.update(aux_label.cpu().numpy())
-    #print('aux_logits\n', aux_logits.size(), aux_logits)
+        #rel_freqs = _counter_to_relative(aux_label_counter, aux_output.size(2))
+        aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
+    else:
+        aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)
+    #print('\naux_loss  ', aux_loss)
 
-    aux_loss = 0 if aux_loss_func is None else aux_loss_func(aux_logits, aux_label).to(dev)#.flatten()
-    #print('\naux_loss\n', aux_loss.size())
-    if not isinstance(aux_loss, int):
-        try:
-            loss = torch.cat((loss, aux_loss), dim=0)
-        except TypeError:
-            loss = aux_loss
-        try:
-            aux_loss_tot = torch.cat((aux_loss_tot, aux_loss), dim=0)
-        except TypeError:
-            aux_loss_tot = aux_loss
-    #print('\nloss_sum\n', loss)
-
-    return aux_label, aux_mask, loss, aux_loss_tot, aux_correct,\
+    return aux_label, aux_mask, aux_loss, aux_correct,\
         total_aux_correct, num_aux_examples, aux_label_counter, aux_scores
 
 
@@ -128,7 +126,9 @@ def save_labels_best_epoch(infile):
         _logger.info('File %s not found! Moving on to the next one.', infile)
 
 
-def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None, tb_helper=None):
+def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, \
+                        opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, \
+                        grad_scaler=None, tb_helper=None, no_aux=False):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -207,47 +207,38 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 logits = _flatten_preds(model_output, label_mask)
                 #print('\nlogits\n', logits.size(), logits)
                 loss = loss_func(logits, label)
-                #print('\n\n\nloss', loss.size(), loss)
+                #print('\nloss', loss.size(), loss)
 
                 aux_mask_pf = None
                 num_aux_examples_pf = 0
                 num_aux_examples_pair = 0
                 aux_correct_pf_clas = 0
                 aux_correct_pair_bin = 0
-                aux_loss = 0
-                comb_loss = loss
+
+                aux_loss_pf_clas=0
+                aux_loss_pf_regr=0
+                aux_loss_pair_bin=0
 
                 if aux_label_pf_clas is not None:
-                    _, aux_mask_pf, comb_loss, aux_loss, aux_correct_pf_clas, \
+                    _, aux_mask_pf, aux_loss_pf_clas, aux_correct_pf_clas, \
                         total_aux_correct_pf_clas, num_aux_examples_pf,\
                         aux_label_counter_pf, _ = \
                         _aux_halder(aux_output_clas,
                                     aux_label_pf_clas[:, :aux_output_clas.size(1), :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pf)
+                                    dev, aux_label_counter_pf)
 
                 if aux_label_pf_regr is not None:
-                    _, aux_mask_pf, comb_loss, aux_loss, aux_correct_pf_regr, \
+                    _, aux_mask_pf, aux_loss_pf_regr, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, _ = \
                         _aux_halder(aux_output_regr,
                                     aux_label_pf_regr[:, :aux_output_regr.size(1), :],
                                     aux_mask_pf, aux_loss_func_regr,
-                                    num_aux_examples_pf,total_aux_correct_pf_regr,
-                                    comb_loss, aux_loss, dev)
+                                    num_aux_examples_pf,total_aux_correct_pf_regr,dev)
 
                 if aux_label_pair_bin is not None:
-                    '''aux_mask_pair = aux_label_pair_bin != -2
-                    aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
-                    print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
-                    pair_num_pf = y['pair_num_pf']
-                    print('\n\ pair_num_pf\n', pair_num_pf.size(),'\n', pair_num_pf)
-
-                    aux_output_pair = (aux_output_pair[aux_mask_pair])
-                    aux_mask_pair_or = (aux_label_pair_bin != -1) & (aux_label_pair_bin != -2) & (aux_output_pair != 0)'''
-
-
                     aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
                     aux_mask_pair = aux_label_pair_bin[:,0,:,0] != -2
                     aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
@@ -257,8 +248,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     if len([k for k in data_config.aux_label_names if 'pair_threshold' in k]) == 1:
                         aux_label_pair_bin = (aux_label_pair_bin < y['pair_threshold'][0]).int() #0.02
 
-
-                    _, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
+                    _, aux_mask_pair_or, aux_loss_pair_bin, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
                         num_aux_examples_pair, \
                         aux_label_counter_pair, _ = \
@@ -266,14 +256,19 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                                     aux_label_pair_bin,
                                     aux_mask_pair_or, aux_loss_func_bin,
                                     num_aux_examples_pair,total_aux_correct_pair_bin,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pair)
+                                    dev, aux_label_counter_pair)
 
 
                 aux_count_pf += num_aux_examples_pf
                 aux_count_pair += num_aux_examples_pair
 
-            loss = loss.mean()
-            comb_loss = comb_loss.mean()
+            aux_loss = aux_loss_pf_clas + 0.4*aux_loss_pf_regr + aux_loss_pair_bin
+
+            if no_aux:
+                comb_loss = loss
+            else:
+                comb_loss = loss + aux_loss
+
             if grad_scaler is None:
                 comb_loss.backward()
                 opt.step()
@@ -281,6 +276,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 grad_scaler.scale(comb_loss).backward()
                 grad_scaler.step(opt)
                 grad_scaler.update()
+
+            comb_loss = loss + aux_loss
+            #print('comb_loss:', comb_loss)
 
             if scheduler and getattr(scheduler, '_update_per_step', False):
                 scheduler.step()
@@ -365,7 +363,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
     _logger.info('Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     _logger.info('Train auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
-    _logger.info('Train auxliliary class distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
+    _logger.info('Train auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
 
     if tb_helper:
         tb_helper.write_scalars([
@@ -486,29 +484,31 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 num_aux_examples_pair = 0
                 aux_correct_pf_clas = 0
                 aux_correct_pair_bin = 0
-                aux_loss = 0
-                comb_loss = loss
+
+                aux_loss_pf_clas=0
+                aux_loss_pf_regr=0
+                aux_loss_pair_bin=0
 
                 if aux_label_pf_clas is not None:
-                    aux_label_pf_clas_masked, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_clas, \
+                    aux_label_pf_clas_masked, aux_mask_pf, aux_loss_pf_clas, aux_correct_pf_clas, \
                         total_aux_correct_pf_clas,\
                         num_aux_examples_pf, aux_label_counter_pf, aux_scores_pf_clas = \
                         _aux_halder(aux_output_clas,
                                     aux_label_pf_clas[:, :aux_output_clas.size(1), :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pf, aux_scores_pf_clas)
+                                    dev, aux_label_counter_pf, aux_scores_pf_clas)
                     aux_labels['pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
 
                 if aux_label_pf_regr is not None:
-                    aux_label_pf_regr_masked, aux_mask_pf,comb_loss, aux_loss, aux_correct_pf_regr, \
+                    aux_label_pf_regr_masked, aux_mask_pf,aux_loss_pf_regr, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, aux_scores_pf_regr = \
                         _aux_halder(aux_output_regr,
                                     aux_label_pf_regr[:, :aux_output_regr.size(1), :],
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
-                                    comb_loss, aux_loss, dev, aux_scores=aux_scores_pf_regr)
+                                    dev, aux_scores=aux_scores_pf_regr)
                     aux_labels['pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
 
                 if aux_label_pair_bin is not None:
@@ -527,7 +527,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     #print('\n aux_mask_pair', aux_mask_pair.size(), aux_mask_pair)
                     #print('\n aux_mask_pair_or', aux_mask_pair_or.size(), aux_mask_pair_or)
 
-                    aux_label_pair_bin_masked, aux_mask_pair_or, comb_loss, aux_loss, aux_correct_pair_bin, \
+                    aux_label_pair_bin_masked, aux_mask_pair_or, aux_loss_pair_bin, aux_correct_pair_bin, \
                         total_aux_correct_pair_bin,\
                         num_aux_examples_pair, \
                         aux_label_counter_pair, aux_scores_pair_bin = \
@@ -535,7 +535,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                                     aux_label_pair_bin,
                                     aux_mask_pair_or, aux_loss_func_bin,
                                     num_aux_examples_pair,total_aux_correct_pair_bin,
-                                    comb_loss, aux_loss, dev, aux_label_counter_pair, aux_scores_pair_bin)
+                                    dev, aux_label_counter_pair, aux_scores_pair_bin)
                     aux_labels['pair_bin'].append(aux_label_pair_bin_masked.cpu().numpy())
 
 
@@ -560,15 +560,15 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 correct = (preds == label).sum().item()
 
                 if not isinstance(loss, int):
-                    loss = loss.mean()
                     loss = loss.item()
 
+                aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
+                comb_loss = loss + aux_loss
+
                 if not isinstance(comb_loss, int):
-                    comb_loss = comb_loss.mean()
                     comb_loss = comb_loss.item()
 
                 if not isinstance(aux_loss, int):
-                    aux_loss = aux_loss.mean()
                     aux_loss = aux_loss.item()
 
                 total_aux_loss += aux_loss * (num_aux_examples_pf+num_aux_examples_pair)
@@ -636,7 +636,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
     _logger.info('Train auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
-    _logger.info('Train auxliliary class distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
+    _logger.info('Train auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
 
     if tb_helper:
         tb_mode = 'eval' if for_training else 'test'

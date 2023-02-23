@@ -42,14 +42,17 @@ label_dict={
 
     # 'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
     #    [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
-    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection':
-         [defaultdict(list),defaultdict(list),'clas', 'b-'],
-    # 'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-    #    [defaultdict(list),defaultdict(list),'ef', 'g-'],
-    'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
-         [defaultdict(list),defaultdict(list),'aux', 'r'],
-    'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
-        [defaultdict(list),defaultdict(list),'regr', 'c'],
+    # 'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection':
+    #      [defaultdict(list),defaultdict(list),'clas', 'b-'],
+    # # 'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+    # #    [defaultdict(list),defaultdict(list),'ef', 'g-'],
+    # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
+    #      [defaultdict(list),defaultdict(list),'aux', 'r'],
+    # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
+    #     [defaultdict(list),defaultdict(list),'regr', 'c'],
+        'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin':
+        [defaultdict(list),defaultdict(list),'bin', 'c'],
+
 }
 
 epoch_list= [0,1,2,3,4,12,16,19]
@@ -57,21 +60,21 @@ roc_type_list=["regr"]
 best_dict=defaultdict(defaultdict)
 
 roc_type_dict=OrderedDict([
-    # ("pf_clas",{
-    #     "pf_clas" : [[0,2], [1,3]]
-    # }),
+    ("pair_bin",{
+        "pair_bin" : [[0], None]
+    }),
+    ("pf_clas",{
+        "pf_clas" : [[0,2], [1,3]]
+    }),
     ("pf_regr",{
         "pf_regr" : [None, None]
     }),
-    ("pair_bin",{
-        "pair_bin" : [[1], [0]]
-    }),
     #jet
-    # ("label",{
-    #     "bVSuds":[[0,1], [4]],
-    #     "bVSg":[[0,1], [5]],
-    #     "bVSudsg":[[0,1], [4,5]]
-    # }),
+    ("label",{
+        "bVSuds":[[0,1], [4]],
+        "bVSg":[[0,1], [5]],
+        "bVSudsg":[[0,1], [4,5]]
+    }),
 ])
 
 axis_limits ={
@@ -82,42 +85,48 @@ axis_limits ={
 }
 
 def get_labels(y_true, y_score, labels_s, labels_b):
-    y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
-    y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
-    y_true_idx = np.logical_or(y_true_s,y_true_b)
-    y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
-    y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
-    y_score_tot=y_score_s+y_score_b
-    y_score_tot = y_score_tot[y_true_idx]
-    y_true_tot=y_true_s[y_true_idx].astype(int)
+    if labels_b is None:
+        y_true_tot = y_true
+        y_score_tot = y_score > 0.5
+    else:
+        y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
+        y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
+        y_true_idx = np.logical_or(y_true_s,y_true_b)
+        y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
+        y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
+        y_score_tot=y_score_s+y_score_b
+        y_score_tot = y_score_tot[y_true_idx]
+        y_true_tot=y_true_s[y_true_idx].astype(int)
 
     return y_true_tot, y_score_tot
 
 def get_rates(y_t, y_s, l_s, l_b):
-    if l_s is None or l_b is None:
+    if l_s is None and l_b is None:
         fpr, tpr, roc_auc = y_s, y_t, np.nan
     else:
-        y_true, y_score=get_labels(y_t,  y_s, l_s, l_b)
-        fpr, tpr, thresh=_m.roc_curve(y_true, y_score)
+        y_true, y_score = get_labels(y_t,  y_s, l_s, l_b)
+        fpr, tpr, thresh = _m.roc_curve(y_true, y_score)
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
 def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
     if 'regr' in roc_type:
-        plt.plot([-40, 40], [-40, 40], 'y--', label='True == Reco')
         #plt.axis('square')
-        plt.xlabel('True')
-        plt.ylabel('Reco')
-        plt.xlim([axis_lim[0], axis_lim[1]])
-        plt.ylim([axis_lim[2], axis_lim[3]])
+        plt.xlabel('error')
+        if "error" not in network:
+            plt.xlim([axis_lim[0], axis_lim[1]])
+            plt.xlabel('True')
+            plt.ylabel('Reco')
+            plt.plot([-40, 40], [-40, 40], 'y--', label='True == Reco')
+            plt.ylim([axis_lim[2], axis_lim[3]])
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
         plt.ylim([0.0005, 1.05])
         plt.xlim([0.55, 1.0005])
         plt.yscale('log')
-    plt.title(f'{roc_type}_{network}{name}')
     plt.legend()
+    plt.title(f'{roc_type}_{network}{name}')
     if args.s:
         with open(f'roc_curve/roc_curve_{roc_type}_{network}{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
@@ -199,4 +208,18 @@ for roc_type, net_dict in best_dict.items():
                 #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
                 plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
             plt.colorbar().set_label('Density')
-            plt_fts(roc_type, "best", fig_handle, axis_limits[i][1], axis_limits[i][2])
+            plt_fts(roc_type, "best_scatter", fig_handle, axis_limits[i][1], axis_limits[i][2])
+
+            fig_handle = plt.figure()
+            for network, rates in net_dict.items():
+                x_t=rates[1][:, i]
+                y_r=rates[0][:, i]
+                mask= (x_t!=0.)
+                x_t =x_t[mask]
+                y_r=y_r[mask]
+
+                #if i == 2 or i==1: print(x_t, y_r, type(x_t))
+                #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
+
+                plt.hist((x_t-y_r),  bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
+                plt_fts(roc_type, f"best_error_{network}", fig_handle, None, axis_limits[i][2])

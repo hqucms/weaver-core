@@ -485,8 +485,8 @@ class MultiScaleEdgeConv(nn.Module):
             nn.BatchNorm2d(num_aux_classes_regr),
             nn.ReLU(),
             nn.Conv2d(num_aux_classes_regr, num_aux_classes_regr, kernel_size=1, bias=False),
-            #nn.Linear(num_aux_classes_regr, num_aux_classes_regr, bias=False),
         ) if num_aux_classes_regr != 0 else None
+        self.linear = nn.Linear(num_aux_classes_regr, num_aux_classes_regr, bias=False)
 
         self.pair_fc = nn.Sequential(
             nn.BatchNorm2d(message_dim),
@@ -611,12 +611,14 @@ class MultiScaleEdgeConv(nn.Module):
             fts_out_label_clas = None
         if self.node_fc_regr is not None:
             fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_pf, num_aux_label
+            #print('fts_out_label_regr1:\n', fts_out_label_regr, fts_out_label_regr.size())
+            fts_out_label_regr=self.linear(fts_out_label_regr)# batch size, num_pf, num_aux_label
+            #print('fts_out_label_regr2:\n', fts_out_label_regr, fts_out_label_regr.size())
         else :
             fts_out_label_regr = None
 
 
         #print('fts_out_label_clas:\n', fts_out_label_clas, fts_out_label_clas.size())
-        #print('fts_out_label_regr:\n', fts_out_label_regr, fts_out_label_regr.size())
         return pts_out, fts_out, fts_out_label_clas, fts_out_label_regr, fts_out_label_pair
 
 
