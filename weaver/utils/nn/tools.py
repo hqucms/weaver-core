@@ -262,12 +262,14 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_count_pf += num_aux_examples_pf
                 aux_count_pair += num_aux_examples_pair
 
-            aux_loss = aux_loss_pf_clas + 0.4*aux_loss_pf_regr + aux_loss_pair_bin
+            aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
 
             if no_aux:
-                comb_loss = loss
+                aux_weight = 0
             else:
-                comb_loss = loss + aux_loss
+                aux_weight = 1 / (epoch+1)
+
+            comb_loss = loss + aux_weight*(aux_loss)
 
             if grad_scaler is None:
                 comb_loss.backward()
@@ -277,7 +279,6 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
-            comb_loss = loss + aux_loss
             #print('comb_loss:', comb_loss)
 
             if scheduler and getattr(scheduler, '_update_per_step', False):
@@ -561,7 +562,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 if not isinstance(loss, float):
                     loss = loss.item()
 
-                aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
+                aux_loss =aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
                 comb_loss = loss + aux_loss
 
                 if not isinstance(comb_loss, float):

@@ -40,14 +40,14 @@ label_dict={
     # 'performance_20230127-171444_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn_auxpf':
     #     [defaultdict(list),defaultdict(list),'clas', 'g-'],
 
-    # 'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-    #    [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
-    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas':
+    'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+        [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
+    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k':
          [defaultdict(list),defaultdict(list),'clas', 'r'],
-    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_noaux_clas':
-         [defaultdict(list),defaultdict(list),'clas_noaux', 'b'],
-    # # 'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-    # #    [defaultdict(list),defaultdict(list),'ef', 'g-'],
+    # 'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_noaux':
+    #      [defaultdict(list),defaultdict(list),'clas_noaux', 'b'],
+     'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
+        [defaultdict(list),defaultdict(list),'ef', 'g-'],
     # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
     #      [defaultdict(list),defaultdict(list),'aux', 'r'],
     # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
@@ -70,8 +70,9 @@ roc_type_dict=OrderedDict([
     }),
     ("pf_regr",{
         "pf_regr" : [None, None]
-    }),
-    ("jet",{
+    }),7
+    #primary
+    ("label",{
         "bVSuds":[[0,1], [4]],
         "bVSg":[[0,1], [5]],
         "bVSudsg":[[0,1], [4,5]]
@@ -172,7 +173,7 @@ if __name__ == "__main__":
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
                                                         labels[0], labels[1])
                             best_dict[roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
-                            
+
                     break
         print(best_dict)
         for label_type, labels_info in roc_type_dict.items():

@@ -91,7 +91,7 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
     for metric in eval_metrics:
         func = _get_metric(metric)
         try:
-            results[metric] = func(y_true, y_score, epoch, roc_prefix, 'jet') if 'label' in metric else func(y_true, y_score)
+            results[metric] = func(y_true, y_score, epoch, roc_prefix, 'primary') if 'label' in metric else func(y_true, y_score)
         except Exception as e:
             results[metric] = None
             _logger.error(str(e))

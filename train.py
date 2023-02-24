@@ -147,8 +147,8 @@ parser.add_argument('--val', action='store_true', default=False,
                     help='perform only validation on the model state given in `--model-prefix`')
 parser.add_argument('--train', action='store_true', default=False,
                     help='perform only training on the model state given in `--model-prefix`')
-parser.add_argument('--no-aux', action='store_true', default=False,
-                    help='do not consider auxiliary loss when training')
+parser.add_argument('--no-aux-epoch', type=float, default=1e9,
+                    help='if epoch >= `--no-aux-epoch` do not consider auxiliary loss when training')
 parser.add_argument('--val-epochs', type=str, default='-1',
                     help='epochs on which the validation is performed'
                     'if not provided perform on every epoch'
@@ -708,19 +708,6 @@ def copy_log(args, epoch, type_log = ""):
         new_log += old_log_file[old_log_file.index(f'Epoch #{epoch} {type_log}'):]
         f.write(new_log)
 
-    # shutil.copy2(args.log, log_name)
-    # if type_log == "":
-    #     try:
-    #         os.remove(os.path.join(performance_dir,
-    #             f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch}train.log'))
-    #     except FileNotFoundError:
-    #         pass
-    # try:
-    #     os.remove(os.path.join(performance_dir,
-    #     f'{dirname.split("/")[-1].strip()}{start_epoch}-{end_epoch-1}{type_log}.log'))
-    # except FileNotFoundError:
-    #     pass
-
     _logger.info('log file copied to: \n%s' % log_name)
     _logger.info('Performance data are stored in directoy: \n%s/' % performance_dir)
 
@@ -749,7 +736,7 @@ def best_epoch_handler(args, best_valid_metric, valid_metric,
             # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
 
         #save labels for roc curve of best epoch
-        for label_type in ["jet", "pf_clas_", "pf_regr_", "pair_bin_"]:
+        for label_type in ["primary_", "pf_clas_", "pf_regr_", "pair_bin_"]:
             save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch:02d}.npz')
 
     _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
@@ -919,19 +906,22 @@ def _main(args):
 
         # training loop
         grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
-        start_epoch=1e9
-        end_epoch=-1
+        no_aux = False
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
                     continue
+            if epoch >= args.no_aux_epoch:
+                no_aux=True
             _logger.info('-' * 50)
             if args.train:
                 _logger.info('Epoch #%d training only' % epoch)
             else:
                 _logger.info('Epoch #%d training' % epoch)
+
             train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=args.no_aux)
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=no_aux)
+
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 suffix=dirname.split('/')[-1].strip()
@@ -950,8 +940,6 @@ def _main(args):
             # TODO: save checkpoint
             #     save_checkpoint()
 
-            if epoch<start_epoch: start_epoch=epoch
-            if epoch>end_epoch: end_epoch=epoch
             copy_log(args, epoch, 'train')
 
             if not args.train:
@@ -1010,15 +998,7 @@ def _main(args):
             roc_prefix=os.path.join(performance_dir,suffix)
 
             if args.val:
-                start_epoch=1e9
-                end_epoch=-1
                 for epoch in val_epochs:
-                    if ',' in args.val_epochs:
-                        start_epoch=epoch
-                        end_epoch=epoch
-                    else:
-                        if epoch<start_epoch: start_epoch=epoch
-                        if epoch>end_epoch: end_epoch=epoch
                     model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
                     _logger.info('Loading model %s for eval' % model_path)
                     model.load_state_dict(torch.load(model_path, map_location=dev))
