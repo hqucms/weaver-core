@@ -30,26 +30,33 @@ infile_dict = {
 }'''
 
 infile_dict = {
-'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k': [defaultdict(list),'ef', 'b'],
+#'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k': [defaultdict(list),'ef', 'b'],
 #'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection' : [defaultdict(list),'pnxt', 'b'],
-'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr' : [defaultdict(list),'regr', 'b'],
+#'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr' : [defaultdict(list),'regr', 'b'],
 'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas' : [defaultdict(list),'clas', 'b'],
+'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_noaux_clas' : [defaultdict(list),'clas_noaux', 'b'],
 #'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux' : [defaultdict(list),'aux', 'b'],
 #'performance_20230220-232814_CMSAK4_PN_ranger_lr0.01_batch512_50M_noweights_230k': [defaultdict(list),'pn', 'b'],
-'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin': [defaultdict(list),'bin', 'b'],
+#'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin': [defaultdict(list),'bin', 'b'],
 #'performance_20230221-202602_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux_tot': [defaultdict(list),'aux_tot', 'b'],
 }
+
+def plot(name):
+    plt.xlabel('Epoch')
+    plt.legend(loc=2, prop={'size': 15})
+    plt.savefig(f'{name}.png')
+    plt.show()
 
 fig_handle = plt.figure()
 for input_name, info in infile_dict.items():
     if isinstance(input_name, str):
         dir_name=os.path.join("input", input_name)
         infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
-        print(infiles)
-        infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
+        #print(infiles)
+        infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
     elif isinstance(input_name, tuple):
         infiles=[os.path.join("input", "logs", f"{k}.log") for k in input_name]
-        infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
+        infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
     print(infiles)
     for infile in infiles:
         with open(infile) as f:
@@ -98,37 +105,26 @@ for _, info in infile_dict.items():
     for name, val in info[0].items():
         if 'aux' not in name and 'val' not in name:
             plt.plot(val, label=f'{name} {info[1]}')
-plt.xlabel('Epoch')
-plt.legend()
-plt.savefig('history.png')
-plt.show()
+plot('history')
+
 
 for _, info in infile_dict.items():
     for name, val in info[0].items():
         if 'aux' in name and 'val' not in name:
             plt.plot(val, label=f'{name} {info[1]}')
-plt.xlabel('Epoch')
-plt.legend()
-plt.savefig('history_aux.png')
-plt.show()
+plot('history_aux')
 
 for _, info in infile_dict.items():
     for name, val in info[0].items():
         if 'aux' not in name and 'val' in name:
             plt.plot(val, label=f'{name} {info[1]}')
-plt.xlabel('Epoch')
-plt.legend()
-plt.savefig('history_val.png')
-plt.show()
+plot('history_val')
 
 for _, info in infile_dict.items():
     for name, val in info[0].items():
         if 'aux' in name and 'val' in name:
             plt.plot(val, label=f'{name} {info[1]}')
-plt.xlabel('Epoch')
-plt.legend()
-plt.savefig('history_aux_val.png')
-plt.show()
+plot('history_aux_val')
 
 
 

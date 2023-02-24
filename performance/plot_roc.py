@@ -8,11 +8,11 @@ import pickle
 import argparse
 from collections import defaultdict, OrderedDict
 
-orig_stdout = sys.stdout
+'''orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
-sys.stdout = f
+sys.stdout = f'''
 
-np.set_printoptions(threshold=np.inf)
+#np.set_printoptions(threshold=np.inf)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-e', action='store_true', default=False,
@@ -42,21 +42,23 @@ label_dict={
 
     # 'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
     #    [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
-    # 'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas_selection':
-    #      [defaultdict(list),defaultdict(list),'clas', 'b-'],
+    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_clas':
+         [defaultdict(list),defaultdict(list),'clas', 'r'],
+    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_noaux_clas':
+         [defaultdict(list),defaultdict(list),'clas_noaux', 'b'],
     # # 'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
     # #    [defaultdict(list),defaultdict(list),'ef', 'g-'],
     # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
     #      [defaultdict(list),defaultdict(list),'aux', 'r'],
     # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
     #     [defaultdict(list),defaultdict(list),'regr', 'c'],
-        'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin':
-        [defaultdict(list),defaultdict(list),'bin', 'c'],
+        # 'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin':
+        # [defaultdict(list),defaultdict(list),'bin', 'c'],
 
 }
 
 epoch_list= [0,1,2,3,4,12,16,19]
-roc_type_list=["regr"]
+
 best_dict=defaultdict(defaultdict)
 
 roc_type_dict=OrderedDict([
@@ -69,8 +71,7 @@ roc_type_dict=OrderedDict([
     ("pf_regr",{
         "pf_regr" : [None, None]
     }),
-    #jet
-    ("label",{
+    ("jet",{
         "bVSuds":[[0,1], [4]],
         "bVSg":[[0,1], [5]],
         "bVSudsg":[[0,1], [4,5]]
@@ -145,8 +146,8 @@ if __name__ == "__main__":
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
                     if ('labels_best' in filename)]
-        files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
-        best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-2]))
+        files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
+        best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
         if args.e:
             for infile in files:
                 epoch = int(infile.split(".npz")[0][-2:] if infile.split(".npz")[0][-2].isnumeric() else infile.split(".npz")[0][-1])
@@ -167,12 +168,13 @@ if __name__ == "__main__":
                         y_true_best=np.load(f)['y_true']
                         y_score_best=np.load(f)['y_score']
                         for roc_type, labels in labels_info.items():
-                            print(best_file, labels)
+                            #print(best_file, labels)
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
                                                         labels[0], labels[1])
                             best_dict[roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
+                            
                     break
-
+        print(best_dict)
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
@@ -204,7 +206,7 @@ for roc_type, net_dict in best_dict.items():
                 mask= (x_t!=0.)
                 x_t =x_t[mask]
                 y_r=y_r[mask]
-                if i == 2 or i==1: print(x_t, y_r, type(x_t))
+                #if i == 2 or i==1: print(x_t, y_r, type(x_t))
                 #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
                 plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
             plt.colorbar().set_label('Density')
@@ -218,7 +220,7 @@ for roc_type, net_dict in best_dict.items():
                 x_t =x_t[mask]
                 y_r=y_r[mask]
 
-                #if i == 2 or i==1: print(x_t, y_r, type(x_t))
+                #if i == 2 or i==1: #print(x_t, y_r, type(x_t))
                 #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
 
                 plt.hist((x_t-y_r),  bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))

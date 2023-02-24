@@ -701,7 +701,7 @@ def copy_log(args, epoch, type_log = ""):
     dirname=os.path.dirname(args.model_prefix)
     performance_dir=os.path.join(dirname, f'performance_{dirname.split("/")[-1].strip()}')
     log_name=os.path.join(performance_dir,
-        f'{dirname.split("/")[-1].strip()}{epoch}{type_log}.log')
+        f'{dirname.split("/")[-1].strip()}{epoch:02d}{type_log}.log')
     old_log_file=open(args.log).read()
     with open(log_name, 'w') as f:
         new_log = old_log_file[:old_log_file.index('Epoch #')]
@@ -749,8 +749,8 @@ def best_epoch_handler(args, best_valid_metric, valid_metric,
             # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
 
         #save labels for roc curve of best epoch
-        for label_type in ["", "pf_clas_", "pf_regr_", "pair_bin_"]:
-            save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch}.npz')
+        for label_type in ["jet", "pf_clas_", "pf_regr_", "pair_bin_"]:
+            save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch:02d}.npz')
 
     _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
 

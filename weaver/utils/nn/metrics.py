@@ -62,7 +62,7 @@ def save_labels(y_true, y_score, epoch, roc_prefix, label_type):
     if label_type == "pair_bin":
         y_score = (y_score>0.5).astype(int)
 
-    outfile=f'{roc_prefix}{label_type}_labels_epoch_{epoch}.npz'
+    outfile=f'{roc_prefix}{label_type}_labels_epoch_{epoch:02d}.npz'
     if isinstance(y_true,dict):
         y_true = y_true[label_type]
     with open(outfile, 'wb') as f:
