@@ -567,7 +567,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 if not isinstance(comb_loss, float):
                     comb_loss = comb_loss.item()
 
-                if not isinstance(aux_loss, float):
+                if not isinstance(aux_loss, float) and not isinstance(aux_loss, int):
                     aux_loss = aux_loss.item()
 
                 total_aux_loss += aux_loss * (num_aux_examples_pf+num_aux_examples_pair)
