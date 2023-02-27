@@ -41,31 +41,31 @@ elif [[ "$model" == "ParT_ef" ]]; then
     batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PN" ]]; then
     modelopts="networks/CMSAK4_PN.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PN_ef" ]]; then
     modelopts="networks/CMSAK4_PN_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT" ]]; then
     modelopts="networks/CMSAK4_PNXT.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef_aux_clas" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef_aux_regr" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef_aux_bin" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef_aux" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 elif [[ "$model" == "PNXT_ef_aux_tot" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
+    batchopts="--batch-size 512 --start-lr 1e-3"
 else
     echo "Invalid model $model!"
     exit 1
@@ -83,7 +83,7 @@ $CMD \
     --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
-    --num-epochs $epochs --gpus 0,1,2,3 \
+    --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 \
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} \
     "${@:3}"
