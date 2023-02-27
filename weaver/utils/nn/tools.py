@@ -279,7 +279,6 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
-            #print('comb_loss:', comb_loss)
 
             if scheduler and getattr(scheduler, '_update_per_step', False):
                 scheduler.step()

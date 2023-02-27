@@ -800,6 +800,7 @@ def _main(args):
     training_mode = not args.predict and not args.val
     if args.val:
         args.data_test = args.data_val
+        args.gpus = 0
     local_rank = None
     # device
     if args.gpus:

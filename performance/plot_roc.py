@@ -7,6 +7,10 @@ import re
 import pickle
 import argparse
 from collections import defaultdict, OrderedDict
+import mplhep as hep
+import yaml
+
+hep.style.use("CMS")
 
 '''orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
@@ -23,40 +27,6 @@ parser.add_argument('-s', action='store_false', default=True,
                     help='save plots')
 args = parser.parse_args()
 
-label_dict={
-    #'performance_20230118-110210_CMSAK4_PNXT_ef_ranger_lr0.01_batch3072_10e6_noweights_230k_attn_batch3000':
-    #    [defaultdict(list),defaultdict(list),'pnxt_ef_noweights_10e6_batch'],
-    #'performance_20230121-000830_CMSAK4_PNXT_ranger_lr0.01_batch512_10e6_noweights_230k_attn':
-    #    [defaultdict(list),defaultdict(list),'pnxt_noweights_10e6'],
-    #'performance_20230123-102909_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_avg':
-    #    [defaultdict(list),defaultdict(list),'pnxt_ef_avg_noweights_10e6', 'g-'],
-
-    # 'performance_20230111-124803_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn':
-    #    [defaultdict(list),defaultdict(list),'ef', 'r-'],
-    # 'performance_20230119-235723_CMSAK4_PNXT_ranger_lr0.01_batch3072_10e6_noweights_230k_attn_batch3000':
-    #    [defaultdict(list),defaultdict(list),'pnxt', 'b-'],
-    # 'performance_20230122-094627_CMSAK4_PN_ranger_lr0.01_batch512_10e6_noweights_230k':
-    #    [defaultdict(list),defaultdict(list),'pn', 'k-'],
-    # 'performance_20230127-171444_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_10e6_noweights_230k_attn_auxpf':
-    #     [defaultdict(list),defaultdict(list),'clas', 'g-'],
-
-    'performance_20230218-141615_CMSAK4_PNXT_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-        [defaultdict(list),defaultdict(list),'pnxt', 'k-'],
-    'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k':
-         [defaultdict(list),defaultdict(list),'clas', 'r'],
-    # 'performance_20230218-141654_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_noaux':
-    #      [defaultdict(list),defaultdict(list),'clas_noaux', 'b'],
-     'performance_20230218-141609_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_selection':
-        [defaultdict(list),defaultdict(list),'ef', 'g-'],
-    # 'performance_20230218-143000_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_aux':
-    #      [defaultdict(list),defaultdict(list),'aux', 'r'],
-    # 'performance_20230218-141635_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_regr_selection':
-    #     [defaultdict(list),defaultdict(list),'regr', 'c'],
-        # 'performance_20230221-201930_CMSAK4_PNXT_ef_ranger_lr0.01_batch512_50M_noweights_230k_bin':
-        # [defaultdict(list),defaultdict(list),'bin', 'c'],
-
-}
-
 epoch_list= [0,1,2,3,4,12,16,19]
 
 best_dict=defaultdict(defaultdict)
@@ -70,8 +40,8 @@ roc_type_dict=OrderedDict([
     }),
     ("pf_regr",{
         "pf_regr" : [None, None]
-    }),7
-    #primary
+    }),
+    #label
     ("label",{
         "bVSuds":[[0,1], [4]],
         "bVSg":[[0,1], [5]],
@@ -119,7 +89,7 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
             plt.xlim([axis_lim[0], axis_lim[1]])
             plt.xlabel('True')
             plt.ylabel('Reco')
-            plt.plot([-40, 40], [-40, 40], 'y--', label='True == Reco')
+            plt.plot([-40, 40], [-40, 40], 'y--', label='True = Reco')
             plt.ylim([axis_lim[2], axis_lim[3]])
     else:
         plt.xlabel('Efficency for b-jet (TP)')
@@ -127,20 +97,33 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
         plt.ylim([0.0005, 1.05])
         plt.xlim([0.55, 1.0005])
         plt.yscale('log')
-    plt.legend()
-    plt.title(f'{roc_type}_{network}{name}')
+
+    hep.cms.label(rlabel="")
+    plt.legend(labelcolor='linecolor')
+    hep.cms.lumitext(f'ROC_{roc_type}_{network}{name}')
+    #plt.title(f'{roc_type}_{network}{name}')
     if args.s:
         with open(f'roc_curve/roc_curve_{roc_type}_{network}{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
-        plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}{name}.png')
+        plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}{name}.png', bbox_inches='tight')
     if args.p:
         plt.show()
     plt.close()
 
-
+def load_dict(name):
+    with open(name, 'r') as stream:
+        loaded_dict=yaml.safe_load(stream)
+    info_dict = defaultdict(list)
+    for k, v in loaded_dict.items():
+        info_dict[k].append(defaultdict(list))
+        info_dict[k].append(defaultdict(list))
+        info_dict[k].append(v[0])
+        info_dict[k].append(v[1])
+    return info_dict
 
 if __name__ == "__main__":
-    #print(roc_type_dict)
+    label_dict=load_dict('performance_comparison.yaml')
+
     for input_name, info in label_dict.items():
         dir_name=os.path.join("input", input_name)
         files = [filename for filename in os.listdir(dir_name)
@@ -175,7 +158,8 @@ if __name__ == "__main__":
                             best_dict[roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
 
                     break
-        print(best_dict)
+        #print(best_dict)
+        #print(info)
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
@@ -194,7 +178,7 @@ if __name__ == "__main__":
         if "regr" not in roc_type:
             fig_handle = plt.figure()
             for network, rates in net_dict.items():
-                plt.plot(rates[1],rates[0],rates[3]+'-',label=f'ROC {network} best, auc=%0.4f'% rates[2])
+                plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} best, auc=%0.4f'% rates[2])
             plt_fts(roc_type, "best", fig_handle)
 
 for roc_type, net_dict in best_dict.items():
@@ -204,22 +188,24 @@ for roc_type, net_dict in best_dict.items():
             for network, rates in net_dict.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
+
                 mask= (x_t!=0.)
-                x_t =x_t[mask]
-                y_r=y_r[mask]
+                #x_t, y_r = x_t[mask], y_r[mask]
+
+
                 #if i == 2 or i==1: print(x_t, y_r, type(x_t))
                 #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
                 plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
-            plt.colorbar().set_label('Density')
-            plt_fts(roc_type, "best_scatter", fig_handle, axis_limits[i][1], axis_limits[i][2])
+                plt.colorbar().set_label('Density')
+                plt_fts(roc_type, f"best_scatter_{network}", fig_handle, axis_limits[i][1], axis_limits[i][2])
 
             fig_handle = plt.figure()
             for network, rates in net_dict.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
+
                 mask= (x_t!=0.)
-                x_t =x_t[mask]
-                y_r=y_r[mask]
+                #x_t, y_r = x_t[mask], y_r[mask]
 
                 #if i == 2 or i==1: #print(x_t, y_r, type(x_t))
                 #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
