@@ -147,6 +147,8 @@ parser.add_argument('--val', action='store_true', default=False,
                     help='perform only validation on the model state given in `--model-prefix`')
 parser.add_argument('--train', action='store_true', default=False,
                     help='perform only training on the model state given in `--model-prefix`')
+parser.add_argument('--force-lr', action='store_true', default=False,
+                    help='force the lr to be `--start-lr`')
 parser.add_argument('--no-aux-epoch', type=float, default=1e9,
                     help='if epoch >= `--no-aux-epoch` do not consider auxiliary loss when training')
 parser.add_argument('--val-epochs', type=str, default='-1',
@@ -530,6 +532,9 @@ def optim(args, model, device):
         if os.path.exists(opt_state_file):
             opt_state = torch.load(opt_state_file, map_location=device)
             opt.load_state_dict(opt_state)
+            if args.force_lr:
+                for g in opt.param_groups:
+                    g['lr'] = args.start_lr
         else:
             _logger.warning('Optimizer state file %s NOT found!' % opt_state_file)
 

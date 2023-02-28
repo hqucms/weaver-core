@@ -19,15 +19,20 @@ sys.stdout = f'''
 #np.set_printoptions(threshold=np.inf)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--epochs', action='store_true', default=False,
+parser.add_argument('--epochs', type=str, default='',
                     help='roc for various epochs')
 parser.add_argument('--show', action='store_false', default=True,
                     help='show plots')
 parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
+parser.add_argument('--only-primary', action='store_true', default=False,
+                    help='only compute the primary ROC')
 args = parser.parse_args()
 
-epoch_list= [0,1,2,3,4,12,16,19]
+if args.epochs:
+    epoch_list=[int(i) for i in args.epochs.split(',')]
+else:
+    epoch_list =[]
 
 best_dict=defaultdict(defaultdict)
 
@@ -42,7 +47,7 @@ roc_type_dict=OrderedDict([
         "pf_regr" : [None, None]
     }),
     #label
-    ("label",{
+    ("primary",{
         "bVSuds":[[0,1], [4]],
         "bVSg":[[0,1], [5]],
         "bVSudsg":[[0,1], [4,5]]
@@ -96,7 +101,7 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
         plt.ylabel('Mistagging prob (FP)')
         plt.ylim([0.0005, 1.05])
         plt.xlim([0.55, 1.0005])
-        plt.yscale('log')
+        #plt.yscale('log')
 
     hep.cms.label(rlabel="")
     plt.legend(labelcolor='linecolor')
@@ -132,21 +137,23 @@ if __name__ == "__main__":
                     if ('labels_best' in filename)]
         files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
         best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
-        if args.e:
-            for infile in files:
-                epoch = int(infile.split(".npz")[0][-2:] if infile.split(".npz")[0][-2].isnumeric() else infile.split(".npz")[0][-1])
-                #print(epoch)
-                if epoch in epoch_list:
-                    for label_type, labels_info in roc_type_dict.items():
-                        if label_type in infile:
-                            for roc_type, labels in labels_info.items():
-                                with open(os.path.join(dir_name,infile), 'rb') as f:
-                                    info[0][label_type].append(np.load(f)['y_true'])
-                                    info[1][label_type].append(np.load(f)['y_score'])
-                                    break
+        for infile in files:
+            epoch = int(infile.split(".npz")[0][-2:] if infile.split(".npz")[0][-2].isnumeric() else infile.split(".npz")[0][-1])
+            if epoch in epoch_list:
+                for label_type, labels_info in roc_type_dict.items():
+                    if args.only_primary and label_type != 'primary':
+                        continue
+                    if label_type in infile:
+                        for roc_type, labels in labels_info.items():
+                            with open(os.path.join(dir_name,infile), 'rb') as f:
+                                info[0][label_type].append(np.load(f)['y_true'])
+                                info[1][label_type].append(np.load(f)['y_score'])
+                                break
 
         for best_file in best_files:
             for label_type, labels_info in roc_type_dict.items():
+                if args.only_primary and label_type != 'primary':
+                    continue
                 if label_type in best_file:
                     with open(os.path.join(dir_name,best_file), 'rb') as f:
                         y_true_best=np.load(f)['y_true']
@@ -161,9 +168,11 @@ if __name__ == "__main__":
         #print(best_dict)
         #print(info)
         for label_type, labels_info in roc_type_dict.items():
+            if "regr" in roc_type:
+                continue
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
-                    if args.epochs:
+                    if len(epoch_list) > 0:
                         fig_handle = plt.figure()
                         for num in range(len(info[0][label_type])):
                             fpr, tpr, roc_auc=get_rates(
@@ -175,40 +184,36 @@ if __name__ == "__main__":
                         plt_fts(roc_type, input_name, fig_handle)
 
     for roc_type, net_dict in best_dict.items():
-        if "regr" not in roc_type:
-            fig_handle = plt.figure()
-            for network, rates in net_dict.items():
-                plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} best, auc=%0.4f'% rates[2])
-            plt_fts(roc_type, "best", fig_handle)
+        if "regr" in roc_type:
+            continue
+        fig_handle = plt.figure()
+        for network, rates in net_dict.items():
+            plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} best, auc=%0.4f'% rates[2])
+        plt_fts(roc_type, "best", fig_handle)
 
 for roc_type, net_dict in best_dict.items():
     for i in range(4):
-        if "regr" in roc_type:
-            fig_handle = plt.figure()
-            for network, rates in net_dict.items():
-                x_t=rates[1][:, i]
-                y_r=rates[0][:, i]
+        if "regr" not in roc_type:
+            continue
+        fig_handle = plt.figure()
+        for network, rates in net_dict.items():
+            x_t=rates[1][:, i]
+            y_r=rates[0][:, i]
 
-                mask= (x_t!=0.)
-                #x_t, y_r = x_t[mask], y_r[mask]
+            mask= (x_t!=0.)
+            #x_t, y_r = x_t[mask], y_r[mask]
 
+            plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
+            plt.colorbar().set_label('Density')
+            plt_fts(roc_type, f"best_scatter_{network}", fig_handle, axis_limits[i][1], axis_limits[i][2])
 
-                #if i == 2 or i==1: print(x_t, y_r, type(x_t))
-                #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
-                plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
-                plt.colorbar().set_label('Density')
-                plt_fts(roc_type, f"best_scatter_{network}", fig_handle, axis_limits[i][1], axis_limits[i][2])
+        fig_handle = plt.figure()
+        for network, rates in net_dict.items():
+            x_t=rates[1][:, i]
+            y_r=rates[0][:, i]
 
-            fig_handle = plt.figure()
-            for network, rates in net_dict.items():
-                x_t=rates[1][:, i]
-                y_r=rates[0][:, i]
+            mask= (x_t!=0.)
+            #x_t, y_r = x_t[mask], y_r[mask]
 
-                mask= (x_t!=0.)
-                #x_t, y_r = x_t[mask], y_r[mask]
-
-                #if i == 2 or i==1: #print(x_t, y_r, type(x_t))
-                #plt.plot(x, y,rates[3]+'.',label=f'ROC {network} best, auc=%0.4f'% rates[2])
-
-                plt.hist((x_t-y_r),  bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
-                plt_fts(roc_type, f"best_error_{network}", fig_handle, None, axis_limits[i][2])
+            plt.hist((x_t-y_r), color= rates[3], bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
+            plt_fts(roc_type, f"best_error_{network}", fig_handle, None, axis_limits[i][2])
