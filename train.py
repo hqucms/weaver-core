@@ -882,7 +882,6 @@ def _main(args):
             best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
             best_valid_aux_metric_pair)
 
-    print('\n best_valid_metric\n', best_valid_metric)
 
 
 

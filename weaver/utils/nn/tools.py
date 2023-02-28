@@ -634,8 +634,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
-    _logger.info('Train auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
-    _logger.info('Train auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
+    _logger.info('Evaluation auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
+    _logger.info('Evaluation auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
 
     if tb_helper:
         tb_mode = 'eval' if for_training else 'test'

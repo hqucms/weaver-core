@@ -19,11 +19,11 @@ sys.stdout = f'''
 #np.set_printoptions(threshold=np.inf)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-e', action='store_true', default=False,
+parser.add_argument('--epochs', action='store_true', default=False,
                     help='roc for various epochs')
-parser.add_argument('-p', action='store_false', default=True,
-                    help='print plots')
-parser.add_argument('-s', action='store_false', default=True,
+parser.add_argument('--show', action='store_false', default=True,
+                    help='show plots')
+parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 args = parser.parse_args()
 
@@ -102,11 +102,11 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
     plt.legend(labelcolor='linecolor')
     hep.cms.lumitext(f'ROC_{roc_type}_{network}{name}')
     #plt.title(f'{roc_type}_{network}{name}')
-    if args.s:
+    plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}{name}.png', bbox_inches='tight')
+    if args.save:
         with open(f'roc_curve/roc_curve_{roc_type}_{network}{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
-        plt.savefig(f'roc_curve/roc_curve_{roc_type}_{network}{name}.png', bbox_inches='tight')
-    if args.p:
+    if args.show:
         plt.show()
     plt.close()
 
@@ -163,7 +163,7 @@ if __name__ == "__main__":
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
-                    if args.e:
+                    if args.epochs:
                         fig_handle = plt.figure()
                         for num in range(len(info[0][label_type])):
                             fpr, tpr, roc_auc=get_rates(

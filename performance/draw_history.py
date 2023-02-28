@@ -16,9 +16,11 @@ sys.stdout = f'''
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-p', action='store_false', default=True,
-                    help='print plots')
-parser.add_argument('-s', action='store_true', default=False,
+parser.add_argument('--show', action='store_false', default=True,
+                    help='show plots')
+parser.add_argument('--save', action='store_true', default=False,
+                    help='save plots')
+parser.add_argument('--last-epoch', type=int, default=100,
                     help='save plots')
 args = parser.parse_args()
 
@@ -46,10 +48,10 @@ def plot(name, fig_handle):
     hep.cms.lumitext(f'{name}')
     plt.legend()#loc=2, prop={'size': 15})
     plt.savefig(f'history_plot/history_{name}.png', bbox_inches='tight')
-    if args.s:
+    if args.save:
         with open(f'history_plot/{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
-    if args.p:
+    if args.show:
         plt.show()
 
 def load_dict(name):
@@ -91,7 +93,7 @@ if __name__ == "__main__":
         for _, info in infile_dict.items():
             for name, value in info[0].items():
                 if name == history:
-                    plt.plot(value, info[2], label=f'{name} {info[1]}')
+                    plt.plot(value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
         plot(history, fig_handle)
 
 
