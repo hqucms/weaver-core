@@ -34,7 +34,7 @@ if args.epochs:
 else:
     epoch_list =[]
 
-best_dict=defaultdict(defaultdict)
+epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 
 roc_type_dict=OrderedDict([
     ("pair_bin",{
@@ -101,7 +101,7 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
         plt.ylabel('Mistagging prob (FP)')
         plt.ylim([0.0005, 1.05])
         plt.xlim([0.55, 1.0005])
-        #plt.yscale('log')
+        plt.yscale('log')
 
     hep.cms.label(rlabel="")
     plt.legend(labelcolor='linecolor')
@@ -159,13 +159,11 @@ if __name__ == "__main__":
                         y_true_best=np.load(f)['y_true']
                         y_score_best=np.load(f)['y_score']
                         for roc_type, labels in labels_info.items():
-                            #print(best_file, labels)
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
                                                         labels[0], labels[1])
-                            best_dict[roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
+                            epochs_dict['best'][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
 
                     break
-        #print(best_dict)
         #print(info)
         for label_type, labels_info in roc_type_dict.items():
             if "regr" in roc_type:
@@ -178,42 +176,45 @@ if __name__ == "__main__":
                             fpr, tpr, roc_auc=get_rates(
                                 info[0][label_type][num],info[1][label_type][num],
                                 labels[0], labels[1])
+                            epochs_dict[epoch_list[num]][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
 
                             plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
 
-                        plt_fts(roc_type, input_name, fig_handle)
+                        plt_fts(roc_type, info[2], fig_handle)
+    print(epochs_dict)
 
-    for roc_type, net_dict in best_dict.items():
-        if "regr" in roc_type:
-            continue
-        fig_handle = plt.figure()
-        for network, rates in net_dict.items():
-            plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} best, auc=%0.4f'% rates[2])
-        plt_fts(roc_type, "best", fig_handle)
+    for epoch, best_dict in epochs_dict.items():
+        for roc_type, net_dict in best_dict.items():
+            if "regr" in roc_type:
+                continue
+            fig_handle = plt.figure()
+            for network, rates in net_dict.items():
+                plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
+            plt_fts(roc_type, epoch, fig_handle)
 
-for roc_type, net_dict in best_dict.items():
-    for i in range(4):
-        if "regr" not in roc_type:
-            continue
-        fig_handle = plt.figure()
-        for network, rates in net_dict.items():
-            x_t=rates[1][:, i]
-            y_r=rates[0][:, i]
+        for roc_type, net_dict in best_dict.items():
+            for i in range(4):
+                if "regr" not in roc_type:
+                    continue
+                fig_handle = plt.figure()
+                for network, rates in net_dict.items():
+                    x_t=rates[1][:, i]
+                    y_r=rates[0][:, i]
 
-            mask= (x_t!=0.)
-            #x_t, y_r = x_t[mask], y_r[mask]
+                    mask= (x_t!=0.)
+                    #x_t, y_r = x_t[mask], y_r[mask]
 
-            plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
-            plt.colorbar().set_label('Density')
-            plt_fts(roc_type, f"best_scatter_{network}", fig_handle, axis_limits[i][1], axis_limits[i][2])
+                    plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet)
+                    plt.colorbar().set_label('Density')
+                    plt_fts(roc_type, f"{epoch}_scatter_{network}", fig_handle, axis_limits[i][1], axis_limits[i][2])
 
-        fig_handle = plt.figure()
-        for network, rates in net_dict.items():
-            x_t=rates[1][:, i]
-            y_r=rates[0][:, i]
+                fig_handle = plt.figure()
+                for network, rates in net_dict.items():
+                    x_t=rates[1][:, i]
+                    y_r=rates[0][:, i]
 
-            mask= (x_t!=0.)
-            #x_t, y_r = x_t[mask], y_r[mask]
+                    mask= (x_t!=0.)
+                    #x_t, y_r = x_t[mask], y_r[mask]
 
-            plt.hist((x_t-y_r), color= rates[3], bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
-            plt_fts(roc_type, f"best_error_{network}", fig_handle, None, axis_limits[i][2])
+                    plt.hist((x_t-y_r), color= rates[3], bins=axis_limits[i][0][0], label=network, range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
+                    plt_fts(roc_type, f"{epoch}_error_{network}", fig_handle, None, axis_limits[i][2])
