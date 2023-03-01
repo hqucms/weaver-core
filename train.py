@@ -1133,7 +1133,8 @@ def _main(args):
                                     aux_loss_func_bin=aux_loss_func_bin,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
                                     eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
-                                    eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels_pf_clas', 'aux_save_labels_pf_regr', 'aux_save_labels_pair_bin'],)
+                                    eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels_pf_clas', 'aux_save_labels_pf_regr', 'aux_save_labels_pair_bin'],
+                                    type_eval='test')
 
                         best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                         best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\

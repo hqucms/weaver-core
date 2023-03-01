@@ -348,6 +348,13 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     with torch.no_grad():
                         tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
 
+                divisions = 3
+                for i in range(1, divisions):
+                    if num_batches == (steps_per_epoch // divisions)*i:
+                        _logger.info('Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' % (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count), color='bold')
+                        _logger.info('Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair), color='bold')
+
+
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                 break
 
@@ -358,8 +365,8 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
-    _logger.info('Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
-    _logger.info('Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
+    _logger.info('Epoch #%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' % (epoch, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count), color='bold')
+    _logger.info('Epoch #%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (epoch, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair), color='bold')
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     _logger.info('Train auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
     _logger.info('Train auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
@@ -383,7 +390,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                             aux_loss_func_clas=None, aux_loss_func_regr=None, aux_loss_func_bin=None, steps_per_epoch=None,
                             eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
                             eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin'],
-                            tb_helper=None, roc_prefix=None):
+                            tb_helper=None, roc_prefix=None, type_eval='validation'):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -604,7 +611,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     avg_aux_acc_pair=0
 
                 tq.set_postfix({
-                    'Val epoch':epoch,
+                    f'{type_eval} epoch':epoch,
                     'Steps':steps_per_epoch,
                     'CombLoss': '%.5f' % comb_loss,
                     'AvgCombLoss': '%.5f' % (total_comb_loss / count_comb),
@@ -626,10 +633,17 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                             tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches,
                                                 mode='eval' if for_training else 'test')
 
+                divisions = 3
+                for i in range(1, divisions):
+                    if num_batches == (steps_per_epoch // divisions)*i:
+                        _logger.info('Epoch #%d %d/%d: Current %s metric: %.5f ()  //  Current %s combined loss: %.5f ()  //  Current %s loss: %.5f ()' %
+                                    (epoch, i, divisions, type_eval, total_correct / count, type_eval, total_comb_loss / count_comb, type_eval, total_loss / count), color='bold')
+                        _logger.info('Epoch #%d %d/%d: Current %s aux metric PF: %.5f ()  //  Current %s aux distance: %.5f ()  //  Current %s aux metric pair: %.5f ()  //  Current %s aux loss: %.5f ()' %
+                                    (epoch, i, divisions, type_eval, avg_aux_acc_pf, type_eval, avg_aux_dist, type_eval, avg_aux_acc_pair, type_eval, avg_aux_loss), color='bold')
+
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
 
-                #if num_batches % 500 == 0:
 
 
     time_diff = time.time() - start_time

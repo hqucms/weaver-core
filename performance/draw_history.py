@@ -40,6 +40,13 @@ history_dict = {
     'aux_val_dist': ('validation aux distance: ', ' ('),
     'aux_val_metricPair': ('validation aux metric pair: ', ' ('),
     'aux_val_loss': ('validation aux loss: ', ' ('),
+    'primary_test_metric': ('test metric: ', ' ('),
+    'primary_test_loss': ('test loss: ', ' ('),
+    'comb_test_loss': ('test combined loss: ', ' ('),
+    'aux_test_metricPF': ('test aux metric PF: ', ' ('),
+    'aux_test_dist': ('test aux distance: ', ' ('),
+    'aux_test_metricPair': ('test aux metric pair: ', ' ('),
+    'aux_test_loss': ('test aux loss: ', ' ('),
 }
 
 def plot(name, fig_handle):
