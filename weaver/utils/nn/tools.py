@@ -381,7 +381,8 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
 def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None,
                             aux_loss_func_clas=None, aux_loss_func_regr=None, aux_loss_func_bin=None, steps_per_epoch=None,
-                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
+                            eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
+                            eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin'],
                             tb_helper=None, roc_prefix=None):
     model.eval()
 
@@ -678,7 +679,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores,
                         aux_labels, aux_scores_pf_clas, aux_scores_pf_regr,
-                        aux_scores_pair_bin, eval_metrics, epoch, roc_prefix)
+                        aux_scores_pair_bin, eval_metrics, eval_aux_metrics, epoch, roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 

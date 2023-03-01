@@ -181,7 +181,7 @@ if __name__ == "__main__":
                             plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
 
                         plt_fts(roc_type, info[2], fig_handle)
-    print(epochs_dict)
+    #print(epochs_dict)
 
     for epoch, best_dict in epochs_dict.items():
         for roc_type, net_dict in best_dict.items():

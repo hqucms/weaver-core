@@ -76,6 +76,11 @@ _metric_dict = {
     'roc_auc_score_matrix': roc_auc_score_ovo,
     'confusion_matrix': confusion_matrix,
     'save_labels': save_labels,
+    'aux_confusion_matrix_pf_clas': confusion_matrix,
+    'aux_confusion_matrix_pair_bin': confusion_matrix,
+    'aux_save_labels_pf_clas': save_labels,
+    'aux_save_labels_pf_regr': save_labels,
+    'aux_save_labels_pair_bin': save_labels,
 }
 
 
@@ -86,7 +91,7 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_score_pf_regr, aux_y_score_pair_bin,  eval_metrics=[], epoch=-1, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_score_pf_regr, aux_y_score_pair_bin,  eval_metrics=[], eval_aux_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
@@ -97,10 +102,29 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
             _logger.error(str(e))
             _logger.debug(traceback.format_exc())
 
-    results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true, aux_y_score_pf_clas, 'pf_clas')
+    aux_dict = {
+        'pf_clas':aux_y_score_pf_clas,
+        'pf_regr':aux_y_score_pf_regr,
+        'pair_bin':aux_y_score_pair_bin,
+    }
+
+    for aux_metric in eval_aux_metrics:
+        func = _get_metric(aux_metric)
+        for k, v in aux_dict.items():
+            if k in aux_metric:
+                break
+        try:
+            results[aux_metric] = func(aux_y_true, v, epoch, roc_prefix, k) if 'label' in metric else func(aux_y_true, v)
+        except Exception as e:
+            results[aux_metric] = None
+            _logger.error(str(e))
+            _logger.debug(traceback.format_exc())
+
+    '''results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true, aux_y_score_pf_clas, 'pf_clas')
     results['aux_confusion_matrix_pair_bin'] = confusion_matrix(aux_y_true, aux_y_score_pair_bin, 'pair_bin')
 
     results['aux_save_labels_pf_clas'] = save_labels(aux_y_true, aux_y_score_pf_clas, epoch, roc_prefix, 'pf_clas')
     results['aux_save_labels_pf_regr'] = save_labels(aux_y_true, aux_y_score_pf_regr, epoch, roc_prefix, 'pf_regr')
-    results['aux_save_labels_pair_bin'] = save_labels(aux_y_true, aux_y_score_pair_bin, epoch, roc_prefix, 'pair_bin')
+    results['aux_save_labels_pair_bin'] = save_labels(aux_y_true, aux_y_score_pair_bin, epoch, roc_prefix, 'pair_bin')'''
+
     return results
