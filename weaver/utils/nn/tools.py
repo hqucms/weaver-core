@@ -351,8 +351,10 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 divisions = 3
                 for i in range(1, divisions):
                     if num_batches == (steps_per_epoch // divisions)*i:
-                        _logger.info('Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' % (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count), color='bold')
-                        _logger.info('Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair), color='bold')
+                        _logger.info('Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
+                                     (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
+                        _logger.info('Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
+                                     (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
 
 
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
@@ -365,8 +367,10 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in %s (avg. speed %.1f entries/s)' % (count, time.strftime("%H:%M:%S", time.gmtime(time_diff)), count / time_diff))
-    _logger.info('Epoch #%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' % (epoch, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count), color='bold')
-    _logger.info('Epoch #%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' % (epoch, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair), color='bold')
+    _logger.info('Epoch #%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
+                 (epoch, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
+    _logger.info('Epoch #%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
+                 (epoch, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
     _logger.info('Train auxliliary class distribution PF: \n    %s', str(sorted(aux_label_counter_pf.items())))
     _logger.info('Train auxliliary binary distribution pair: \n    %s', str(sorted(aux_label_counter_pair.items())))
