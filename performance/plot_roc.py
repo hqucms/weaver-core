@@ -66,7 +66,7 @@ axis_limits ={
 def get_labels(y_true, y_score, labels_s, labels_b):
     if labels_b is None:
         y_true_tot = y_true
-        y_score_tot = y_score > 0.5
+        y_score_tot = y_score 
     else:
         y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
         y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])

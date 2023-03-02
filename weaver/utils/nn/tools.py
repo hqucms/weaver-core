@@ -215,9 +215,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_correct_pf_clas = 0
                 aux_correct_pair_bin = 0
 
-                aux_loss_pf_clas=0
-                aux_loss_pf_regr=0
-                aux_loss_pair_bin=0
+                aux_loss_pf_clas=0.
+                aux_loss_pf_regr=0.
+                aux_loss_pair_bin=0.
 
                 if aux_label_pf_clas is not None:
                     _, aux_mask_pf, aux_loss_pf_clas, aux_correct_pf_clas, \
@@ -323,7 +323,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
             tq.set_postfix({
                 'Train epoch':epoch,
-                'Steps':steps_per_epoch,
+                'Percentage':'%.5f %' % num_batches/steps_per_epoch*100,
                 'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'CombLoss': '%.5f' % comb_loss,
                 'AvgCombLoss': '%.5f' % (total_comb_loss / num_batches),
@@ -496,9 +496,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 aux_correct_pf_clas = 0
                 aux_correct_pair_bin = 0
 
-                aux_loss_pf_clas=0
-                aux_loss_pf_regr=0
-                aux_loss_pair_bin=0
+                aux_loss_pf_clas=0.
+                aux_loss_pf_regr=0.
+                aux_loss_pair_bin=0.
 
                 if aux_label_pf_clas is not None:
                     aux_label_pf_clas_masked, aux_mask_pf, aux_loss_pf_clas, aux_correct_pf_clas, \
@@ -616,7 +616,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 tq.set_postfix({
                     f'{type_eval} epoch':epoch,
-                    'Steps':steps_per_epoch,
+                    'Percentage':'%.5f %' % num_batches/steps_per_epoch*100,
                     'CombLoss': '%.5f' % comb_loss,
                     'AvgCombLoss': '%.5f' % (total_comb_loss / count_comb),
                     'Loss': '%.5f' % loss,
