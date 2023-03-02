@@ -146,3 +146,5 @@ monitor/
 *.npy
 *.log
 *.pickle
+history_plot*/
+roc_curve*/

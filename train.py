@@ -777,19 +777,23 @@ def get_best_metrics(args, last_epoch, best_epoch, best_valid_metric, best_valid
             with open(os.path.join(performance_dir,file)) as f:
                 f = f.readlines()
             for line in f:
-                if 'Best epoch' in line:
-                    best_epoch=float(line.split(': #',1)[1].split('\n')[0])
-                    if test: break
-                elif 'validation metric' in line :
-                    best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
-                    best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
-                    best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
-                elif 'validation aux metric' in line :
-                    best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
-                    best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
-                    best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
-                    best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
-
+                try:
+                    if 'Best epoch' in line:
+                        best_epoch=float(line.split(': #',1)[1].split('\n')[0])
+                        print(best_epoch)
+                        print(last_epoch)
+                        if test: break
+                    elif 'validation metric' in line :
+                        best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
+                        best_valid_comb_loss=float(line.split('(in best epoch: ')[1].split(')')[0])
+                        best_valid_loss=float(line.split('(in best epoch: ')[2].split(')')[0])
+                    elif 'validation aux metric' in line :
+                        best_valid_aux_metric_pf=float(line.split('(in best epoch: ')[1].split(')')[0])
+                        best_valid_aux_dist=float(line.split('(in best epoch: ')[2].split(')')[0])
+                        best_valid_aux_metric_pair=float(line.split('(in best epoch: ')[3].split(')')[0])
+                        best_valid_aux_loss=float(line.split('(in best epoch: ')[4].split(')')[0])
+                except IndexError:
+                    pass
     return best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
         best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
         best_valid_aux_metric_pair
@@ -817,7 +821,7 @@ def _main(args):
 
     # training/testing mode
     training_mode = not args.predict and  args.train
-    if args.val and not args.train:
+    if (args.val and not args.train) or (args.test and not args.train):
         #args.test = True
         #args.data_test = args.data_val
         if ',' in  args.gpus:
@@ -895,7 +899,7 @@ def _main(args):
         dirname = os.path.dirname(args.model_prefix)
         suffix=dirname.split('/')[-1].strip()
         performance_dir=os.path.join(dirname, f'performance_{suffix}', '')
-        print(os.listdir(performance_dir))
+        #print(os.listdir(performance_dir))
         for file in sorted(os.listdir(performance_dir)):
             if 'val.log'in file:
                 last_epoch = int(file.split('val')[0][-2:])
