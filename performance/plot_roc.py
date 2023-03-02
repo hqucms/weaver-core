@@ -27,6 +27,8 @@ parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 parser.add_argument('--only-primary', action='store_true', default=False,
                     help='only compute the primary ROC')
+parser.add_argument('--path', type=str, default="",
+                    help='input path')
 args = parser.parse_args()
 
 if args.epochs:
@@ -130,7 +132,7 @@ if __name__ == "__main__":
     label_dict=load_dict('performance_comparison.yaml')
 
     for input_name, info in label_dict.items():
-        dir_name=os.path.join("input", input_name)
+        dir_name=os.path.join(args.path+"input", input_name)
         files = [filename for filename in os.listdir(dir_name)
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)

@@ -98,6 +98,11 @@ fi
 echo $model
 suffix_specs=$2
 
+store=""
+if [[ "$WORK" != "" ]]; then
+    store="${WORK}/${USER}/"
+fi
+
 $CMD \
     --data-train \
     "ttjets:${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
@@ -107,7 +112,7 @@ $CMD \
     --data-test \
     ${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-madgraphMLM-pythia8_test/output_10Mevents_*.root \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
-    --model-prefix training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
+    --model-prefix ${store}training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
     --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 \

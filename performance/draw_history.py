@@ -22,6 +22,8 @@ parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 parser.add_argument('--last-epoch', type=int, default=100,
                     help='save plots')
+parser.add_argument('--path', type=str, default="",
+                    help='input path')
 args = parser.parse_args()
 
 
@@ -75,12 +77,12 @@ if __name__ == "__main__":
     infile_dict=load_dict('performance_comparison.yaml')
     for input_name, info in infile_dict.items():
         if isinstance(input_name, str):
-            dir_name=os.path.join("input", input_name)
+            dir_name=os.path.join(args.path+"input", input_name)
             infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
             #print(infiles)
             infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
         elif isinstance(input_name, tuple):
-            infiles=[os.path.join("input", "logs", f"{k}.log") for k in input_name]
+            infiles=[os.path.join(args.path+"input", "logs", f"{k}.log") for k in input_name]
             infiles.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
         #print(infiles)
         for infile in infiles:

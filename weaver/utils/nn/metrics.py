@@ -114,7 +114,7 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
             if k in aux_metric:
                 break
         try:
-            results[aux_metric] = func(aux_y_true, v, epoch, roc_prefix, k) if 'label' in metric else func(aux_y_true, v)
+            results[aux_metric] = func(aux_y_true, v, epoch, roc_prefix, k) if 'label' in aux_metric else func(aux_y_true, v)
         except Exception as e:
             results[aux_metric] = None
             _logger.error(str(e))
