@@ -1,23 +1,27 @@
 import torch
 from weaver.utils.logger import _logger
-from weaver.nn.model.ParticleNeXt import ParticleNeXtTagger
+from weaver.nn.model.ParticleEdgeNeXt import ParticleEdgeNeXtTagger
 
 
 def get_model(data_config, **kwargs):
     cfg = dict(
         pf_features_dims=len(data_config.input_dicts['pf_features']),
         sv_features_dims=len(data_config.input_dicts['sv_features']),
+        edge_input_dim=len(data_config.input_dicts['track_ef']),
         num_classes=len(data_config.label_value),
+        num_aux_classes_clas=len(data_config.aux_label_value_clas),
+        num_aux_classes_regr=len(data_config.aux_label_value_regr),
+        num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'threshold' not in k]),
         # network configurations
         node_dim=32,
-        edge_dim=8,
+        edge_dim=24, #8
         use_edge_bn=True,
-        layer_params=[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],  # noqa
-        fc_params=[(256, 0.1)],
-        global_aggregation='attn4',
+        layer_params=[(16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48)],  # noqa
+        fc_params=[(200, 0.1)],
+        global_aggregation='attn4',#
         # MultiScaleEdgeConv options
-        edge_aggregation='attn8',
-        use_rel_lv_fts=True,
+        edge_aggregation='attn8',#attn8
+        use_rel_lv_fts=True, #False
         use_polarization_angle=False,
         use_rel_fts=False,
         use_rel_dist=False,
@@ -30,7 +34,7 @@ def get_model(data_config, **kwargs):
     cfg.update(**kwargs)
     _logger.info('Model config: %s' % str(cfg))
 
-    model = ParticleNeXtTagger(**cfg)
+    model = ParticleEdgeNeXtTagger(**cfg)
 
     model_info = {
         'input_names': list(data_config.input_names),
@@ -44,3 +48,12 @@ def get_model(data_config, **kwargs):
 
 def get_loss(data_config, **kwargs):
     return torch.nn.CrossEntropyLoss()
+
+def get_aux_loss_clas(data_config, dev, **kwargs):
+    return torch.nn.CrossEntropyLoss(weight=torch.FloatTensor([5, 10, 40, 1.5]).to(dev))
+
+def get_aux_loss_regr(data_config, **kwargs):
+    return torch.nn.MSELoss()
+
+def get_aux_loss_bin(data_config, **kwargs):
+    return torch.nn.BCEWithLogitsLoss()

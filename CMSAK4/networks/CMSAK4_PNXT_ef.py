@@ -14,14 +14,13 @@ def get_model(data_config, **kwargs):
         num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'threshold' not in k]),
         # network configurations
         node_dim=32,
-        edge_dim=24, #8
+        edge_dim=24, 
         use_edge_bn=True,
-        layer_params=[(16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48)],  # noqa
-            #[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],
-        fc_params=[(200, 0.1)], #[(256, 0.1)]
-        global_aggregation='attn4',#
+        layer_params=[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],  # noqa
+        fc_params=[(256, 0.1)],
+        global_aggregation='attn4',
         # MultiScaleEdgeConv options
-        edge_aggregation='attn8',#attn8
+        edge_aggregation='attn8',
         use_rel_lv_fts=True, #False
         use_polarization_angle=False,
         use_rel_fts=False,

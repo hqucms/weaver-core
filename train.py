@@ -285,7 +285,7 @@ def train_load(args):
         train_data = None
         train_loader = None
 
-    if args.val:
+    if args.val or args.test:
         val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
                                     extra_selection=args.extra_selection,
                                     load_range_and_fraction=(val_range, args.data_fraction),
@@ -780,8 +780,8 @@ def get_best_metrics(args, last_epoch, best_epoch, best_valid_metric, best_valid
                 try:
                     if 'Best epoch' in line:
                         best_epoch=float(line.split(': #',1)[1].split('\n')[0])
-                        print(best_epoch)
-                        print(last_epoch)
+                        #print(best_epoch)
+                        #print(last_epoch)
                         if test: break
                     elif 'validation metric' in line :
                         best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
@@ -849,8 +849,11 @@ def _main(args):
     # load data
     if args.train or args.val:
         train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names = train_load(args)
-    elif args.predict or args.test:
+    elif args.predict:
         test_loaders, data_config = test_load(args)
+    elif args.test:
+        args.data_val = args.data_test
+        _, test_loader, data_config, *_ = train_load(args)
 
     if args.io_test:
         data_loader = train_loader if training_mode else list(test_loaders.values())[0]()
@@ -1007,10 +1010,12 @@ def _main(args):
     if args.data_test:
         if args.backend is not None and local_rank != 0:
             return
-        if args.train: del train_loader
-        if args.val:
-            if args.train: del val_loader
-            test_loaders, data_config = test_load(args)
+        try:
+            del train_loader
+        except UnboundLocalError:
+            pass
+        if args.val and args.train: del val_loader
+
 
         if not args.model_prefix.endswith('.onnx'):
             if args.predict_gpus:
@@ -1110,6 +1115,14 @@ def _main(args):
                         _logger.info('Written output to %s' % output_path, color='bold')
 
             if args.test:
+                try:
+                    del val_loader
+                except UnboundLocalError:
+                    pass
+                if args.val:
+                    args.data_val = args.data_test
+                    _, test_loader, data_config, *_ = train_load(args)
+
                 best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                 best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
                 best_valid_aux_metric_pair = np.inf if args.regression_mode else -1, 0,0,0,0,0,0
@@ -1119,40 +1132,38 @@ def _main(args):
                     if file.endswith(".npz") or file.endswith("test.log"):
                         os.remove(os.path.join(performance_dir, file))
                 # Test on best epoch
-                for name, get_test_loader in test_loaders.items():
-                    test_loader = get_test_loader()
-                    for epoch in val_epochs:
-                        model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
-                        _logger.info('Loading model %s for test' % model_path)
-                        model.load_state_dict(torch.load(model_path, map_location=dev))
-                        if gpus is not None and len(gpus) > 1:
-                            model = torch.nn.DataParallel(model, device_ids=gpus)
-                        model = model.to(dev)
+                for epoch in val_epochs:
+                    model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
+                    _logger.info('Loading model %s for test' % model_path)
+                    model.load_state_dict(torch.load(model_path, map_location=dev))
+                    if gpus is not None and len(gpus) > 1:
+                        model = torch.nn.DataParallel(model, device_ids=gpus)
+                    model = model.to(dev)
 
-                        _logger.info('Epoch #%d testing' % epoch)
-                        valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
-                        valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                                evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
-                                    aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
-                                    aux_loss_func_bin=aux_loss_func_bin,
-                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
-                                    eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
-                                    eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels_pf_clas', 'aux_save_labels_pf_regr', 'aux_save_labels_pair_bin'],
-                                    type_eval='test')
+                    _logger.info('Epoch #%d testing' % epoch)
+                    valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                    valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                            evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
+                                aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                                aux_loss_func_bin=aux_loss_func_bin,
+                                steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
+                                eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
+                                eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels_pf_clas', 'aux_save_labels_pf_regr', 'aux_save_labels_pair_bin'],
+                                type_eval='test')
 
-                        best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
-                        best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
-                        best_valid_aux_metric_pair = best_epoch_handler(args, best_epoch,
-                                best_valid_metric, valid_metric,
-                                best_valid_comb_loss, valid_comb_loss,
-                                best_valid_loss, valid_loss,
-                                best_valid_aux_metric_pf, valid_aux_metric_pf,
-                                best_valid_aux_dist, valid_aux_dist,
-                                best_valid_aux_metric_pair, valid_aux_metric_pair,
-                                best_valid_aux_loss, valid_aux_loss,
-                                local_rank, epoch, roc_prefix, eval_type='test', test = True, best=(epoch == best_epoch))
-                        copy_log(args, epoch, "test")
-                    break
+                    best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+                    best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+                    best_valid_aux_metric_pair = best_epoch_handler(args, best_epoch,
+                            best_valid_metric, valid_metric,
+                            best_valid_comb_loss, valid_comb_loss,
+                            best_valid_loss, valid_loss,
+                            best_valid_aux_metric_pf, valid_aux_metric_pf,
+                            best_valid_aux_dist, valid_aux_dist,
+                            best_valid_aux_metric_pair, valid_aux_metric_pair,
+                            best_valid_aux_loss, valid_aux_loss,
+                            local_rank, epoch, roc_prefix, eval_type='test', test = True, best=(epoch == best_epoch))
+                    copy_log(args, epoch, "test")
+                del test_loader
 
 
 def main():
