@@ -96,6 +96,10 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
         aux_mask = (aux_label[:, :, 0] != -1).flatten()
     #print('\n aux_label1\n', aux_label.size(), aux_label)
 
+    if aux_output == None:
+        aux_label=aux_label.flatten(end_dim=1)[aux_mask, :].float()
+        return aux_label
+
     aux_label, aux_logits, aux_correct, aux_scores = _flatten_aux(aux_label, aux_output, dev, aux_mask, aux_scores)
     total_aux_correct += aux_correct
 
@@ -180,10 +184,10 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
             try:
                 label_mask = y[data_config.label_names[0] + '_mask'].bool()
-                aux_label_mask = y[data_config.aux_label_names[0] + '_mask'].bool()
+                #aux_label_mask = y[data_config.aux_label_names[0] + '_mask'].bool()
             except KeyError:
                 label_mask = None
-                aux_label_mask = None
+                #aux_label_mask = None
             label = _flatten_label(label, label_mask)
 
 
@@ -323,7 +327,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
             tq.set_postfix({
                 'Train epoch':epoch,
-                'Percentage':'%.5f %' % num_batches/steps_per_epoch*100,
+                'Percentage':'%.5f %%' % (num_batches/steps_per_epoch*100),
                 'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'CombLoss': '%.5f' % comb_loss,
                 'AvgCombLoss': '%.5f' % (total_comb_loss / num_batches),
@@ -351,9 +355,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 divisions = 3
                 for i in range(1, divisions):
                     if num_batches == (steps_per_epoch // divisions)*i:
-                        _logger.info('Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
+                        _logger.info('Partial Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
                                      (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
-                        _logger.info('Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
+                        _logger.info('Partial Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
                                      (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
 
 
@@ -443,6 +447,12 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 else:
                     aux_label_pf_regr = None
 
+                if len([k for k in data_config.aux_label_names if 'pf_mask_from_b' in k]) == 1:
+                    aux_label_pf_mask_from_b = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_mask_from_b' in k]).permute(1,2,0).to(dev).float()
+                    #print('\n\ aux_label_pf_mask_from_b\n', aux_label_pf_mask_from_b.size(),'\n', aux_label_pf_mask_from_b)
+                else:
+                    aux_label_pf_mask_from_b = None
+
                 if len([k for k in data_config.aux_label_names if 'pair_bin' in k]) > 0:
                     aux_label_pair_bin= torch.stack([y[k].float() for k in data_config.aux_label_names if 'pair_bin' in k]).permute(1,2,3,0).to(dev).float()
                     #print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
@@ -457,10 +467,11 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 try:
                     label_mask = y[data_config.label_names[0] + '_mask'].bool()
-                    aux_label_mask = y[data_config.aux_label_names[0] + '_mask'].bool()
+                    #aux_label_mask = y[data_config.aux_label_names[0] + '_mask'].bool()
                 except KeyError:
                     label_mask = None
-                    aux_label_mask = None
+                    #aux_label_mask = None
+
                     #HERE put theat if the aux_label_mask is set
                     # the aux_mask is that and it is not calculated
 
@@ -512,7 +523,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     aux_labels['pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
 
                 if aux_label_pf_regr is not None:
-                    aux_label_pf_regr_masked, aux_mask_pf,aux_loss_pf_regr, aux_correct_pf_regr, \
+                    aux_label_pf_regr_masked, aux_mask_pf, aux_loss_pf_regr, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, aux_scores_pf_regr = \
                         _aux_halder(aux_output_regr,
@@ -521,6 +532,14 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
                                     dev, aux_scores=aux_scores_pf_regr)
                     aux_labels['pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
+
+                if aux_label_pf_mask_from_b is not None:
+                    aux_label_pf_mask_from_b = _aux_halder(None,
+                                    aux_label_pf_mask_from_b[:, :aux_output_regr.size(1), :],
+                                    aux_mask_pf, None,
+                                    None,None,
+                                    dev, None, None)
+                    aux_labels['pf_regr_mask_from_b'].append(aux_label_pf_mask_from_b.cpu().numpy())
 
                 if aux_label_pair_bin is not None:
                     aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
@@ -616,7 +635,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 tq.set_postfix({
                     f'{type_eval} epoch':epoch,
-                    'Percentage':'%.5f %' % num_batches/steps_per_epoch*100,
+                    'Percentage':'%.5f %%' % (num_batches/steps_per_epoch*100),
                     'CombLoss': '%.5f' % comb_loss,
                     'AvgCombLoss': '%.5f' % (total_comb_loss / count_comb),
                     'Loss': '%.5f' % loss,
@@ -640,9 +659,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 divisions = 3
                 for i in range(1, divisions):
                     if num_batches == (steps_per_epoch // divisions)*i:
-                        _logger.info('Epoch #%d %d/%d: Current %s metric: %.5f ()  //  Current %s combined loss: %.5f ()  //  Current %s loss: %.5f ()' %
+                        _logger.info('Partial Epoch #%d %d/%d: Current %s metric: %.5f ()  //  Current %s combined loss: %.5f ()  //  Current %s loss: %.5f ()' %
                                     (epoch, i, divisions, type_eval, total_correct / count, type_eval, total_comb_loss / count_comb, type_eval, total_loss / count), color='bold')
-                        _logger.info('Epoch #%d %d/%d: Current %s aux metric PF: %.5f ()  //  Current %s aux distance: %.5f ()  //  Current %s aux metric pair: %.5f ()  //  Current %s aux loss: %.5f ()' %
+                        _logger.info('Partial Epoch #%d %d/%d: Current %s aux metric PF: %.5f ()  //  Current %s aux distance: %.5f ()  //  Current %s aux metric pair: %.5f ()  //  Current %s aux loss: %.5f ()' %
                                     (epoch, i, divisions, type_eval, avg_aux_acc_pf, type_eval, avg_aux_dist, type_eval, avg_aux_acc_pair, type_eval, avg_aux_loss), color='bold')
 
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:

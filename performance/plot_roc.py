@@ -19,7 +19,7 @@ sys.stdout = f'''
 #np.set_printoptions(threshold=np.inf)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--epochs', type=str, default='',
+parser.add_argument('--epochs', type=str, default='-1',
                     help='roc for various epochs')
 parser.add_argument('--show', action='store_false', default=True,
                     help='show plots')
@@ -31,10 +31,6 @@ parser.add_argument('--path', type=str, default="",
                     help='input path')
 args = parser.parse_args()
 
-if args.epochs:
-    epoch_list=[int(i) for i in args.epochs.split(',')]
-else:
-    epoch_list =[]
 
 epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 
@@ -43,7 +39,7 @@ roc_type_dict=OrderedDict([
         "pair_bin" : [[0], None]
     }),
     ("pf_clas",{
-        "pf_clas" : [[0,2], [1,3]]
+        "pf_clas_b+bcVSother" : [[0,2], [1,3]]
     }),
     ("pf_regr",{
         "pf_regr" : [None, None]
@@ -57,16 +53,16 @@ roc_type_dict=OrderedDict([
 ])
 
 axis_limits ={
-    0: ((600, 600),(0,6,0,6), '_dist_pv'),
-    1: ((300, 300),(-0.3,0.3,-0.3,0.3), '_vtx_x'),
-    2: ((300, 300),(-0.3,0.3,-0.3,0.3), '_vtx_y'),
-    3: ((600, 600),(-4,4,-4,4), '_vtx_z')
+    0: ((600, 600),(0,2,0,2), '_dist_pv'),
+    1: ((300, 300),(-0.15,0.15,-0.15,0.15), '_vtx_x'),
+    2: ((300, 300),(-0.15,0.15,-0.15,0.15), '_vtx_y'),
+    3: ((600, 600),(-1,1,-1,1), '_vtx_z')
 }
 
 def get_labels(y_true, y_score, labels_s, labels_b):
     if labels_b is None:
         y_true_tot = y_true
-        y_score_tot = y_score 
+        y_score_tot = y_score
     else:
         y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
         y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
@@ -101,10 +97,11 @@ def plt_fts(roc_type, network, fig_handle, axis_lim=None, name=''):
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
-        plt.ylim([0.0005, 1.05])
-        plt.xlim([0.55, 1.0005])
+        plt.ylim([0.0001, 1.05])
+        plt.xlim([0.5, 1.0005])
         plt.yscale('log')
 
+    plt.grid()
     hep.cms.label(rlabel="")
     plt.legend(labelcolor='linecolor')
     hep.cms.lumitext(f'ROC_{roc_type}_{network}{name}')
@@ -139,6 +136,14 @@ if __name__ == "__main__":
                     if ('labels_best' in filename)]
         files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
         best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
+
+        if args.epochs == '-1':
+            epoch_list=[len([k for k in files if 'primary' in k])-1]
+        elif args.epochs:
+            epoch_list=[int(i) for i in args.epochs.split(',')]
+        else:
+            epoch_list =[]
+
         for infile in files:
             epoch = int(infile.split(".npz")[0][-2:] if infile.split(".npz")[0][-2].isnumeric() else infile.split(".npz")[0][-1])
             if epoch in epoch_list:
@@ -146,11 +151,14 @@ if __name__ == "__main__":
                     if args.only_primary and label_type != 'primary':
                         continue
                     if label_type in infile:
-                        for roc_type, labels in labels_info.items():
-                            with open(os.path.join(dir_name,infile), 'rb') as f:
+                        with open(os.path.join(dir_name,infile), 'rb') as f:
+                            try:
+                                info[0][label_type].append((np.load(f)['y_true'])[np.load(f)['y_mask']])
+                                info[1][label_type].append((np.load(f)['y_score'])[np.load(f)['y_mask']])
+                            except KeyError:
                                 info[0][label_type].append(np.load(f)['y_true'])
                                 info[1][label_type].append(np.load(f)['y_score'])
-                                break
+
 
         for best_file in best_files:
             for label_type, labels_info in roc_type_dict.items():
@@ -158,31 +166,54 @@ if __name__ == "__main__":
                     continue
                 if label_type in best_file:
                     with open(os.path.join(dir_name,best_file), 'rb') as f:
-                        y_true_best=np.load(f)['y_true']
-                        y_score_best=np.load(f)['y_score']
+                        try:
+                            y_true_best=np.load(f)['y_true'][np.load(f)['y_mask']]
+                            y_score_best=np.load(f)['y_score'][np.load(f)['y_mask']]
+                        except KeyError:
+                            y_true_best=np.load(f)['y_true']
+                            y_score_best=np.load(f)['y_score']
                         for roc_type, labels in labels_info.items():
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
                                                         labels[0], labels[1])
                             epochs_dict['best'][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
-
-                    break
         #print(info)
         for label_type, labels_info in roc_type_dict.items():
-            if "regr" in roc_type:
-                continue
             if len(info[0][label_type]) !=0:
                 for roc_type, labels in labels_info.items():
-                    if len(epoch_list) > 0:
+                    if "regr" not in roc_type:
                         fig_handle = plt.figure()
+                        for num in range(len(info[0][label_type])):
+                            fpr, tpr, roc_auc=get_rates(
+                                info[0][label_type][num],info[1][label_type][num],
+                                labels[0], labels[1])
+                            print(num, epoch_list, roc_type, info[2], info[0][label_type])
+                            epochs_dict[epoch_list[num]][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
+
+                            plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
+
+                        plt_fts(roc_type, info[2], fig_handle)
+                    else:
                         for num in range(len(info[0][label_type])):
                             fpr, tpr, roc_auc=get_rates(
                                 info[0][label_type][num],info[1][label_type][num],
                                 labels[0], labels[1])
                             epochs_dict[epoch_list[num]][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
 
-                            plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
+                        continue
+                        for num in range(len(info[0][label_type])):
+                            x_t, y_r, roc_auc=get_rates(
+                                info[0][label_type][num],info[1][label_type][num],
+                                labels[0], labels[1])
+                            for i in range(4):
+                                fig_handle = plt.figure()
+                                plt.hist2d(x_t[:, i], y_r[:, i],  bins=axis_limits[i][0], cmap=plt.cm.jet)
+                                plt.colorbar().set_label('Density')
+                                plt_fts(roc_type, f"{epoch_list[num]}_scatter_{info[2]}", fig_handle, axis_limits[i][1], axis_limits[i][2])
 
-                        plt_fts(roc_type, info[2], fig_handle)
+                                fig_handle = plt.figure()
+                                plt.hist((x_t[:, i]-y_r[:, i]), bins=axis_limits[i][0][0], label=info[2], range=(-axis_limits[i][1][1], axis_limits[i][1][1]))
+                                plt_fts(roc_type, f"{epoch_list[num]}_error_{info[2]}", fig_handle, None, axis_limits[i][2])
+
     #print(epochs_dict)
 
     for epoch, best_dict in epochs_dict.items():

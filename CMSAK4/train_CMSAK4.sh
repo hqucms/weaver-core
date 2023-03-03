@@ -101,7 +101,7 @@ fi
 if [[ "$model" == *"_lite"* ]]; then
     model=${model%"_lite"}
 fi
-echo $model
+
 suffix_specs=$2
 
 store=""

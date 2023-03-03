@@ -56,6 +56,7 @@ def plot(name, fig_handle):
     hep.cms.label(rlabel="")
     hep.cms.lumitext(f'{name}')
     plt.legend()#loc=2, prop={'size': 15})
+    plt.grid()
     plt.savefig(f'history_plot/history_{name}.png', bbox_inches='tight')
     if args.save:
         with open(f'history_plot/{name}.pickle', 'wb') as f:

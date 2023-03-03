@@ -10,11 +10,11 @@ def get_model(data_config, **kwargs):
         edge_input_dim=len(data_config.input_dicts['track_ef']),
         num_classes=len(data_config.label_value),
         num_aux_classes_clas=len(data_config.aux_label_value_clas),
-        num_aux_classes_regr=len(data_config.aux_label_value_regr),
+        num_aux_classes_regr=len([k for k in data_config.aux_label_value_regr if 'pf_mask' not in k]),
         num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'threshold' not in k]),
         # network configurations
         node_dim=32,
-        edge_dim=24, 
+        edge_dim=24,
         use_edge_bn=True,
         layer_params=[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],  # noqa
         fc_params=[(256, 0.1)],

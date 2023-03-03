@@ -49,6 +49,10 @@ new_variables:
    pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
 
+   aux_label_mask: (pfcand_from_b != -1) -1
+   from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
+   pf_b: ak.fill_none(ak.pad_none(from_b_bool+aux_label_mask, 50, axis=1, clip=True),-1, axis=-1)
+
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
@@ -191,6 +195,8 @@ aux_labels:
       aux_label_pf_regr_vtx_x: pf_vtx_x
       aux_label_pf_regr_vtx_y: pf_vtx_y
       aux_label_pf_regr_vtx_z: pf_vtx_z
+      aux_label_pf_mask_from_b: pf_b
+
 
 
 observers:

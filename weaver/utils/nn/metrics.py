@@ -59,14 +59,18 @@ def confusion_matrix(y_true, y_score, aux_type=None):
 def save_labels(y_true, y_score, epoch, roc_prefix, label_type):
     if y_true is None or y_score is None:
         return None
-    if label_type == "pair_bin":
-        y_score = (y_score>0.5).astype(int)
 
+    y_mask_from_b= None
     outfile=f'{roc_prefix}{label_type}_labels_epoch_{epoch:02d}.npz'
     if isinstance(y_true,dict):
+        if label_type == 'pf_regr':
+            try:
+                y_mask_from_b = y_true['pf_regr_mask_from_b']
+            except:
+                pass
         y_true = y_true[label_type]
     with open(outfile, 'wb') as f:
-        np.savez(f, y_true=y_true, y_score=y_score)
+        np.savez(f, y_true=y_true, y_score=y_score, y_mask_from_b = y_mask_from_b)
 
     return f'y_true and y_score {label_type} for epoch {epoch} properly saved in file: \n {outfile}\n'
 
@@ -119,12 +123,5 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
             results[aux_metric] = None
             _logger.error(str(e))
             _logger.debug(traceback.format_exc())
-
-    '''results['aux_confusion_matrix_pf_clas'] = confusion_matrix(aux_y_true, aux_y_score_pf_clas, 'pf_clas')
-    results['aux_confusion_matrix_pair_bin'] = confusion_matrix(aux_y_true, aux_y_score_pair_bin, 'pair_bin')
-
-    results['aux_save_labels_pf_clas'] = save_labels(aux_y_true, aux_y_score_pf_clas, epoch, roc_prefix, 'pf_clas')
-    results['aux_save_labels_pf_regr'] = save_labels(aux_y_true, aux_y_score_pf_regr, epoch, roc_prefix, 'pf_regr')
-    results['aux_save_labels_pair_bin'] = save_labels(aux_y_true, aux_y_score_pair_bin, epoch, roc_prefix, 'pair_bin')'''
 
     return results

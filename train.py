@@ -1049,8 +1049,10 @@ def _main(args):
             if args.val and not args.train:
                 performance_files = os.listdir(performance_dir)
                 for file in performance_files:
-                    if file.endswith(".npz") or file.endswith("val.log"):
-                        os.remove(os.path.join(performance_dir, file))
+                    if file.endswith(f"val.log"):
+                        epoch = int(file.split('val.log')[0][-2:])
+                        if epoch > max(val_epochs):
+                            os.remove(os.path.join(performance_dir, file))
 
                 for epoch in val_epochs:
                     model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
@@ -1129,8 +1131,12 @@ def _main(args):
 
                 performance_files = os.listdir(performance_dir)
                 for file in performance_files:
-                    if file.endswith(".npz") or file.endswith("test.log"):
-                        os.remove(os.path.join(performance_dir, file))
+                    for name in [".npz", "test.log"]:
+                        if file.endswith(name) and "best" not in file:
+                            epoch = int(file.split(name)[0][-2:])
+                            if epoch > max(val_epochs):
+                                os.remove(os.path.join(performance_dir, file))
+
                 # Test on best epoch
                 for epoch in val_epochs:
                     model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
