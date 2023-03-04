@@ -89,7 +89,7 @@ if __name__ == "__main__":
     for input_name, info in infile_dict.items():
         # get all log files in the input directory and sort them in alphabetical order
         if isinstance(input_name, str):
-            dir_name=os.path.join(args.path+"input", input_name)
+            dir_name=os.path.join(args.path, input_name)
             infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
             infiles.sort()#key=lambda s: int(re.findall(r'\d+', s)[-1]))
         # get specific log files and sort them in alphabetical order

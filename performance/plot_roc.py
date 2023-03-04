@@ -35,30 +35,32 @@ parser.add_argument('--in-dict', type=str, default='performance_comparison',
                     help='name of the file with the dictionary')
 args = parser.parse_args()
 
-
+# dictionary where the first key is the epoch,
+# the second is the type of ROC
+# and the third is the network
 epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 
 # dictionary with the labels for the ROC curves
 roc_type_dict=OrderedDict([
     ('pair_bin',{
-        'pair_bin_' : [[0], None]
+        'PAIRbin' : [[0], None]
     }),
     ('pf_clas',{
-        'pf_b+bcVSother' : [[0,2], [1,3]]
+        'PFclas_b+bcVSc+other' : [[0,2], [1,3]]
     }),
     ('pf_regr',{
-        'pf_regr' : [None, None]
+        'PFregr' : [None, None]
     }),
     ('primary',{
-        'bVSuds':[[0,1], [4]],
-        'bVSg':[[0,1], [5]],
-        'bVSudsg':[[0,1], [4,5]]
+        'JET_bVSuds':[[0,1], [4]],
+        'JET_bVSg':[[0,1], [5]],
+        'JET_bVSudsg':[[0,1], [4,5]]
     }),
 ])
 
 # dictionary with the axes limits
 axis_limits ={
-    0: ((600, 600),(0,3,0,0.5), '_dist_pv'),
+    0: ((600, 600),(0,3,0,0.5), '_vtx_dist_pv'),
     1: ((300, 300),(-0.15,0.15,-0.05,0.05), '_vtx_x'),
     2: ((300, 300),(-0.15,0.15,-0.1,0.1), '_vtx_y'),
     3: ((600, 600),(-0.25, 0.25,-2,2), '_vtx_z')
@@ -104,7 +106,7 @@ def plt_fts(out_dir, roc_type, network, fig_handle, axis_lim=None, name=''):
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
-        plt.ylim([0.0001, 1.05])
+        plt.ylim([1e-4, 1.005])
         plt.xlim([0.5, 1.0005])
         plt.yscale('log')
 
@@ -146,13 +148,11 @@ if __name__ == '__main__':
 
     for input_name, info in label_dict.items():
         # files to load
-        dir_name=os.path.join(args.path+'input', input_name)
+        dir_name=f'{args.path}{input_name}'
         files = [filename for filename in os.listdir(dir_name)
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
                     if ('labels_best' in filename)]
-        files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
-        best_files.sort(key=lambda s: int(re.findall(r'\d+', s)[-1]))
 
         # epochs to load
         if args.epochs == '-1':
@@ -160,7 +160,7 @@ if __name__ == '__main__':
         elif args.epochs:
             epoch_list=[int(i) for i in args.epochs.split(',')]
         else:
-            epoch_list =[]
+            epoch_list = []
 
         # load files for each epoch
         for infile in files:
@@ -170,12 +170,14 @@ if __name__ == '__main__':
                     if args.only_primary and label_type != 'primary':
                         continue
                     if label_type in infile:
+                        print(infile, label_type, epoch)
                         # load labels for each epoch and label type
                         with open(os.path.join(dir_name,infile), 'rb') as f:
                             try:
                                 # load only the labels that are not masked (if present)
                                 info[0][label_type].append((np.load(f)['y_true'])[np.load(f)['y_mask']])
                                 info[1][label_type].append((np.load(f)['y_score'])[np.load(f)['y_mask']])
+                                print(f'MASK FOUND in {infile}! \n')
                             except KeyError:
                                 info[0][label_type].append(np.load(f)['y_true'])
                                 info[1][label_type].append(np.load(f)['y_score'])
@@ -192,6 +194,7 @@ if __name__ == '__main__':
                             # load only the labels that are not masked (if present)
                             y_true_best=np.load(f)['y_true'][np.load(f)['y_mask']]
                             y_score_best=np.load(f)['y_score'][np.load(f)['y_mask']]
+                            print(f'MASK FOUND in {best_file}! \n')
                         except KeyError:
                             y_true_best=np.load(f)['y_true']
                             y_score_best=np.load(f)['y_score']
@@ -203,10 +206,14 @@ if __name__ == '__main__':
 
         # compute roc curve for each epoch
         for label_type, labels_info in roc_type_dict.items():
+            if len(info[0][label_type]) == 0: continue
             for roc_type, labels in labels_info.items():
-                if 'regr' not in roc_type: fig_handle = plt.figure()
+                if 'regr' not in roc_type:
+                    fig_handle = plt.figure()
                 # loop over epochs
                 for num in range(len(info[0][label_type])):
+                    print(roc_type, label_type,labels, epoch_list[num])
+
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(
                         info[0][label_type][num],info[1][label_type][num],
