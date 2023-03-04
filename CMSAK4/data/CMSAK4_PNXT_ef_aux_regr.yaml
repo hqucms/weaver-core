@@ -187,7 +187,6 @@ labels:
    # value:
       # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass)
 
-
 aux_labels:
    type: custom
    value_regr:

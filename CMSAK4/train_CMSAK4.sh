@@ -104,10 +104,10 @@ fi
 
 suffix_specs=$2
 
-store=""
-if [[ "$WORK" != "" ]]; then
-    store="${WORK}/${USER}/"
-fi
+store=${w}
+# if [[ "$WORK" != "" ]]; then
+#     store="${WORK}/${USER}/"
+# fi
 
 $CMD \
     --data-train \
