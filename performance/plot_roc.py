@@ -27,6 +27,8 @@ parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 parser.add_argument('--only-primary', action='store_true', default=False,
                     help='only compute the primary ROC')
+parser.add_argument('--history', action='store_true', default=False,
+                    help='only compute the primary ROC')
 parser.add_argument('--path', type=str, default='',
                     help='input path')
 parser.add_argument('--name', type=str, default='',
@@ -93,11 +95,11 @@ def get_rates(y_t, y_s, l_s, l_b):
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
-def plt_fts(out_dir, roc_type, network, fig_handle, axis_lim=None, name=''):
+def plt_fts(out_dir, roc_type, name, fig_handle, axis_lim=None):
     if 'regr' in roc_type:
         #plt.axis('square')
         plt.xlabel('(True-Reco)')
-        if '(True-Reco)' not in network:
+        if '(True-Reco)' not in name:
             plt.xlim([axis_lim[0], axis_lim[1]])
             plt.xlabel('True')
             plt.ylabel('Reco')
@@ -114,14 +116,14 @@ def plt_fts(out_dir, roc_type, network, fig_handle, axis_lim=None, name=''):
 
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
-    hep.cms.lumitext(f'ROC_{roc_type}_{network}{name}')
+    hep.cms.lumitext(f'ROC_{roc_type}_{name}')
 
     plt.legend(labelcolor='linecolor')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
-    plt.savefig(f'{out_dir}/roc_{roc_type}_{network}{name}.png', bbox_inches='tight')
+    plt.savefig(f'{out_dir}/roc_{roc_type}_{name}.png', bbox_inches='tight')
     if args.save:
-        with open(f'{out_dir}/roc_{roc_type}_{network}{name}.pickle', 'wb') as f:
+        with open(f'{out_dir}/roc_{roc_type}_{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
     if not args.not_show:
         plt.show()
@@ -170,7 +172,7 @@ if __name__ == '__main__':
                     if args.only_primary and label_type != 'primary':
                         continue
                     if label_type in infile:
-                        print(infile, label_type, epoch)
+                        print(infile)
                         # load labels for each epoch and label type
                         with open(os.path.join(dir_name,infile), 'rb') as f:
                             try:
@@ -188,6 +190,7 @@ if __name__ == '__main__':
                 if args.only_primary and label_type != 'primary':
                     continue
                 if label_type in best_file:
+                    print(best_file)
                     # load labels for best epoch and for every label type
                     with open(os.path.join(dir_name,best_file), 'rb') as f:
                         try:
@@ -208,11 +211,11 @@ if __name__ == '__main__':
         for label_type, labels_info in roc_type_dict.items():
             if len(info[0][label_type]) == 0: continue
             for roc_type, labels in labels_info.items():
-                if 'regr' not in roc_type:
+                if 'regr' not in roc_type and args.history:
                     fig_handle = plt.figure()
                 # loop over epochs
                 for num in range(len(info[0][label_type])):
-                    print(roc_type, label_type,labels, epoch_list[num])
+                    #print(roc_type, label_type,labels, epoch_list[num])
 
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(
@@ -220,10 +223,10 @@ if __name__ == '__main__':
                         labels[0], labels[1])
                     # save roc curve for each epoch in a dictionary
                     epochs_dict[epoch_list[num]][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
-                    if 'regr' not in roc_type:
+                    if 'regr' not in roc_type and args.history:
                         plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
-                if 'regr' not in roc_type:
-                    plt_fts(out_dir, roc_type, info[2], fig_handle)
+                if 'regr' not in roc_type and args.history:
+                    plt_fts(out_dir, roc_type, f'{info[2]}_history', fig_handle)
 
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in epochs_dict.items():
@@ -271,4 +274,4 @@ if __name__ == '__main__':
                              bins=axis_limits[i][0][0], label=network,
                              range=(-axis_limits[i][1][1],
                              axis_limits[i][1][1]), density=True)
-                    plt_fts(out_dir, roc_type, f'{epoch}_(True-Reco)_{network}', fig_handle, None, axis_limits[i][2])
+                    plt_fts(out_dir, roc_type, f'{epoch}_(True-Reco){axis_limits[i][2]}_{network}', fig_handle, None)
