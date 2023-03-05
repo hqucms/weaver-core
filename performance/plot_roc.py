@@ -2,6 +2,7 @@ import numpy as np
 import sklearn.metrics as _m
 import matplotlib.pyplot as plt
 import os
+import sys
 import re
 import pickle
 import argparse
@@ -11,11 +12,11 @@ import yaml
 import time
 
 
-'''orig_stdout = sys.stdout
+orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
-sys.stdout = f'''
+sys.stdout = f
 
-#np.set_printoptions(threshold=np.inf)
+np.set_printoptions(threshold=np.inf)
 
 # parse arguments
 parser = argparse.ArgumentParser()
@@ -98,8 +99,8 @@ def get_rates(y_t, y_s, l_s, l_b):
 def plt_fts(out_dir, roc_type, name, fig_handle, axis_lim=None):
     if 'regr' in roc_type:
         #plt.axis('square')
-        plt.xlabel('(True-Reco)')
-        if '(True-Reco)' not in name:
+        plt.xlabel('True-Reco')
+        if 'True-Reco' not in name:
             plt.xlim([axis_lim[0], axis_lim[1]])
             plt.xlabel('True')
             plt.ylabel('Reco')
@@ -175,14 +176,18 @@ if __name__ == '__main__':
                         print(infile)
                         # load labels for each epoch and label type
                         with open(os.path.join(dir_name,infile), 'rb') as f:
+                            y_true = np.load(f, allow_pickle=False)['y_true']
+                            y_score = np.load(f, allow_pickle=False)['y_score']
+                            # load the mask for the labels (if present)
                             try:
-                                # load only the labels that are not masked (if present)
-                                info[0][label_type].append((np.load(f)['y_true'])[np.load(f)['y_mask']])
-                                info[1][label_type].append((np.load(f)['y_score'])[np.load(f)['y_mask']])
+                                y_mask=np.load(f, allow_pickle=False)['y_mask_from_b']
+                                y_true=y_true[y_mask]
+                                y_score=y_score[y_mask]
                                 print(f'MASK FOUND in {infile}! \n')
                             except KeyError:
-                                info[0][label_type].append(np.load(f)['y_true'])
-                                info[1][label_type].append(np.load(f)['y_score'])
+                                pass
+                            info[0][label_type].append(y_true)
+                            info[1][label_type].append(y_score)
 
         # load files of best epoch
         for best_file in best_files:
@@ -193,14 +198,19 @@ if __name__ == '__main__':
                     print(best_file)
                     # load labels for best epoch and for every label type
                     with open(os.path.join(dir_name,best_file), 'rb') as f:
+                        y_true_best=np.load(f, allow_pickle=False)['y_true']
+                        y_score_best=np.load(f, allow_pickle=False)['y_score']
+                        print('y_true_best', y_true_best)
+                        # load the mask for the labels (if present)
                         try:
-                            # load only the labels that are not masked (if present)
-                            y_true_best=np.load(f)['y_true'][np.load(f)['y_mask']]
-                            y_score_best=np.load(f)['y_score'][np.load(f)['y_mask']]
+                            y_mask=np.load(f, allow_pickle=False)['y_mask_from_b']
+                            print('y_mask', y_mask)
+                            y_true_best=y_true_best[y_mask]
+                            y_score_best=y_score_best[y_mask]
+                            print('y_true_best_masked', y_true_best)
                             print(f'MASK FOUND in {best_file}! \n')
                         except KeyError:
-                            y_true_best=np.load(f)['y_true']
-                            y_score_best=np.load(f)['y_score']
+                            pass
                         # compute roc curve for best epoch
                         for roc_type, labels in labels_info.items():
                             fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
@@ -258,7 +268,7 @@ if __name__ == '__main__':
                     # plot scatter plot
                     plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet, density=True)
                     plt.colorbar().set_label('Density')
-                    plt_fts(out_dir, roc_type, f'{epoch}_scatter_{network}', fig_handle, axis_limits[i][1], axis_limits[i][2])
+                    plt_fts(out_dir, roc_type, f'scatter{axis_limits[i][2]}_{network}_{epoch}', fig_handle, axis_limits[i][1])
 
                 fig_handle = plt.figure()
                 # loop over networks
@@ -274,4 +284,4 @@ if __name__ == '__main__':
                              bins=axis_limits[i][0][0], label=network,
                              range=(-axis_limits[i][1][1],
                              axis_limits[i][1][1]), density=True)
-                    plt_fts(out_dir, roc_type, f'{epoch}_(True-Reco){axis_limits[i][2]}_{network}', fig_handle, None)
+                    plt_fts(out_dir, roc_type, f'True-Reco{axis_limits[i][2]}_{network}_{epoch}', fig_handle, None)
