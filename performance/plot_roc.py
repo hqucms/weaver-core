@@ -12,11 +12,11 @@ import yaml
 import time
 
 
-orig_stdout = sys.stdout
+'''orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
-sys.stdout = f
+sys.stdout = f'''
 
-np.set_printoptions(threshold=np.inf)
+#np.set_printoptions(threshold=np.inf)
 
 # parse arguments
 parser = argparse.ArgumentParser()
@@ -176,15 +176,15 @@ if __name__ == '__main__':
                         print(infile)
                         # load labels for each epoch and label type
                         with open(os.path.join(dir_name,infile), 'rb') as f:
-                            y_true = np.load(f, allow_pickle=False)['y_true']
-                            y_score = np.load(f, allow_pickle=False)['y_score']
+                            y_true = np.load(f, allow_pickle=True)['y_true']
+                            y_score = np.load(f, allow_pickle=True)['y_score']
                             # load the mask for the labels (if present)
                             try:
-                                y_mask=np.load(f, allow_pickle=False)['y_mask_from_b']
-                                y_true=y_true[y_mask]
-                                y_score=y_score[y_mask]
+                                y_mask=np.load(f, allow_pickle=True)['y_mask_from_b'].astype(bool)
+                                y_true=y_true[y_mask[:, 0]]
+                                y_score=y_score[y_mask[:, 0]]
                                 print(f'MASK FOUND in {infile}! \n')
-                            except KeyError:
+                            except IndexError:
                                 pass
                             info[0][label_type].append(y_true)
                             info[1][label_type].append(y_score)
@@ -198,18 +198,15 @@ if __name__ == '__main__':
                     print(best_file)
                     # load labels for best epoch and for every label type
                     with open(os.path.join(dir_name,best_file), 'rb') as f:
-                        y_true_best=np.load(f, allow_pickle=False)['y_true']
-                        y_score_best=np.load(f, allow_pickle=False)['y_score']
-                        print('y_true_best', y_true_best)
+                        y_true_best=np.load(f, allow_pickle=True)['y_true']
+                        y_score_best=np.load(f, allow_pickle=True)['y_score']
                         # load the mask for the labels (if present)
                         try:
-                            y_mask=np.load(f, allow_pickle=False)['y_mask_from_b']
-                            print('y_mask', y_mask)
-                            y_true_best=y_true_best[y_mask]
-                            y_score_best=y_score_best[y_mask]
-                            print('y_true_best_masked', y_true_best)
+                            y_mask=np.load(f, allow_pickle=True)['y_mask_from_b'].astype(bool)
+                            y_true_best=y_true_best[y_mask[:, 0]]
+                            y_score_best=y_score_best[y_mask[:, 0]]
                             print(f'MASK FOUND in {best_file}! \n')
-                        except KeyError:
+                        except IndexError:
                             pass
                         # compute roc curve for best epoch
                         for roc_type, labels in labels_info.items():

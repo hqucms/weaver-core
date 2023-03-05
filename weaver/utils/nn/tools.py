@@ -327,7 +327,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
 
             tq.set_postfix({
                 'Train epoch':epoch,
-                'Percentage':'%.5f %%' % (num_batches/steps_per_epoch*100),
+                'Percentage':'%.1f %%' % (num_batches/steps_per_epoch*100),
                 'lr': '%.2e' % scheduler.get_last_lr()[0] if scheduler else opt.defaults['lr'],
                 'CombLoss': '%.5f' % comb_loss,
                 'AvgCombLoss': '%.5f' % (total_comb_loss / num_batches),
@@ -635,7 +635,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 tq.set_postfix({
                     f'{type_eval} epoch':epoch,
-                    'Percentage':'%.5f %%' % (num_batches/steps_per_epoch*100),
+                    'Percentage':'%.1f %%' % (num_batches/steps_per_epoch*100),
                     'CombLoss': '%.5f' % comb_loss,
                     'AvgCombLoss': '%.5f' % (total_comb_loss / count_comb),
                     'Loss': '%.5f' % loss,
