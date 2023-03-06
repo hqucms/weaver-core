@@ -9,18 +9,18 @@ def get_model(data_config, **kwargs):
         sv_features_dims=len(data_config.input_dicts['sv_features']),
         edge_input_dim=len(data_config.input_dicts['track_ef']),
         num_classes=len(data_config.label_value),
-        num_aux_classes_clas=len(data_config.aux_label_value_clas),
-        num_aux_classes_regr=len([k for k in data_config.aux_label_value_regr if 'pf_mask' not in k]),
-        num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'threshold' not in k]),
+        num_aux_classes_clas=len([k for k in data_config.aux_label_value_clas if 'clas' in k]),
+        num_aux_classes_regr=len([k for k in data_config.aux_label_value_regr if 'regr' in k]),
+        num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'bin' in k]),
         # network configurations
         node_dim=32,
         edge_dim=24, #8
         use_edge_bn=True,
         layer_params=[(16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48)],  # noqa
         fc_params=[(200, 0.1)],
-        global_aggregation='attn4',#
+        global_aggregation='attn4',
         # MultiScaleEdgeConv options
-        edge_aggregation='attn8',#attn8
+        edge_aggregation='attn8',
         use_rel_lv_fts=True, #False
         use_polarization_angle=False,
         use_rel_fts=False,

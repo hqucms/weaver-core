@@ -25,7 +25,7 @@ else
     CMD="python ../train.py"
 fi
 
-epochs=20
+epochs=15
 samples_per_epoch=50000000 #$((10000 * 1024 / $NGPUS))
 samples_per_epoch_val=1000000 #$((10000 * 128))
 dataopts="--num-workers 4 --fetch-step 0.01"
@@ -105,9 +105,13 @@ fi
 suffix_specs=$2
 
 store=${w}
-# if [[ "$WORK" != "" ]]; then
-#     store="${WORK}/${USER}/"
-# fi
+
+if [ $extra = true ]; then
+    extra_selection="(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
+else
+    extra_selection=""
+fi
+echo "extra selections: ${extra_selection}"
 
 $CMD \
     --data-train \
@@ -124,4 +128,5 @@ $CMD \
     --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 \
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} \
+    --extra-selection "${extra_selection}" --extra-test-selection "${extra_selection}" \
     "${@:3}"

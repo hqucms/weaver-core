@@ -626,7 +626,7 @@ def model_setup(args, data_config, dev):
         aux_loss_func_clas = torch.nn.CrossEntropyLoss()
         aux_loss_func_regr = torch.nn.MSELoss()
         aux_loss_func_bin = torch.nn.BCEWithLogitsLoss()
-        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` and `torch.nn.MSELoss()` by default.',
+        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()`,`torch.nn.MSELoss()` and `torch.nn.BCEWithLogitsLoss()` by default.',
                         args.network_config)
     return model, model_info, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin
 
@@ -749,8 +749,8 @@ def best_epoch_handler(args, best_epoch, best_valid_metric, valid_metric,
 
     if test and best:
         #save labels for roc curve of best epoch
-        for label_type in ["primary_", "pf_clas_", "pf_regr_", "pair_bin_"]:
-            save_labels_best_epoch(f'{roc_prefix}{label_type}labels_epoch_{epoch:02d}.npz')
+        for label_type in ["primary", "aux"]:
+            save_labels_best_epoch(f'{roc_prefix}{label_type}_labels_epoch_{epoch:02d}.npz')
 
     _logger.info('Epoch #%d: Info saved in log file:\n%s' % (epoch, args.log))
     _logger.info('Best epoch: #%d' % (best_epoch))
@@ -1154,7 +1154,7 @@ def _main(args):
                                 aux_loss_func_bin=aux_loss_func_bin,
                                 steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
                                 eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
-                                eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels_pf_clas', 'aux_save_labels_pf_regr', 'aux_save_labels_pair_bin'],
+                                eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels'],
                                 type_eval='test')
 
                     best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \

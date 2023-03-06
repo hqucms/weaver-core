@@ -48,20 +48,19 @@ new_variables:
    from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
    from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
 
-   pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1, axis=-1)
+   pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_c: ak.fill_none(ak.pad_none((from_c_bool & ~from_b_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_bc: ak.fill_none(ak.pad_none((from_b_bool & from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_other: ak.fill_none(ak.pad_none((~from_b_bool & ~from_c_bool)+2*aux_label_mask, 50, axis=1, clip=True),-1)
+   pf_charged: ak.fill_none(ak.pad_none( (pfcand_charge != 0), 50, axis=1, clip=True),-1)
+   pf_IPsig: ak.fill_none(ak.pad_none(pfcand_btagSip3dSig, 50, axis=1, clip=True),-1)
 
    pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
    pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
    pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
    pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
+   pf_from_b: ak.fill_none(ak.pad_none(from_b_bool+aux_label_mask, 50, axis=1, clip=True),-1)
 
-   num_pf: ak.values_astype(np.sqrt(ak.num(pfcand_dist_vtx_12, 1)), np.int_)
-   unflat_dist: ak.unflatten(pfcand_dist_vtx_12,np.repeat(num_pf, num_pf, axis=0), axis=1)
-   pair_dist_vtx: np.array(ak.to_numpy(ak.fill_none(ak.pad_none(ak.pad_none(unflat_dist, 50, axis=2, clip=True), 50, axis=1, clip=True),-2, axis=2), allow_missing=True))
-   pair_dist_threshold: ak.Array([0.02])
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
@@ -204,14 +203,14 @@ aux_labels:
       aux_label_pf_clas_c: pf_c
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
+      pf_mask_charged: pf_charged
+      pf_var_IPsig: pf_IPsig
    value_regr:
       aux_labels_pf_regr_dist_pv: pf_dist_pv
       aux_label_pf_regr_vtx_x: pf_vtx_x
       aux_label_pf_regr_vtx_y: pf_vtx_y
       aux_label_pf_regr_vtx_z: pf_vtx_z
-   #value_pair:
-   #   aux_label_pair_bin_dist_vtx: pair_dist_vtx
-   #   pair_threshold: pair_dist_threshold
+      pf_mask_from_b: pf_from_b
 
 
 observers:

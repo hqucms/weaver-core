@@ -43,34 +43,31 @@ def roc_auc_score_ovo(y_true, y_score):
 
 
 def confusion_matrix(y_true, y_score, aux_type=None):
-    if y_true is None or y_score is None:
-        return None
     if isinstance(y_true,dict):
-        y_true = y_true[aux_type]
+        y_true = y_true[f'y_true_{aux_type}']
+    if isinstance(y_score,dict):
+        y_score = y_score[f'y_score_{aux_type}']
+
     if y_score.ndim == 1:
         y_pred = y_score > 0.5
-        #print('y_score', y_score )
-        #print('y_pred', y_pred )
     else:
         y_pred = y_score.argmax(1)
+
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
 
 def save_labels(y_true, y_score, epoch, roc_prefix, label_type):
-    if y_true is None or y_score is None:
-        return None
 
-    y_mask_from_b= None
     outfile=f'{roc_prefix}{label_type}_labels_epoch_{epoch:02d}.npz'
-    if isinstance(y_true,dict):
-        if label_type == 'pf_regr':
-            try:
-                y_mask_from_b = y_true['pf_regr_mask_from_b']
-            except:
-                pass
-        y_true = y_true[label_type]
-    with open(outfile, 'wb') as f:
-        np.savez(f, y_true=y_true, y_score=y_score, y_mask_from_b = y_mask_from_b)
+
+    if isinstance(y_true,dict) or isinstance(y_score,dict):
+        if not bool(y_true) or not bool(y_score):
+            return None
+        with open(outfile, 'wb') as f:
+            np.savez(f, **y_true, **y_score)
+    else:
+        with open(outfile, 'wb') as f:
+            np.savez(f, y_true_primary=y_true, y_score_primary=y_score)
 
     return f'y_true and y_score {label_type} for epoch {epoch} properly saved in file: \n {outfile}\n'
 
@@ -82,9 +79,7 @@ _metric_dict = {
     'save_labels': save_labels,
     'aux_confusion_matrix_pf_clas': confusion_matrix,
     'aux_confusion_matrix_pair_bin': confusion_matrix,
-    'aux_save_labels_pf_clas': save_labels,
-    'aux_save_labels_pf_regr': save_labels,
-    'aux_save_labels_pair_bin': save_labels,
+    'aux_save_labels': save_labels,
 }
 
 
@@ -95,7 +90,7 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_score_pf_regr, aux_y_score_pair_bin,  eval_metrics=[], eval_aux_metrics=[], epoch=-1, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_scores,  eval_metrics=[], eval_aux_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
@@ -106,19 +101,15 @@ def evaluate_metrics(y_true, y_score, aux_y_true, aux_y_score_pf_clas, aux_y_sco
             _logger.error(str(e))
             _logger.debug(traceback.format_exc())
 
-    aux_dict = {
-        'pf_clas':aux_y_score_pf_clas,
-        'pf_regr':aux_y_score_pf_regr,
-        'pair_bin':aux_y_score_pair_bin,
-    }
-
     for aux_metric in eval_aux_metrics:
         func = _get_metric(aux_metric)
-        for k, v in aux_dict.items():
-            if k in aux_metric:
-                break
         try:
-            results[aux_metric] = func(aux_y_true, v, epoch, roc_prefix, k) if 'label' in aux_metric else func(aux_y_true, v)
+            if 'label' in aux_metric:
+                results[aux_metric] = func(aux_y_true, aux_y_scores, epoch, roc_prefix, 'aux')
+            elif 'pf_clas' in aux_metric:
+                results[aux_metric] = func(aux_y_true, aux_y_scores, 'pf_clas')
+            elif 'pair_bin' in aux_metric:
+                results[aux_metric] = func(aux_y_true, aux_y_scores, 'pair_bin')
         except Exception as e:
             results[aux_metric] = None
             _logger.error(str(e))

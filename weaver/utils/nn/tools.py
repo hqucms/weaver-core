@@ -97,7 +97,7 @@ def _aux_halder(aux_output, aux_label, aux_mask, aux_loss_func,
     #print('\n aux_label1\n', aux_label.size(), aux_label)
 
     if aux_output == None:
-        aux_label=aux_label.flatten(end_dim=1)[aux_mask, :].float()
+        aux_label=aux_label.flatten(end_dim=1)[aux_mask, :]
         return aux_label
 
     aux_label, aux_logits, aux_correct, aux_scores = _flatten_aux(aux_label, aux_output, dev, aux_mask, aux_scores)
@@ -163,7 +163,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
             #print('\n\nlabels_size\n', label)
 
             if len([k for k in data_config.aux_label_names if 'pf_clas' in k]) > 0:
-                aux_label_pf_clas = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_clas' in k]).permute(1,2,0).to(dev).long()# (batch_size, num_pf, num_labels_pf_clas)
+                aux_label_pf_clas = torch.stack([y[k].long() for k in data_config.aux_label_names if 'pf_clas' in k]).permute(1,2,0).to(dev).long()# (batch_size, num_pf, num_labels_pf_clas)
                 #print('\n\ aux_label_pf_clas\n', aux_label_pf_clas, aux_label_pf_clas.size())
             else:
                 aux_label_pf_clas = None
@@ -198,7 +198,12 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
             with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
                 model_output = model(*inputs)
 
+                num_pf = 0
                 if isinstance(model_output, tuple):
+                    for i, out in enumerate(model_output):
+                        if out is not None and i != 0:
+                            num_pf = out.size(1)
+                            break
                     aux_output_clas = model_output[1]
                     aux_output_regr = model_output[2]
                     aux_output_pair = model_output[3]
@@ -228,7 +233,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         total_aux_correct_pf_clas, num_aux_examples_pf,\
                         aux_label_counter_pf, _ = \
                         _aux_halder(aux_output_clas,
-                                    aux_label_pf_clas[:, :aux_output_clas.size(1), :],
+                                    aux_label_pf_clas[:, :num_pf, :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
                                     dev, aux_label_counter_pf)
@@ -238,12 +243,12 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, _ = \
                         _aux_halder(aux_output_regr,
-                                    aux_label_pf_regr[:, :aux_output_regr.size(1), :],
+                                    aux_label_pf_regr[:, :num_pf, :],
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,dev)
 
                 if aux_label_pair_bin is not None:
-                    aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
+                    aux_label_pair_bin = aux_label_pair_bin[:,:num_pf, :num_pf,:]
                     aux_mask_pair = aux_label_pair_bin[:,0,:,0] != -2
                     aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
                     aux_output_pair = (aux_output_pair[aux_mask_pair])
@@ -427,8 +432,10 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     #HERE aux_labels to pass to metrics
     labels = defaultdict(list)
     aux_labels = defaultdict(list)
+    aux_scores = {}
     labels_counts = []
     observers = defaultdict(list)
+    pf_exra_fts={}
     start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
@@ -438,7 +445,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 #print('\n\data_config.aux_label_names\n', data_config.aux_label_names)
 
                 if len([k for k in data_config.aux_label_names if 'pf_clas' in k]) > 0:
-                    aux_label_pf_clas = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_clas' in k]).permute(1,2,0).to(dev).long()# (batch_size, num_pf, num_labels_pf_clas)
+                    aux_label_pf_clas = torch.stack([y[k].long() for k in data_config.aux_label_names if 'pf_clas' in k]).permute(1,2,0).to(dev).long()# (batch_size, num_pf, num_labels_pf_clas)
                 else:
                     aux_label_pf_clas = None
 
@@ -447,17 +454,15 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 else:
                     aux_label_pf_regr = None
 
-                if len([k for k in data_config.aux_label_names if 'pf_mask_from_b' in k]) == 1:
-                    aux_label_pf_mask_from_b = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_mask_from_b' in k]).permute(1,2,0).to(dev).float()
-                    #print('\n\ aux_label_pf_mask_from_b\n', aux_label_pf_mask_from_b.size(),'\n', aux_label_pf_mask_from_b)
-                else:
-                    aux_label_pf_mask_from_b = None
-
                 if len([k for k in data_config.aux_label_names if 'pair_bin' in k]) > 0:
                     aux_label_pair_bin= torch.stack([y[k].float() for k in data_config.aux_label_names if 'pair_bin' in k]).permute(1,2,3,0).to(dev).float()
                     #print('\n\ aux_label_pair_bin\n', aux_label_pair_bin.size(),'\n', aux_label_pair_bin)
                 else:
                     aux_label_pair_bin= None
+
+                for k in data_config.aux_label_names:
+                    if any(aux in k for aux in ('clas', 'regr', 'bin', 'pair')): continue
+                    pf_exra_fts[k] = torch.stack([y[k].float()]).permute(1,2,0).to(dev)
 
                 #print(data_config.aux_label_names)
                 #print('\n\naux_labels_size1\n', aux_label_pf_clas.size(), aux_label_pf_clas)
@@ -487,14 +492,20 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 #HERE
                 model_output = model(*inputs)
 
+                num_pf = 0
                 if isinstance(model_output, tuple):
+                    for i, out in enumerate(model_output):
+                        if out is not None and i != 0:
+                            num_pf = out.size(1)
+                            break
                     aux_output_clas = model_output[1]
                     aux_output_regr = model_output[2]
                     aux_output_pair = model_output[3]
                     model_output = model_output[0]
-                    #print('\n aux_output pair\n', aux_output_pair.size(), aux_output_pair)
-                    #print('\n model_output\n', model_output.size(), model_output)
-                    #print('\n aux_output_clas\n', aux_output_clas.size(), aux_output_clas)
+                    # print('\n aux_output pair\n', aux_output_pair.size())
+                    # print('\n model_output\n', model_output.size())
+                    # print('\n aux_output_clas\n', aux_output_clas.size())
+                    # print('\n aux_output_regr\n', aux_output_regr.size())
 
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
@@ -511,38 +522,31 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 aux_loss_pf_regr=0.
                 aux_loss_pair_bin=0.
 
+
                 if aux_label_pf_clas is not None:
                     aux_label_pf_clas_masked, aux_mask_pf, aux_loss_pf_clas, aux_correct_pf_clas, \
                         total_aux_correct_pf_clas,\
                         num_aux_examples_pf, aux_label_counter_pf, aux_scores_pf_clas = \
                         _aux_halder(aux_output_clas,
-                                    aux_label_pf_clas[:, :aux_output_clas.size(1), :],
+                                    aux_label_pf_clas[:, :num_pf, :],
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
                                     dev, aux_label_counter_pf, aux_scores_pf_clas)
-                    aux_labels['pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
+                    aux_labels['y_true_pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
 
                 if aux_label_pf_regr is not None:
                     aux_label_pf_regr_masked, aux_mask_pf, aux_loss_pf_regr, aux_correct_pf_regr, \
                         total_aux_correct_pf_regr,\
                         num_aux_examples_pf, _, aux_scores_pf_regr = \
                         _aux_halder(aux_output_regr,
-                                    aux_label_pf_regr[:, :aux_output_regr.size(1), :],
+                                    aux_label_pf_regr[:, :num_pf, :],
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
                                     dev, aux_scores=aux_scores_pf_regr)
-                    aux_labels['pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
-
-                if aux_label_pf_mask_from_b is not None:
-                    aux_label_pf_mask_from_b = _aux_halder(None,
-                                    aux_label_pf_mask_from_b[:, :aux_output_regr.size(1), :],
-                                    aux_mask_pf, None,
-                                    None,None,
-                                    dev, None, None)
-                    aux_labels['pf_regr_mask_from_b'].append(aux_label_pf_mask_from_b.cpu().numpy())
+                    aux_labels['y_true_pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
 
                 if aux_label_pair_bin is not None:
-                    aux_label_pair_bin = aux_label_pair_bin[:,:aux_output_pair.size(1), :aux_output_pair.size(2),:]
+                    aux_label_pair_bin = aux_label_pair_bin[:,:num_pf, :num_pf,:]
                     aux_mask_pair = aux_label_pair_bin[:,0,:,0] != -2
                     aux_label_pair_bin = (aux_label_pair_bin[aux_mask_pair])
                     aux_output_pair = (aux_output_pair[aux_mask_pair])
@@ -566,8 +570,16 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                                     aux_mask_pair_or, aux_loss_func_bin,
                                     num_aux_examples_pair,total_aux_correct_pair_bin,
                                     dev, aux_label_counter_pair, aux_scores_pair_bin)
-                    aux_labels['pair_bin'].append(aux_label_pair_bin_masked.cpu().numpy())
+                    aux_labels['y_true_pair_bin'].append(aux_label_pair_bin_masked.cpu().numpy())
 
+                #loop over the pf extra features
+                for fts_name, fts in pf_exra_fts.items():
+                    fts = _aux_halder(None,
+                                    fts[:, :num_pf, :],
+                                    aux_mask_pf, None,
+                                    None,None,
+                                    dev, None, None)
+                    aux_labels[fts_name].append(fts.cpu().numpy())
 
                 aux_count_pf += num_aux_examples_pf
                 aux_count_pair += num_aux_examples_pair
@@ -697,26 +709,26 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     aux_labels = {k: _concat(v) for k, v in aux_labels.items()}
 
     try:
-        aux_scores_pf_clas = np.concatenate(aux_scores_pf_clas)
+        aux_scores['y_score_pf_clas'] = np.concatenate(aux_scores_pf_clas)
     except ValueError:
-        aux_scores_pf_clas = None
+        pass
 
     try:
-        aux_scores_pf_regr = np.concatenate(aux_scores_pf_regr)
+        aux_scores['y_score_pf_regr'] = np.concatenate(aux_scores_pf_regr)
     except ValueError:
-        aux_scores_pf_regr = None
+        pass
 
     try:
-        aux_scores_pair_bin = np.concatenate(aux_scores_pair_bin)
+        aux_scores['y_score_pair_bin'] = np.concatenate(aux_scores_pair_bin)
     except ValueError:
-        aux_scores_pair_bin = None
+        pass
 
     #print('aux_labels2', aux_labels)
     #print('aux_scores_pf_clas\n', aux_scores_pf_clas)
 
     metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores,
-                        aux_labels, aux_scores_pf_clas, aux_scores_pf_regr,
-                        aux_scores_pair_bin, eval_metrics, eval_aux_metrics, epoch, roc_prefix)
+                        aux_labels, aux_scores, eval_metrics,
+                        eval_aux_metrics, epoch, roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
         ['    - %s: \n%s' % (k, str(v)) for k, v in metric_results.items()]))
 

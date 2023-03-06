@@ -150,3 +150,4 @@ history_plot*/
 roc_curve*/
 performance_comparison.yaml
 input/
+*.code-workspace

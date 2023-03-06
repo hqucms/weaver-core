@@ -44,29 +44,37 @@ args = parser.parse_args()
 epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 
 # dictionary with the labels for the ROC curves
-roc_type_dict=OrderedDict([
-    ('pair_bin',{
-        'PAIRbin' : [[0], None]
-    }),
-    ('pf_clas',{
-        'PFclas_b+bcVSc+other' : [[0,2], [1,3]]
-    }),
-    ('pf_regr',{
-        'PFregr' : [None, None]
-    }),
-    ('primary',{
-        'JET_bVSuds':[[0,1], [4]],
-        'JET_bVSg':[[0,1], [5]],
-        'JET_bVSudsg':[[0,1], [4,5]]
-    }),
-])
+# first element in the list is the label for the signal
+# second element in the list is the label for the background
+# third element in the list is the label
+roc_type_dict={
+    'aux_labels': {
+        #0=b, 1=c, 2=bc, 3=other
+        'IPsig' : [[-1], None, 'pf_clas'],
+        'b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        'VtxPos' : [None, None, 'pf_regr'],
+        #'SameVtx' : [[0], None, 'pair_bin'],
+    },
+    'primary_labels':{
+        #0=b, 1=bb, 4=uds, 5=g
+        'JET_bVSuds':[[0,1], [4], 'primary'],
+        'JET_bVSg':[[0,1], [5], 'primary'],
+        'JET_bVSudsg':[[0,1], [4,5], 'primary']
+    }
+}
+
+pf_extra_fts = {
+    'b+bcVSc+other' : ['pf_mask_charged'],
+    'IPsig' : ['pf_mask_charged', 'pf_var_IPsig'],
+    'VtxPos' : ['pf_mask_from_b'],
+}
 
 # dictionary with the axes limits
 axis_limits ={
-    0: ((600, 600),(0,3,0,0.5), '_vtx_dist_pv'),
-    1: ((300, 300),(-0.15,0.15,-0.05,0.05), '_vtx_x'),
-    2: ((300, 300),(-0.15,0.15,-0.1,0.1), '_vtx_y'),
-    3: ((600, 600),(-0.25, 0.25,-2,2), '_vtx_z')
+    0: ((600, 600),[[0,2],[0,2]], '_vtx_dist_pv'),
+    1: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], '_vtx_x'),
+    2: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], '_vtx_y'),
+    3: ((600, 600),[[-1, 1],[-2,2]], '_vtx_z')
 }
 
 # get the labels for the ROC curves
@@ -92,20 +100,18 @@ def get_rates(y_t, y_s, l_s, l_b):
         fpr, tpr, roc_auc = y_s, y_t, np.nan
     else:
         y_true, y_score = get_labels(y_t,  y_s, l_s, l_b)
-        fpr, tpr, thresh = _m.roc_curve(y_true, y_score)
+        fpr, tpr, threshold = _m.roc_curve(y_true, y_score)
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
-def plt_fts(out_dir, roc_type, name, fig_handle, axis_lim=None):
-    if 'regr' in roc_type:
-        #plt.axis('square')
-        plt.xlabel('True-Reco')
+def plt_fts(out_dir, name, fig_handle):
+    if 'regr' in name:
         if 'True-Reco' not in name:
-            plt.xlim([axis_lim[0], axis_lim[1]])
             plt.xlabel('True')
             plt.ylabel('Reco')
             plt.plot([-40, 40], [-40, 40], 'y--', label='True = Reco')
-            plt.ylim([axis_lim[2], axis_lim[3]])
+        else:
+            plt.xlabel('True-Reco')
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
@@ -117,14 +123,14 @@ def plt_fts(out_dir, roc_type, name, fig_handle, axis_lim=None):
 
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
-    hep.cms.lumitext(f'ROC_{roc_type}_{name}')
+    hep.cms.lumitext(name)
 
     plt.legend(labelcolor='linecolor')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
-    plt.savefig(f'{out_dir}/roc_{roc_type}_{name}.png', bbox_inches='tight')
+    plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
     if args.save:
-        with open(f'{out_dir}/roc_{roc_type}_{name}.pickle', 'wb') as f:
+        with open(f'{out_dir}/{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
     if not args.not_show:
         plt.show()
@@ -135,11 +141,53 @@ def load_dict(name):
         loaded_dict=yaml.safe_load(stream)
     info_dict = defaultdict(list)
     for k, v in loaded_dict.items():
-        info_dict[k].append(defaultdict(list))
-        info_dict[k].append(defaultdict(list))
+        # dictionary with the roc type and the epoch
+        info_dict[k].append(defaultdict(defaultdict))
         info_dict[k].append(v[0])
         info_dict[k].append(v[1])
     return info_dict
+
+def compute_roc(args, infile, dir_name, history, epoch):
+    for label_type, labels_info in roc_type_dict.items():
+        if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
+            continue
+        print(infile)
+        # load labels for each epoch and label type
+        with open(os.path.join(dir_name,infile), 'rb') as f:
+            file = np.load(f, allow_pickle=True)
+            for roc_type, labels in labels_info.items():
+                y_true = file[f'y_true_{labels[2]}']
+
+                # load the extra features for the labels (if present)
+                try:
+                    y_score = file[pf_extra_fts[roc_type][1]]
+                    print(f'EXTRA FEATURE {pf_extra_fts[roc_type][1]} found in {infile}! \n')
+                except (KeyError, IndexError):
+                    y_score = file[f'y_score_{labels[2]}']
+
+                # compute roc curve for each epoch
+                fpr, tpr, roc_auc=get_rates(y_true,y_score,
+                                            labels[0], labels[1])
+
+                # save roc curve for each epoch
+                if args.history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
+                epochs_dict[epoch][roc_type][info[1]]=(fpr, tpr, roc_auc, info[2])
+
+                # load the mask for the labels (if present)
+                try:
+                    y_mask = file[pf_extra_fts[roc_type][0]].astype(bool)
+                    y_true = y_true[y_mask[:, 0]]
+                    y_score = y_score[y_mask[:, 0]]
+                    print(f'MASK {pf_extra_fts[roc_type][0]} found in {infile}! \n')
+                    # compute roc curve for each epoch
+                    fpr, tpr, roc_auc=get_rates(y_true,y_score,
+                                                labels[0], labels[1])
+                    # save roc curve for each epoch
+                    if history: info[0][f'{roc_type}_masked'][epoch]=(fpr, tpr, roc_auc)
+                    epochs_dict[epoch][f'{roc_type}_masked'][info[1]]=(fpr, tpr, roc_auc, info[2])
+                except KeyError:
+                    pass
+
 
 if __name__ == '__main__':
     label_dict=load_dict(f'{args.in_dict}.yaml')
@@ -168,72 +216,25 @@ if __name__ == '__main__':
         # load files for each epoch
         for infile in files:
             epoch = int(infile.split('.npz')[0][-2:] if infile.split('.npz')[0][-2].isnumeric() else infile.split('.npz')[0][-1])
-            if epoch in epoch_list:
-                for label_type, labels_info in roc_type_dict.items():
-                    if args.only_primary and label_type != 'primary':
-                        continue
-                    if label_type in infile:
-                        print(infile)
-                        # load labels for each epoch and label type
-                        with open(os.path.join(dir_name,infile), 'rb') as f:
-                            y_true = np.load(f, allow_pickle=True)['y_true']
-                            y_score = np.load(f, allow_pickle=True)['y_score']
-                            # load the mask for the labels (if present)
-                            try:
-                                y_mask=np.load(f, allow_pickle=True)['y_mask_from_b'].astype(bool)
-                                y_true=y_true[y_mask[:, 0]]
-                                y_score=y_score[y_mask[:, 0]]
-                                print(f'MASK FOUND in {infile}! \n')
-                            except IndexError:
-                                pass
-                            info[0][label_type].append(y_true)
-                            info[1][label_type].append(y_score)
-
-        # load files of best epoch
-        for best_file in best_files:
-            for label_type, labels_info in roc_type_dict.items():
-                if args.only_primary and label_type != 'primary':
-                    continue
-                if label_type in best_file:
-                    print(best_file)
-                    # load labels for best epoch and for every label type
-                    with open(os.path.join(dir_name,best_file), 'rb') as f:
-                        y_true_best=np.load(f, allow_pickle=True)['y_true']
-                        y_score_best=np.load(f, allow_pickle=True)['y_score']
-                        # load the mask for the labels (if present)
-                        try:
-                            y_mask=np.load(f, allow_pickle=True)['y_mask_from_b'].astype(bool)
-                            y_true_best=y_true_best[y_mask[:, 0]]
-                            y_score_best=y_score_best[y_mask[:, 0]]
-                            print(f'MASK FOUND in {best_file}! \n')
-                        except IndexError:
-                            pass
-                        # compute roc curve for best epoch
-                        for roc_type, labels in labels_info.items():
-                            fpr, tpr, roc_auc=get_rates(y_true_best,y_score_best,
-                                                        labels[0], labels[1])
-                            epochs_dict['best'][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
+            if epoch not in epoch_list: continue
+            compute_roc(args, infile, dir_name, args.history, epoch)
 
         # compute roc curve for each epoch
         for label_type, labels_info in roc_type_dict.items():
-            if len(info[0][label_type]) == 0: continue
             for roc_type, labels in labels_info.items():
-                if 'regr' not in roc_type and args.history:
-                    fig_handle = plt.figure()
+                if len(info[0][roc_type]) == 0 or 'regr' in roc_type:
+                    continue
+                fig_handle = plt.figure()
                 # loop over epochs
-                for num in range(len(info[0][label_type])):
-                    #print(roc_type, label_type,labels, epoch_list[num])
+                for epoch in epoch_list:
+                    #print(epoch)
+                    fpr, tpr, roc_auc = info[0][roc_type][epoch]
+                    plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[1]} epoch #{epoch}, auc=%0.3f'% roc_auc)
+                plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_history', fig_handle)
 
-                    # compute roc curve for each epoch
-                    fpr, tpr, roc_auc=get_rates(
-                        info[0][label_type][num],info[1][label_type][num],
-                        labels[0], labels[1])
-                    # save roc curve for each epoch in a dictionary
-                    epochs_dict[epoch_list[num]][roc_type][info[2]]=(fpr, tpr, roc_auc, info[3])
-                    if 'regr' not in roc_type and args.history:
-                        plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[2]} epoch #{epoch_list[num]}, auc=%0.3f'% roc_auc)
-                if 'regr' not in roc_type and args.history:
-                    plt_fts(out_dir, roc_type, f'{info[2]}_history', fig_handle)
+        # load files of best epoch
+        for best_file in best_files:
+            compute_roc(args, infile, dir_name, False, 'best')
 
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in epochs_dict.items():
@@ -245,7 +246,7 @@ if __name__ == '__main__':
             # loop over networks
             for network, rates in net_dict.items():
                 plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-            plt_fts(out_dir, roc_type, epoch, fig_handle)
+            plt_fts(out_dir, f"ROC_{roc_type}_epoch", fig_handle)
 
         # loop over roc types
         for roc_type, net_dict in epoch_dict.items():
@@ -263,9 +264,13 @@ if __name__ == '__main__':
                     #x_t, y_r = x_t[mask], y_r[mask]
 
                     # plot scatter plot
-                    plt.hist2d(x_t, y_r,  bins=axis_limits[i][0], cmap=plt.cm.jet, density=True)
+                    plt.hist2d(x_t, y_r,  bins=axis_limits[i][0],
+                               cmap=plt.cm.jet, density=True,
+                               range=axis_limits[i][1])
                     plt.colorbar().set_label('Density')
-                    plt_fts(out_dir, roc_type, f'scatter{axis_limits[i][2]}_{network}_{epoch}', fig_handle, axis_limits[i][1])
+                    plt_fts(out_dir,
+                            f'Scatter_{roc_type}_{axis_limits[i][2]}_{network}_{epoch}',
+                            fig_handle)
 
                 fig_handle = plt.figure()
                 # loop over networks
@@ -279,6 +284,8 @@ if __name__ == '__main__':
                     # plot true-reco histogram
                     plt.hist((x_t-y_r), color= rates[3],
                              bins=axis_limits[i][0][0], label=network,
-                             range=(-axis_limits[i][1][1],
-                             axis_limits[i][1][1]), density=True)
-                    plt_fts(out_dir, roc_type, f'True-Reco{axis_limits[i][2]}_{network}_{epoch}', fig_handle, None)
+                             range=(-axis_limits[i][1][0][1],
+                             axis_limits[i][1][0][1]), density=True)
+                    plt_fts(out_dir,
+                            f'True-Reco_{roc_type}{axis_limits[i][2]}_{network}_{epoch}',
+                            fig_handle)

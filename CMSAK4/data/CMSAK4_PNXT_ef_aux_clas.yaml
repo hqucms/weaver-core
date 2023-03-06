@@ -48,12 +48,13 @@ new_variables:
    aux_label_mask: (pfcand_from_b != -1) -1
    from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
    from_c_bool: ak.values_astype(pfcand_from_c, np.bool_)
-   
-   pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1, axis=-1)
+
+   pf_b: ak.fill_none(ak.pad_none(( from_b_bool & ~from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_c: ak.fill_none(ak.pad_none((from_c_bool & ~from_b_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_bc: ak.fill_none(ak.pad_none((from_b_bool & from_c_bool)+aux_label_mask, 50, axis=1, clip=True),-1)
    pf_other: ak.fill_none(ak.pad_none((~from_b_bool & ~from_c_bool)+2*aux_label_mask, 50, axis=1, clip=True),-1)
-
+   pf_charged: ak.fill_none(ak.pad_none( (pfcand_charge != 0), 50, axis=1, clip=True),-1)
+   pf_IPsig: ak.fill_none(ak.pad_none(pfcand_btagSip3dSig, 50, axis=1, clip=True),-1)
 
 preprocess:
   ### method: [manual, auto] - whether to use manually specified parameters for variable standardization
@@ -196,7 +197,8 @@ aux_labels:
       aux_label_pf_clas_c: pf_c
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
-
+      pf_mask_charged: pf_charged
+      pf_var_IPsig: pf_IPsig
 
 observers:
    - event_no
