@@ -1205,7 +1205,7 @@ def main():
 
     if (args.val and not args.train) or (args.test and not args.train):
         if ',' in  args.gpus:
-            args.gpus = 0
+            args.gpus = '0'
         args.extra_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
         args.extra_test_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
 

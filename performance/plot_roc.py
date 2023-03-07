@@ -11,6 +11,7 @@ import mplhep as hep
 import yaml
 import time
 
+plt.rcParams['agg.path.chunksize'] = 10000
 
 '''orig_stdout = sys.stdout
 f = open('roc.txt', 'w')
@@ -50,10 +51,10 @@ epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 roc_type_dict={
     'aux_labels': {
         #0=b, 1=c, 2=bc, 3=other
-        'IPsig' : [[0,2], [1,3], 'pf_clas'],
-        'b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        'VtxPos' : [None, None, 'pf_regr'],
-        'SameVtx' : [[0], None, 'pair_bin'],
+        'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        'PF_VtxPos' : [None, None, 'pf_regr'],
+        'PAIR_SameVtx' : [[0], None, 'pair_bin'],
     },
     'primary_labels':{
         #0=b, 1=bb, 4=uds, 5=g
@@ -64,9 +65,9 @@ roc_type_dict={
 }
 
 pf_extra_fts = {
-    'b+bcVSc+other' : ['pf_mask_charged'],
-    'IPsig' : ['pf_mask_charged', 'pf_var_IPsig'],
-    'VtxPos' : ['pf_mask_from_b'],
+    'PF_SIP' : ['pf_mask_charged', 'pf_var_SIP'],
+    'PF_b+bcVSc+other' : ['pf_mask_charged'],
+    'PAIR_VtxPos' : ['pf_mask_from_b'],
 }
 
 # dictionary with the axes limits
@@ -128,7 +129,7 @@ def plt_fts(out_dir, name, fig_handle):
     hep.cms.label(rlabel='')
     hep.cms.lumitext(name)
 
-    plt.legend(labelcolor='linecolor')
+    plt.legend(labelcolor='linecolor', loc='upper left')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
     plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
@@ -150,7 +151,7 @@ def load_dict(name):
         info_dict[k].append(v[1])
     return info_dict
 
-def compute_roc(args, infile, dir_name, history, epoch):
+def compute_roc(args, info, infile, dir_name, history, epoch):
     for label_type, labels_info in roc_type_dict.items():
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
@@ -159,7 +160,10 @@ def compute_roc(args, infile, dir_name, history, epoch):
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True)
             for roc_type, labels in labels_info.items():
-                y_true = file[f'y_true_{labels[2]}']
+                try:
+                    y_true = file[f'y_true_{labels[2]}']
+                except KeyError:
+                    continue
 
                 # load the extra features for the labels (if present)
                 try:
@@ -220,7 +224,7 @@ if __name__ == '__main__':
         for infile in files:
             epoch = int(infile.split('.npz')[0][-2:] if infile.split('.npz')[0][-2].isnumeric() else infile.split('.npz')[0][-1])
             if epoch not in epoch_list: continue
-            compute_roc(args, infile, dir_name, args.history, epoch)
+            compute_roc(args, info, infile, dir_name, args.history, epoch)
 
         # compute roc curve for each epoch
         for label_type, labels_info in roc_type_dict.items():
@@ -237,7 +241,7 @@ if __name__ == '__main__':
 
         # load files of best epoch
         for best_file in best_files:
-            compute_roc(args, best_file, dir_name, False, 'best')
+            compute_roc(args, info, best_file, dir_name, False, 'best')
 
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in epochs_dict.items():
