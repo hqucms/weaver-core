@@ -821,11 +821,7 @@ def _main(args):
 
     # training/testing mode
     training_mode = not args.predict and  args.train
-    if (args.val and not args.train) or (args.test and not args.train):
-        #args.test = True
-        #args.data_test = args.data_val
-        if ',' in  args.gpus:
-            args.gpus = 0
+
     if args.train and args.test and not args.val:
         raise RuntimeError("Please test only on already trained and validated models")
     local_rank = None
@@ -1206,6 +1202,12 @@ def main():
         args.model_prefix = args.model_prefix.replace('{auto}', model_name)
         args.log = args.log.replace('{auto}', model_name)
         print('Using auto-generated model prefix %s' % args.model_prefix)
+
+    if (args.val and not args.train) or (args.test and not args.train):
+        if ',' in  args.gpus:
+            args.gpus = 0
+        args.extra_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
+        args.extra_test_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
 
     if args.predict_gpus is None:
         args.predict_gpus = args.gpus

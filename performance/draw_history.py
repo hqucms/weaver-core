@@ -7,6 +7,7 @@ import mplhep as hep
 import yaml
 import argparse
 import time
+import numpy as np
 
 '''orig_stdout = sys.stdout
 f = open('history.txt', 'w')
@@ -18,6 +19,8 @@ parser.add_argument('--not-show', action='store_true', default=False,
                     help='do not show plots')
 parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
+parser.add_argument('--not-partial', action='store_true', default=False,
+                    help='ignore partial epochs in the plots')
 parser.add_argument('--last-epoch', type=int, default=100,
                     help='save plots')
 parser.add_argument('--path', type=str, default="",
@@ -105,7 +108,9 @@ if __name__ == "__main__":
             for line in f:
                 for name, value in history_dict.items():
                     if value[0] in line:
-                       info[0][name].append(float(line.split(value[0],1)[1].split(value[1])[0]))
+                        if args.not_partial and 'Partial' in line:
+                            continue
+                        info[0][name].append(float(line.split(value[0],1)[1].split(value[1])[0]))
 
     # plot the history
     for history, _ in history_dict.items():
@@ -113,7 +118,8 @@ if __name__ == "__main__":
         for _, info in infile_dict.items():
             for name, value in info[0].items():
                 if name == history:
-                    plt.plot(value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
+                    x = np.linspace(0, len(value), len(value)) if args.not_partial else np.linspace(0, len(value), len(value)*3)
+                    plt.plot(x, value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
         plot(out_dir, history, fig_handle)
 
 

@@ -50,10 +50,10 @@ epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 roc_type_dict={
     'aux_labels': {
         #0=b, 1=c, 2=bc, 3=other
-        'IPsig' : [[-1], None, 'pf_clas'],
+        'IPsig' : [[0,2], [1,3], 'pf_clas'],
         'b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
         'VtxPos' : [None, None, 'pf_regr'],
-        #'SameVtx' : [[0], None, 'pair_bin'],
+        'SameVtx' : [[0], None, 'pair_bin'],
     },
     'primary_labels':{
         #0=b, 1=bb, 4=uds, 5=g
@@ -80,17 +80,20 @@ axis_limits ={
 # get the labels for the ROC curves
 def get_labels(y_true, y_score, labels_s, labels_b):
     if labels_b is None:
-        y_true_tot = y_true
+        return y_true, y_score
+
+    y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
+    y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
+    y_true_idx = np.logical_or(y_true_s,y_true_b)
+    y_true_tot=y_true_s[y_true_idx].astype(int)
+
+    if y_score.shape[1]==1:
         y_score_tot = y_score
     else:
-        y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
-        y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
-        y_true_idx = np.logical_or(y_true_s,y_true_b)
         y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
         y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
         y_score_tot=y_score_s+y_score_b
         y_score_tot = y_score_tot[y_true_idx]
-        y_true_tot=y_true_s[y_true_idx].astype(int)
 
     return y_true_tot, y_score_tot
 
@@ -234,7 +237,7 @@ if __name__ == '__main__':
 
         # load files of best epoch
         for best_file in best_files:
-            compute_roc(args, infile, dir_name, False, 'best')
+            compute_roc(args, best_file, dir_name, False, 'best')
 
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in epochs_dict.items():
@@ -246,7 +249,7 @@ if __name__ == '__main__':
             # loop over networks
             for network, rates in net_dict.items():
                 plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-            plt_fts(out_dir, f"ROC_{roc_type}_epoch", fig_handle)
+            plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
 
         # loop over roc types
         for roc_type, net_dict in epoch_dict.items():
