@@ -66,17 +66,17 @@ roc_type_dict={
 
 
 pf_extra_fts = {
-    'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_SIP'],
+    'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_IPsig'],
     'PF_b+bcVSc+other' : ['pf_mask_charged'],
     'PF_VtxPos' : ['pf_mask_from_b'],
 }
 
 # dictionary with the axes limits
 axis_limits ={
-    0: ((600, 600),[[0,2],[0,2]], 'vtx_dist_pv'),
-    1: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], 'vtx_x'),
-    2: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], 'vtx_y'),
-    3: ((600, 600),[[-1, 1],[-2,2]], 'vtx_z')
+    0: ((100, 100),[[0,2],[0,2]], 'vtx_dist_pv'),
+    1: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_x'),
+    2: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_y'),
+    3: ((100, 100),[[-1, 1],[-2,2]], 'vtx_z')
 }
 
 # get the labels for the ROC curves
@@ -130,7 +130,7 @@ def plt_fts(out_dir, name, fig_handle):
     hep.cms.lumitext(name)
     plt.legend(labelcolor='linecolor', loc='upper left')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    fig_handle.set_size_inches(20, 15)
+    fig_handle.set_size_inches(30, 20)
     plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
     if args.save:
         with open(f'{out_dir}/{name}.pickle', 'wb') as f:
