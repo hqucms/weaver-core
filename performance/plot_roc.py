@@ -51,31 +51,31 @@ epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 roc_type_dict={
     'aux_labels': {
         #0=b, 1=c, 2=bc, 3=other
-        'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        #'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        #'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
         'PF_VtxPos' : [None, None, 'pf_regr'],
-        'PAIR_SameVtx' : [[0], None, 'pair_bin'],
+        #'PAIR_SameVtx' : [[0], None, 'pair_bin'],
     },
-    'primary_labels':{
-        #0=b, 1=bb, 4=uds, 5=g
-        'JET_bVSuds':[[0,1], [4], 'primary'],
-        'JET_bVSg':[[0,1], [5], 'primary'],
-        'JET_bVSudsg':[[0,1], [4,5], 'primary']
-    }
+    # 'primary_labels':{
+    #     #0=b, 1=bb, 4=uds, 5=g
+    #     'JET_bVSuds':[[0,1], [4], 'primary'],
+    #     'JET_bVSg':[[0,1], [5], 'primary'],
+    #     'JET_bVSudsg':[[0,1], [4,5], 'primary']
+    # }
 }
 
 pf_extra_fts = {
-    'PF_SIP' : ['pf_mask_charged', 'pf_var_SIP'],
+    'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_SIP'],
     'PF_b+bcVSc+other' : ['pf_mask_charged'],
-    'PAIR_VtxPos' : ['pf_mask_from_b'],
+    'PF_VtxPos' : ['pf_mask_from_b'],
 }
 
 # dictionary with the axes limits
 axis_limits ={
-    0: ((600, 600),[[0,2],[0,2]], '_vtx_dist_pv'),
-    1: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], '_vtx_x'),
-    2: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], '_vtx_y'),
-    3: ((600, 600),[[-1, 1],[-2,2]], '_vtx_z')
+    0: ((600, 600),[[0,2],[0,2]], 'vtx_dist_pv'),
+    1: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], 'vtx_x'),
+    2: ((300, 300),[[-0.2,0.2],[-0.2,0.2]], 'vtx_y'),
+    3: ((600, 600),[[-1, 1],[-2,2]], 'vtx_z')
 }
 
 # get the labels for the ROC curves
@@ -109,13 +109,13 @@ def get_rates(y_t, y_s, l_s, l_b):
     return fpr, tpr, roc_auc
 
 def plt_fts(out_dir, name, fig_handle):
-    if 'regr' in name:
-        if 'True-Reco' not in name:
+    if 'PF_VtxPos' in name:
+        if 'True-Reco' in name:
+            plt.xlabel('True-Reco')
+        else:
             plt.xlabel('True')
             plt.ylabel('Reco')
             plt.plot([-40, 40], [-40, 40], 'y--', label='True = Reco')
-        else:
-            plt.xlabel('True-Reco')
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
@@ -124,11 +124,9 @@ def plt_fts(out_dir, name, fig_handle):
         plt.yscale('log')
 
     plt.grid()
-
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
     hep.cms.lumitext(name)
-
     plt.legend(labelcolor='linecolor', loc='upper left')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
@@ -229,7 +227,7 @@ if __name__ == '__main__':
         # compute roc curve for each epoch
         for label_type, labels_info in roc_type_dict.items():
             for roc_type, labels in labels_info.items():
-                if len(info[0][roc_type]) == 0 or 'regr' in roc_type:
+                if len(info[0][roc_type]) == 0 or 'PF_VtxPos' in roc_type:
                     continue
                 fig_handle = plt.figure()
                 # loop over epochs
@@ -246,53 +244,50 @@ if __name__ == '__main__':
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in epochs_dict.items():
         # loop over roc types
-        for roc_type, net_dict in epoch_dict.items():
-            if 'regr' in roc_type:
-                continue
-            fig_handle = plt.figure()
-            # loop over networks
-            for network, rates in net_dict.items():
-                plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-            plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
-
-        # loop over roc types
-        for roc_type, net_dict in epoch_dict.items():
-            # loop over different types of labels
-            for i in range(4):
-                if 'regr' not in roc_type:
-                    continue
+        for roc_type, networks_dict in epoch_dict.items():
+            if 'PF_VtxPos' not in roc_type:
+                print(roc_type)
                 fig_handle = plt.figure()
                 # loop over networks
-                for network, rates in net_dict.items():
-                    x_t=rates[1][:, i]
-                    y_r=rates[0][:, i]
+                for network, rates in networks_dict.items():
+                    plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
+                plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
 
-                    mask= (x_t!=0.)
-                    #x_t, y_r = x_t[mask], y_r[mask]
+            else:
+                # loop over different types of features
+                for i, limits in axis_limits.items():
+                    fig_handle = plt.figure()
+                    # loop over networks
+                    for network, rates in networks_dict.items():
+                        x_t=rates[1][:, i]
+                        y_r=rates[0][:, i]
 
-                    # plot scatter plot
-                    plt.hist2d(x_t, y_r,  bins=axis_limits[i][0],
-                               cmap=plt.cm.jet, density=True,
-                               range=axis_limits[i][1])
-                    plt.colorbar().set_label('Density')
-                    plt_fts(out_dir,
-                            f'Scatter_{roc_type}_{axis_limits[i][2]}_{network}_{epoch}',
-                            fig_handle)
+                        mask= (x_t!=0.)
+                        #x_t, y_r = x_t[mask], y_r[mask]
 
-                fig_handle = plt.figure()
-                # loop over networks
-                for network, rates in net_dict.items():
-                    x_t=rates[1][:, i]
-                    y_r=rates[0][:, i]
+                        # plot scatter plot
+                        plt.hist2d(x_t, y_r,  bins=limits[0],
+                                cmap=plt.cm.jet, density=True,
+                                range=limits[1])
+                        plt.colorbar().set_label('Density')
+                        plt_fts(out_dir,
+                                f'Scatter_{roc_type}_{limits[2]}_{network}_{epoch}',
+                                fig_handle)
 
-                    mask= (x_t!=0.)
-                    #x_t, y_r = x_t[mask], y_r[mask]
+                    fig_handle = plt.figure()
+                    # loop over networks
+                    for network, rates in networks_dict.items():
+                        x_t=rates[1][:, i]
+                        y_r=rates[0][:, i]
 
-                    # plot true-reco histogram
-                    plt.hist((x_t-y_r), color= rates[3],
-                             bins=axis_limits[i][0][0], label=network,
-                             range=(-axis_limits[i][1][0][1],
-                             axis_limits[i][1][0][1]), density=True)
-                    plt_fts(out_dir,
-                            f'True-Reco_{roc_type}{axis_limits[i][2]}_{network}_{epoch}',
-                            fig_handle)
+                        mask= (x_t!=0.)
+                        #x_t, y_r = x_t[mask], y_r[mask]
+
+                        # plot true-reco histogram
+                        plt.hist((x_t-y_r), color= rates[3],
+                                bins=limits[0][0], label=network,
+                                range=(-limits[1][0][1],
+                                limits[1][0][1]), density=True)
+                        plt_fts(out_dir,
+                                f'True-Reco_{roc_type}_{limits[2]}_{network}_{epoch}',
+                                fig_handle)
