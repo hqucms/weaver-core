@@ -11,6 +11,7 @@ import mplhep as hep
 import yaml
 import time
 import multiprocessing as mp
+
 manager = mp.Manager()
 
 plt.rcParams['agg.path.chunksize'] = 10000
@@ -130,7 +131,7 @@ def plt_fts(out_dir, name, fig_handle):
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
     hep.cms.lumitext(name)
-    plt.legend(labelcolor='linecolor', loc='upper left')
+    plt.legend(labelcolor='linecolor')# , loc='upper left')
     #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
     plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
@@ -195,37 +196,35 @@ def create_dict(info, infile, dir_name, history, epoch):
         #print(label_type)
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
-        print(infile)
+        #print(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True)
             for roc_type, labels in labels_info.items():
-
+                if roc_type in epochs_dict[epoch].keys(): continue
                 # load the extra features for the labels (if present)
                 try:
-                    y_score = file[pf_extra_fts[roc_type][1]]
+                    _ = file[pf_extra_fts[roc_type][1]]
                     print(f'EXTRA FEATURE {pf_extra_fts[roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
                     try:
-                        y_score = file[f'y_score_{labels[2]}']
+                        _ = file[f'y_score_{labels[2]}']
                     except KeyError:
                         continue
 
                 # save roc curve for each epoch
-                if args.history and roc_type not in info[0].keys(): info[0][roc_type] = manager.dict()
-                if roc_type not in epochs_dict[epoch].keys(): epochs_dict[epoch][roc_type] = manager.dict()
-                print(roc_type)
+                if history: info[0][roc_type] = manager.dict()
+                epochs_dict[epoch][roc_type] = manager.dict()
+
                 # load the mask for the labels (if present)
                 try:
-                    y_mask = file[pf_extra_fts[roc_type][0]].astype(bool)
+                    _ = file[pf_extra_fts[roc_type][0]].astype(bool)
                     print(f'MASK {pf_extra_fts[roc_type][0]} found in {infile}! \n')
                     # save roc curve for each epoch
-                    if history and f'{roc_type}_masked' not in info[0].keys(): info[0][f'{roc_type}_masked']= manager.dict()
-                    if f'{roc_type}_masked' not in epochs_dict[epoch].keys():  epochs_dict[epoch][f'{roc_type}_masked'] = manager.dict()
+                    if history: info[0][f'{roc_type}_masked']= manager.dict()
+                    epochs_dict[epoch][f'{roc_type}_masked'] = manager.dict()
                 except KeyError:
                     pass
-    print(epochs_dict[epoch])
-
 
 def compute_roc(info, infile, dir_name, history, epoch):
     for label_type, labels_info in roc_type_dict.items():
@@ -256,9 +255,7 @@ def compute_roc(info, infile, dir_name, history, epoch):
                                             labels[0], labels[1])
 
                 # save roc curve for each epoch
-                if args.history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
-
-
+                if history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
                 epochs_dict[epoch][roc_type][info[1]]=(fpr, tpr, roc_auc, info[2])
 
                 # load the mask for the labels (if present)
@@ -276,7 +273,7 @@ def compute_roc(info, infile, dir_name, history, epoch):
                 except KeyError:
                     pass
 
-def plotting_history_function(labels, roc_type):
+def plotting_history_function(epoch_list, info,  roc_type, out_dir):
     fig_handle = plt.figure()
     # loop over epochs
     for epoch in epoch_list:
@@ -330,7 +327,6 @@ def plotting_function(epoch, roc_type, networks_dict):
                 plt_fts(out_dir,
                         f'True-Reco_{roc_type}_{limits[2]}_{network}_{epoch}',
                         fig_handle)
-
 
 
 if __name__ == '__main__':
@@ -391,8 +387,10 @@ if __name__ == '__main__':
     for parallel_elem in parallel_list:
         parallel_elem.join()
 
+    print(epochs_dict)
     print(epochs_dict['best'])
-
+    print(epochs_dict['best']['PF_SIP_b+bcVSc+other'][0][:100])
+    print(epochs_dict['best']['PF_b+bcVSc+other'][0][:100])
 
     parallel_list = []
     for input_name, info in label_dict.items():
@@ -402,14 +400,13 @@ if __name__ == '__main__':
                 if roc_type not in info[0].keys() or 'PF_VtxPos' == roc_type:
                     continue
                 p=mp.Process(target=plotting_history_function,
-                                    args=(labels, roc_type))
+                                    args=(epoch_list, info,  roc_type, out_dir))
                 p.start()
                 parallel_list.append(p)
 
     # Join parallel
     for parallel_elem in parallel_list:
         parallel_elem.join()
-        print(roc_type, labels)
 
 
     parallel_list = []
@@ -426,4 +423,4 @@ if __name__ == '__main__':
     for parallel_elem in parallel_list:
         parallel_elem.join()
 
-    print(time.time()-start)
+    print('Total time:   ', time.time()-start)
