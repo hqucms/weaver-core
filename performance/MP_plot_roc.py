@@ -157,17 +157,27 @@ def build_epochs_dict():
         # files to load
         dir_name=f'{args.path}{input_name}'
         files = [filename for filename in os.listdir(dir_name)
-                 if ('labels_epoch' in filename)]
+            if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
-                    if ('labels_best' in filename)]
-
-        # epochs to load
+            if ('labels_best' in filename)]
+         # epochs to load
         if args.epochs == '-1':
-            epoch_list=[len([k for k in files if 'primary' in k])-1]
+             epoch_list=[len([k for k in files if 'primary' in k])-1]
         elif args.epochs:
             epoch_list=[int(i) for i in args.epochs.split(',')]
         else:
             epoch_list = []
+        break
+    for epoch in epoch_list:
+        epochs_dict[epoch] = manager.dict()
+    epochs_dict['best'] = manager.dict()
+    for input_name, info in label_dict.items():
+        # files to load
+        dir_name=f'{args.path}{input_name}'
+        files = [filename for filename in os.listdir(dir_name)
+                 if ('labels_epoch' in filename)]
+        best_files = [filename for filename in os.listdir(dir_name)
+                    if ('labels_best' in filename)]
 
         # load files for each epoch
         for infile in files:
@@ -175,15 +185,16 @@ def build_epochs_dict():
             if epoch not in epoch_list: continue
             create_dict(info, infile, dir_name, args.history, epoch)
         for best_file in best_files:
-            create_dict(info, infile, dir_name, False, 'best')
+            create_dict(info, best_file, dir_name, False, 'best')
 
 
 def create_dict(info, infile, dir_name, history, epoch):
-    epochs_dict[epoch] = manager.dict()
+    #epochs_dict[epoch] = manager.dict()
     for label_type, labels_info in roc_type_dict.items():
-        print(label_type)
+        #print(label_type)
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
+        print(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True)
@@ -194,21 +205,25 @@ def create_dict(info, infile, dir_name, history, epoch):
                     y_score = file[pf_extra_fts[roc_type][1]]
                     print(f'EXTRA FEATURE {pf_extra_fts[roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
-                    y_score = file[f'y_score_{labels[2]}']
+                    try:
+                        y_score = file[f'y_score_{labels[2]}']
+                    except KeyError:
+                        continue
 
                 # save roc curve for each epoch
-                if args.history: info[0][roc_type]= manager.dict()
-                epochs_dict[epoch][roc_type] = manager.dict()
-
+                if args.history and roc_type not in info[0].keys(): info[0][roc_type] = manager.dict()
+                if roc_type not in epochs_dict[epoch].keys(): epochs_dict[epoch][roc_type] = manager.dict()
+                print(roc_type)
                 # load the mask for the labels (if present)
                 try:
                     y_mask = file[pf_extra_fts[roc_type][0]].astype(bool)
                     print(f'MASK {pf_extra_fts[roc_type][0]} found in {infile}! \n')
                     # save roc curve for each epoch
-                    if history: info[0][f'{roc_type}_masked']= manager.dict()
-                    epochs_dict[epoch][f'{roc_type}_masked'] = manager.dict()
+                    if history and f'{roc_type}_masked' not in info[0].keys(): info[0][f'{roc_type}_masked']= manager.dict()
+                    if f'{roc_type}_masked' not in epochs_dict[epoch].keys():  epochs_dict[epoch][f'{roc_type}_masked'] = manager.dict()
                 except KeyError:
                     pass
+    print(epochs_dict[epoch])
 
 
 def compute_roc(info, infile, dir_name, history, epoch):
@@ -230,7 +245,10 @@ def compute_roc(info, infile, dir_name, history, epoch):
                     y_score = file[pf_extra_fts[roc_type][1]]
                     print(f'EXTRA FEATURE {pf_extra_fts[roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
-                    y_score = file[f'y_score_{labels[2]}']
+                    try:
+                        y_score = file[f'y_score_{labels[2]}']
+                    except KeyError:
+                        continue
 
                 # compute roc curve for each epoch
                 fpr, tpr, roc_auc=get_rates(y_true,y_score,
@@ -258,7 +276,7 @@ def compute_roc(info, infile, dir_name, history, epoch):
                     pass
 
 def plotting_function(epochs_dict_items):
-    print(epochs_dict)
+    #print(epochs_dict)
     # plot roc curves for each epoch comparing different networks
     epoch, epoch_dict = epochs_dict_items
     # loop over roc types
@@ -312,6 +330,7 @@ def plotting_function(epochs_dict_items):
 
 if __name__ == '__main__':
     start=time.time()
+    print('###################################################################################################################################')
 
     label_dict=load_dict(f'{args.in_dict}.yaml')
 
@@ -322,6 +341,9 @@ if __name__ == '__main__':
 
     build_epochs_dict()
     print(epochs_dict)
+    print(epochs_dict['best'])
+    print(epochs_dict['best']['PF_VtxPos'])
+    print(epochs_dict['best']['JET_bVSuds'])
     print('\n done building epochs dict \n')
 
     parallel_list=[]

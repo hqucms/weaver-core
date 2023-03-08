@@ -169,7 +169,10 @@ def compute_roc(args, info, infile, dir_name, history, epoch):
                     y_score = file[pf_extra_fts[roc_type][1]]
                     print(f'EXTRA FEATURE {pf_extra_fts[roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
-                    y_score = file[f'y_score_{labels[2]}']
+                    try:
+                        y_score = file[f'y_score_{labels[2]}']
+                    except KeyError:
+                        continue
 
                 # compute roc curve for each epoch
                 fpr, tpr, roc_auc=get_rates(y_true,y_score,
