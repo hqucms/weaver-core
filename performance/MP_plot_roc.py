@@ -10,6 +10,8 @@ from collections import defaultdict, OrderedDict
 import mplhep as hep
 import yaml
 import time
+import multiprocessing as mp
+manager = mp.Manager()
 
 plt.rcParams['agg.path.chunksize'] = 10000
 
@@ -42,7 +44,8 @@ args = parser.parse_args()
 # dictionary where the first key is the epoch,
 # the second is the type of ROC
 # and the third is the network
-epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
+epochs_dict=manager.dict()
+#epochs_dict=defaultdict(lambda: defaultdict(defaultdict))
 
 # dictionary with the labels for the ROC curves
 # first element in the list is the label for the signal
@@ -63,7 +66,6 @@ roc_type_dict={
         'JET_bVSudsg':[[0,1], [4,5], 'primary']
     }
 }
-
 
 pf_extra_fts = {
     'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_SIP'],
@@ -150,7 +152,7 @@ def load_dict(name):
         info_dict[k].append(v[1])
     return info_dict
 
-def compute_roc(args, info, infile, dir_name, history, epoch):
+def compute_roc(info, infile, dir_name, history, epoch):
     for label_type, labels_info in roc_type_dict.items():
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
@@ -177,6 +179,9 @@ def compute_roc(args, info, infile, dir_name, history, epoch):
 
                 # save roc curve for each epoch
                 if args.history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
+                epochs_dict[epoch] = manager.dict()
+                epochs_dict[epoch][roc_type] = manager.dict()
+
                 epochs_dict[epoch][roc_type][info[1]]=(fpr, tpr, roc_auc, info[2])
 
                 # load the mask for the labels (if present)
@@ -190,10 +195,63 @@ def compute_roc(args, info, infile, dir_name, history, epoch):
                                                 labels[0], labels[1])
                     # save roc curve for each epoch
                     if history: info[0][f'{roc_type}_masked'][epoch]=(fpr, tpr, roc_auc)
+                    epochs_dict[epoch][f'{roc_type}_masked'] = manager.dict()
                     epochs_dict[epoch][f'{roc_type}_masked'][info[1]]=(fpr, tpr, roc_auc, info[2])
                 except KeyError:
                     pass
 
+def plotting_function(epochs_dict_items):
+    print(epochs_dict)
+    # plot roc curves for each epoch comparing different networks
+    epoch, epoch_dict = epochs_dict_items
+    # loop over roc types
+    for roc_type, networks_dict in epoch_dict.items():
+        if 'PF_VtxPos' not in roc_type:
+            print(roc_type)
+            fig_handle = plt.figure()
+            # loop over networks
+            for network, rates in networks_dict.items():
+                plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
+            plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
+
+        else:
+            # loop over different types of features
+            for i, limits in axis_limits.items():
+                fig_handle = plt.figure()
+                # loop over networks
+                for network, rates in networks_dict.items():
+                    x_t=rates[1][:, i]
+                    y_r=rates[0][:, i]
+
+                    mask= (x_t!=0.)
+                    #x_t, y_r = x_t[mask], y_r[mask]
+
+                    # plot scatter plot
+                    plt.hist2d(x_t, y_r,  bins=limits[0],
+                            cmap=plt.cm.jet, density=True,
+                            range=limits[1])
+                    plt.colorbar().set_label('Density')
+                    plt_fts(out_dir,
+                            f'Scatter_{roc_type}_{limits[2]}_{network}_{epoch}',
+                            fig_handle)
+
+                fig_handle = plt.figure()
+                # loop over networks
+                for network, rates in networks_dict.items():
+                    x_t=rates[1][:, i]
+                    y_r=rates[0][:, i]
+
+                    mask= (x_t!=0.)
+                    #x_t, y_r = x_t[mask], y_r[mask]
+
+                    # plot true-reco histogram
+                    plt.hist((x_t-y_r), color= rates[3],
+                            bins=limits[0][0], label=network,
+                            range=(-limits[1][0][1],
+                            limits[1][0][1]), density=True)
+                    plt_fts(out_dir,
+                            f'True-Reco_{roc_type}_{limits[2]}_{network}_{epoch}',
+                            fig_handle)
 
 if __name__ == '__main__':
     start=time.time()
@@ -205,6 +263,8 @@ if __name__ == '__main__':
     out_dir = os.path.join(f'{args.path}roc_curve', f'{date_time}_{args.name}_roc')
     os.makedirs(out_dir, exist_ok=True)
 
+
+    parallel_list=[]
     for input_name, info in label_dict.items():
         # files to load
         dir_name=f'{args.path}{input_name}'
@@ -221,12 +281,36 @@ if __name__ == '__main__':
         else:
             epoch_list = []
 
+
         # load files for each epoch
         for infile in files:
             epoch = int(infile.split('.npz')[0][-2:] if infile.split('.npz')[0][-2].isnumeric() else infile.split('.npz')[0][-1])
             if epoch not in epoch_list: continue
-            compute_roc(args, info, infile, dir_name, args.history, epoch)
+            p=mp.Process(target=compute_roc,
+                                args=(info, infile, dir_name, args.history, epoch))
+            p.start()
+            parallel_list.append(p)
+            #compute_roc(info, infile, dir_name, args.history, epoch)
 
+        # load files of best epoch
+        for best_file in best_files:
+            p=mp.Process(target=compute_roc,
+                                args=(info, best_file, dir_name, False, 'best'))
+            p.start()
+            parallel_list.append(p)
+            #compute_roc(info, best_file, dir_name, False, 'best')
+
+    # Start parallel
+    # for parallel_elem in parallel_list:
+    #     parallel_elem.start()
+
+    # Join parallel
+    for parallel_elem in parallel_list:
+        parallel_elem.join()
+
+    print(epochs_dict)
+
+    for input_name, info in label_dict.items():
         # compute roc curve for each epoch
         for label_type, labels_info in roc_type_dict.items():
             for roc_type, labels in labels_info.items():
@@ -240,59 +324,6 @@ if __name__ == '__main__':
                     plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[1]} epoch #{epoch}, auc=%0.3f'% roc_auc)
                 plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_history', fig_handle)
 
-        # load files of best epoch
-        for best_file in best_files:
-            compute_roc(args, info, best_file, dir_name, False, 'best')
-
-
-    # plot roc curves for each epoch comparing different networks
-    for epoch, epoch_dict in epochs_dict.items():
-        # loop over roc types
-        for roc_type, networks_dict in epoch_dict.items():
-            if 'PF_VtxPos' not in roc_type:
-                print(roc_type)
-                fig_handle = plt.figure()
-                # loop over networks
-                for network, rates in networks_dict.items():
-                    plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-                plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
-
-            else:
-                # loop over different types of features
-                for i, limits in axis_limits.items():
-                    fig_handle = plt.figure()
-                    # loop over networks
-                    for network, rates in networks_dict.items():
-                        x_t=rates[1][:, i]
-                        y_r=rates[0][:, i]
-
-                        mask= (x_t!=0.)
-                        #x_t, y_r = x_t[mask], y_r[mask]
-
-                        # plot scatter plot
-                        plt.hist2d(x_t, y_r,  bins=limits[0],
-                                cmap=plt.cm.jet, density=True,
-                                range=limits[1])
-                        plt.colorbar().set_label('Density')
-                        plt_fts(out_dir,
-                                f'Scatter_{roc_type}_{limits[2]}_{network}_{epoch}',
-                                fig_handle)
-
-                    fig_handle = plt.figure()
-                    # loop over networks
-                    for network, rates in networks_dict.items():
-                        x_t=rates[1][:, i]
-                        y_r=rates[0][:, i]
-
-                        mask= (x_t!=0.)
-                        #x_t, y_r = x_t[mask], y_r[mask]
-
-                        # plot true-reco histogram
-                        plt.hist((x_t-y_r), color= rates[3],
-                                bins=limits[0][0], label=network,
-                                range=(-limits[1][0][1],
-                                limits[1][0][1]), density=True)
-                        plt_fts(out_dir,
-                                f'True-Reco_{roc_type}_{limits[2]}_{network}_{epoch}',
-                                fig_handle)
+    pool = mp.Pool()
+    pool.map(plotting_function, epochs_dict.items())
     print(time.time()-start)
