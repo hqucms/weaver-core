@@ -76,12 +76,22 @@ pf_extra_fts = {
     'PF_VtxPos' : ['pf_mask_from_b'],
 }
 
+# dictionary with the axes inf
+axis_inf ={
+    'PF_SIP_b+bcVSc+other': (0.4, 5e-3),
+    'PF_b+bcVSc+other':  (0.4, 5e-3),
+    'PAIR_SameVtx':  (0.4, 1e-1),
+    'JET_bVSuds':  (0.5, 1e-4),
+    'JET_bVSg': (0.5, 1e-4),
+    'JET_bVSudsg': (0.5, 1e-4),
+}
+
 # dictionary with the axes limits
 axis_limits ={
-    0: ((100, 100),[[0,2],[0,2]], 'vtx_dist_pv'),
-    1: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_x'),
-    2: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_y'),
-    3: ((100, 100),[[-1, 1],[-2,2]], 'vtx_z')
+    0: ((100, 100),[[0,3],[0,3]], 'vtx_dist_pv'),
+    1: ((100, 100),[[-0.05,0.05],[-0.05,0.05]], 'vtx_x'),
+    2: ((100, 100),[[-0.05,0.05],[-0.05,0.05]], 'vtx_y'),
+    3: ((100, 100),[[-2, 2],[-2,2]], 'vtx_z'),
 }
 
 # get the labels for the ROC curves
@@ -114,29 +124,29 @@ def get_rates(y_t, y_s, l_s, l_b):
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
-def plt_fts(out_dir, name, fig_handle):
+def plt_fts(out_dir, name, fig_handle, axis_inf=None):
     if 'PF_VtxPos' in name:
         if 'True-Reco' in name:
-            plt.xlabel('True-Reco')
+            plt.xlabel('True-Reco [cm]')
         else:
-            plt.xlabel('True')
-            plt.ylabel('Reco')
+            plt.xlabel('True [cm]')
+            plt.ylabel('Reco [cm]')
             plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco')
     else:
         plt.xlabel('Efficency for b-jet (TP)')
         plt.ylabel('Mistagging prob (FP)')
-        plt.ylim([1e-4, 1.005])
-        plt.xlim([0.5, 1.0005])
+        plt.xlim([axis_inf[0], 1.0005])
+        plt.ylim([axis_inf[1], 1.005])
         plt.yscale('log')
 
     plt.grid()
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
     hep.cms.lumitext(name)
-    fig_handle.set_size_inches(20, 15)
+    #fig_handle.set_size_inches(20, 15))
     plt.legend(labelcolor='linecolor', loc='upper left')
 
-    plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
+    plt.savefig(f'{out_dir}/{name}.png', dpi = 200, bbox_inches='tight')
     if args.save:
         with open(f'{out_dir}/{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
@@ -267,31 +277,31 @@ def compute_roc(info, infile, dir_name, history, epoch):
                     pass
 
 def plotting_history_function(epoch_list, info,  roc_type, out_dir):
-    fig_handle = plt.figure()
+    fig_handle = plt.figure(figsize=(20, 15))
     # loop over epochs
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
         plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[1]} epoch #{epoch}, auc=%0.3f'% roc_auc)
     plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_history', fig_handle)
 
-def plotting_function(epoch, roc_type, networks_dict):
+def plotting_function(epoch, roc_type, networks_dict, networks_dict_ = None):
     if 'PF_VtxPos' not in roc_type:
-        fig_handle = plt.figure()
+        fig_handle = plt.figure(figsize=(20, 15))
         # loop over networks
         for network, rates in networks_dict.items():
             plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-        plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle)
+        if networks_dict_ is not None:
+            for network, rates in networks_dict_.items():
+                plt.plot(rates[1],rates[0],f'{rates[3]}--',label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
+        plt_fts(out_dir, f"ROC_{roc_type}_{epoch}", fig_handle, axis_inf[roc_type])
     else:
         # loop over different types of features
         for i, limits in axis_limits.items():
-            fig_handle = plt.figure()
+            fig_handle = plt.figure(figsize=(20, 15))
             # loop over networks
             for network, rates in networks_dict.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
-
-                mask= (x_t!=0.)
-                #x_t, y_r = x_t[mask], y_r[mask]
 
                 # plot scatter plot
                 plt.hist2d(x_t, y_r,  bins=limits[0],
@@ -302,14 +312,11 @@ def plotting_function(epoch, roc_type, networks_dict):
                         f'Scatter_{roc_type}_{limits[2]}_{network}_{epoch}',
                         fig_handle)
 
-            fig_handle = plt.figure()
+            fig_handle = plt.figure(figsize=(20, 15))
             # loop over networks
             for network, rates in networks_dict.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
-
-                mask= (x_t!=0.)
-                #x_t, y_r = x_t[mask], y_r[mask]
 
                 # plot true-reco histogram
                 plt.hist((x_t-y_r), color= rates[3],
@@ -408,6 +415,12 @@ if __name__ == '__main__':
                                 args=(epoch, roc_type, networks_dict))
             p.start()
             parallel_list.append(p)
+        if 'PF_SIP_b+bcVSc+other' and 'PF_b+bcVSc+other' in epoch_dict.keys():
+            p=mp.Process(target=plotting_function,
+                                args=(epoch, 'PF_comparison_b+bcVSc+other', epoch_dict['PF_b+bcVSc+other'], epoch_dict['PF_SIP_b+bcVSc+other']))
+            p.start()
+            parallel_list.append(p)
+
 
     # Join parallel
     for parallel_elem in parallel_list:
