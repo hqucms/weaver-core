@@ -57,17 +57,17 @@ epochs_dict=manager.dict()
 roc_type_dict={
     'aux_labels': {
         #0=b, 1=c, 2=bc, 3=other
-        #'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        #'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
         'PF_VtxPos' : [None, None, 'pf_regr'],
-        #'PAIR_SameVtx' : [[0], None, 'pair_bin'],
+        'PAIR_SameVtx' : [[0], None, 'pair_bin'],
     },
-    # 'primary_labels':{
-    #     #0=b, 1=bb, 4=uds, 5=g
-    #     'JET_bVSuds':[[0,1], [4], 'primary'],
-    #     'JET_bVSg':[[0,1], [5], 'primary'],
-    #     'JET_bVSudsg':[[0,1], [4,5], 'primary']
-    # }
+    'primary_labels':{
+        #0=b, 1=bb, 4=uds, 5=g
+        'JET_bVSuds':[[0,1], [4], 'primary'],
+        'JET_bVSg':[[0,1], [5], 'primary'],
+        'JET_bVSudsg':[[0,1], [4,5], 'primary']
+    }
 }
 
 pf_extra_fts = {
@@ -156,25 +156,6 @@ def load_dict(name):
     return info_dict
 
 def build_epochs_dict():
-    '''for input_name, info in label_dict.items():
-        # files to load
-        dir_name=f'{args.path}{input_name}'
-        files = [filename for filename in os.listdir(dir_name)
-            if ('labels_epoch' in filename)]
-        best_files = [filename for filename in os.listdir(dir_name)
-            if ('labels_best' in filename)]
-         # epochs to load
-        if args.epochs == '-1':
-             epoch_list=[len([k for k in files if 'primary' in k])-1]
-        elif args.epochs:
-            epoch_list=[int(i) for i in args.epochs.split(',')]
-        else:
-            epoch_list = []
-        break
-
-    for epoch in epoch_list:
-        epochs_dict[epoch] = manager.dict()
-    epochs_dict['best'] = manager.dict()'''
 
     for input_name, info in label_dict.items():
         # files to load
@@ -183,6 +164,14 @@ def build_epochs_dict():
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
                     if ('labels_best' in filename)]
+
+         # epochs to load
+        if args.epochs == '-1':
+             epoch_list=[len([k for k in files if 'primary' in k])-1]
+        elif args.epochs:
+            epoch_list=[int(i) for i in args.epochs.split(',')]
+        else:
+            epoch_list = []
 
         # load files for each epoch
         for infile in files:
@@ -336,9 +325,6 @@ if __name__ == '__main__':
     start=time.time()
     print('###################################################################################################################################')
 
-    if not args.out_path and args.in_path:
-        args.out_path = args.in_path
-        
     label_dict=load_dict(f'{args.in_dict}.yaml')
 
     # create output directory
