@@ -34,8 +34,10 @@ parser.add_argument('--only-primary', action='store_true', default=False,
                     help='only compute the primary ROC')
 parser.add_argument('--history', action='store_true', default=False,
                     help='only compute the primary ROC')
-parser.add_argument('--path', type=str, default='',
+parser.add_argument('--in-path', type=str, default='',
                     help='input path')
+parser.add_argument('--out-path', type=str, default='',
+                    help='output path')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--in-dict', type=str, default='performance_comparison',
@@ -55,17 +57,17 @@ epochs_dict=manager.dict()
 roc_type_dict={
     'aux_labels': {
         #0=b, 1=c, 2=bc, 3=other
-        'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        #'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+        #'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
         'PF_VtxPos' : [None, None, 'pf_regr'],
-        'PAIR_SameVtx' : [[0], None, 'pair_bin'],
+        #'PAIR_SameVtx' : [[0], None, 'pair_bin'],
     },
-    'primary_labels':{
-        #0=b, 1=bb, 4=uds, 5=g
-        'JET_bVSuds':[[0,1], [4], 'primary'],
-        'JET_bVSg':[[0,1], [5], 'primary'],
-        'JET_bVSudsg':[[0,1], [4,5], 'primary']
-    }
+    # 'primary_labels':{
+    #     #0=b, 1=bb, 4=uds, 5=g
+    #     'JET_bVSuds':[[0,1], [4], 'primary'],
+    #     'JET_bVSg':[[0,1], [5], 'primary'],
+    #     'JET_bVSudsg':[[0,1], [4,5], 'primary']
+    # }
 }
 
 pf_extra_fts = {
@@ -131,10 +133,10 @@ def plt_fts(out_dir, name, fig_handle):
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
     hep.cms.lumitext(name)
-    plt.legend(labelcolor='linecolor')# , loc='upper left')
-    #plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     fig_handle.set_size_inches(20, 15)
-    plt.savefig(f'{out_dir}/{name}.png')#, bbox_inches='tight')
+    plt.legend(labelcolor='linecolor', loc='upper left')
+
+    plt.savefig(f'{out_dir}/{name}.png', bbox_inches='tight')
     if args.save:
         with open(f'{out_dir}/{name}.pickle', 'wb') as f:
             pickle.dump(fig_handle, f)
@@ -154,7 +156,7 @@ def load_dict(name):
     return info_dict
 
 def build_epochs_dict():
-    for input_name, info in label_dict.items():
+    '''for input_name, info in label_dict.items():
         # files to load
         dir_name=f'{args.path}{input_name}'
         files = [filename for filename in os.listdir(dir_name)
@@ -172,11 +174,11 @@ def build_epochs_dict():
 
     for epoch in epoch_list:
         epochs_dict[epoch] = manager.dict()
-    epochs_dict['best'] = manager.dict()
+    epochs_dict['best'] = manager.dict()'''
 
     for input_name, info in label_dict.items():
         # files to load
-        dir_name=f'{args.path}{input_name}'
+        dir_name=f'{args.in_path}{input_name}'
         files = [filename for filename in os.listdir(dir_name)
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
@@ -192,6 +194,8 @@ def build_epochs_dict():
 
 
 def create_dict(info, infile, dir_name, history, epoch):
+    if epoch not in epochs_dict.keys():
+        epochs_dict[epoch] = manager.dict()
     for label_type, labels_info in roc_type_dict.items():
         #print(label_type)
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
@@ -283,7 +287,6 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir):
 
 def plotting_function(epoch, roc_type, networks_dict):
     if 'PF_VtxPos' not in roc_type:
-        print(roc_type)
         fig_handle = plt.figure()
         # loop over networks
         for network, rates in networks_dict.items():
@@ -333,11 +336,14 @@ if __name__ == '__main__':
     start=time.time()
     print('###################################################################################################################################')
 
+    if not args.out_path and args.in_path:
+        args.out_path = args.in_path
+        
     label_dict=load_dict(f'{args.in_dict}.yaml')
 
     # create output directory
     date_time = time.strftime('%Y%m%d-%H%M%S')
-    out_dir = os.path.join(f'{args.path}roc_curve', f'{date_time}_{args.name}_roc')
+    out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_roc')
     os.makedirs(out_dir, exist_ok=True)
 
     build_epochs_dict()
@@ -346,7 +352,7 @@ if __name__ == '__main__':
     parallel_list=[]
     for input_name, info in label_dict.items():
         # files to load
-        dir_name=f'{args.path}{input_name}'
+        dir_name=f'{args.in_path}{input_name}'
         files = [filename for filename in os.listdir(dir_name)
                  if ('labels_epoch' in filename)]
         best_files = [filename for filename in os.listdir(dir_name)
@@ -388,6 +394,7 @@ if __name__ == '__main__':
     # print(epochs_dict['best']['PF_SIP_b+bcVSc+other']['clas'][0][:100])
     # print(epochs_dict['best']['PF_b+bcVSc+other']['clas'][0][:100])
 
+    print('\n start plotting \n')
     parallel_list = []
     for input_name, info in label_dict.items():
         # compute roc curve for each epoch
@@ -403,6 +410,7 @@ if __name__ == '__main__':
     # Join parallel
     for parallel_elem in parallel_list:
         parallel_elem.join()
+
 
 
     parallel_list = []
