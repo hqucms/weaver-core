@@ -159,6 +159,14 @@ parser.add_argument('--val-epochs', type=str, default='-1',
                     'separate the epochs with `,` in order to indicate them one by one'
                     'separate the epochs with `:` in order to indicate an interval'
                     'if set to `best` the validation is performed on the best epoch')
+parser.add_argument('--test-epochs', type=str, default='',
+                    help='epochs on which the validation is performed'
+                    'if not provided same as `--val-epochs`'
+                    'if set to `-1` perform on all the epochs'
+                    'separate the epochs with `,` in order to indicate them one by one'
+                    'separate the epochs with `:` in order to indicate an interval'
+                    'if set to `best+last` the validation is performed on the best and last epochs'
+                    'if set to `best` the validation is performed on the best epoch')
 
 def to_filelist(args, mode='train'):
     if mode == 'train':
@@ -294,7 +302,7 @@ def train_load(args, shuffle=True):
                                     fetch_step=args.fetch_step,
                                     infinity_mode=args.steps_per_epoch_val is not None,
                                     in_memory=args.in_memory,
-                                    name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank, shuffle))
+                                    name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank), shuffle=shuffle)
         val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                                 num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
                                 persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
@@ -780,8 +788,6 @@ def get_best_metrics(args, last_epoch, best_epoch, best_valid_metric, best_valid
                 try:
                     if 'Best epoch' in line:
                         best_epoch=float(line.split(': #',1)[1].split('\n')[0])
-                        #print(best_epoch)
-                        #print(last_epoch)
                         if test: break
                     elif 'validation metric' in line :
                         best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
@@ -1125,16 +1131,36 @@ def _main(args):
                 best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
                 best_valid_aux_metric_pair = np.inf if args.regression_mode else -1, 0,0,0,0,0,0
 
+                if not args.test_epochs:
+                    test_epochs = val_epochs
+                if ',' in args.test_epochs:
+                    test_epochs = [int(i) for i in args.test_epochs.split(',')]
+                elif ':' in args.test_epochs:
+                    test_epochs_ext= [int(i) for i in args.test_epochs.split(':')]
+                    test_epochs = [i for i in range(test_epochs_ext[0], test_epochs_ext[1]+1)]
+                elif args.test_epochs == '-1':
+                    val_epoch_len = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
+                                        if '_state.pt' in filename and 'best' not in filename])
+                    test_epochs = [int(i) for i in range(val_epoch_len)]
+                elif args.test_epochs == 'best+last':
+                    last_epoch = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
+                                        if '_state.pt' in filename and 'best' not in filename])-1
+                    test_epochs = [best_epoch, last_epoch] if best_epoch != last_epoch else [best_epoch]
+                elif args.test_epochs == 'best':
+                    test_epochs = [best_epoch]
+                else:
+                    test_epochs = [int(args.test_epochs)]
+
                 performance_files = os.listdir(performance_dir)
                 for file in performance_files:
                     for name in [".npz", "test.log"]:
                         if file.endswith(name) and "best" not in file:
                             epoch = int(file.split(name)[0][-2:])
-                            if epoch > max(val_epochs):
+                            if epoch > max(test_epochs):
                                 os.remove(os.path.join(performance_dir, file))
 
-                # Test on best epoch
-                for epoch in val_epochs:
+                # Test on epoch
+                for epoch in test_epochs:
                     model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
                     _logger.info('Loading model %s for test' % model_path)
                     model.load_state_dict(torch.load(model_path, map_location=dev))

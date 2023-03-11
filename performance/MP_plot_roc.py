@@ -1,6 +1,7 @@
 import numpy as np
 import sklearn.metrics as _m
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import os
 import sys
 import re
@@ -98,8 +99,8 @@ AXIS_INF ={
 # dictionary with the axes limits
 AXIS_LIMITS ={
     0: ((100, 100),[[0,3],[0,3]], 'vtx_dist_pv', 3),
-    1: ((100, 100),[[-0.05,0.05],[-0.05,0.05]], 'vtx_x', 0.2),
-    2: ((100, 100),[[-0.05,0.05],[-0.05,0.05]], 'vtx_y', 0.2),
+    1: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_x', 0.2),
+    2: ((100, 100),[[-0.2,0.2],[-0.2,0.2]], 'vtx_y', 0.2),
     3: ((100, 100),[[-2, 2],[-2,2]], 'vtx_z', 3),
 }
 
@@ -137,6 +138,7 @@ def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
     if 'PF_VtxPos' in name:
         if 'True-Reco' in name:
             plt.xlabel('True-Reco [cm]')
+            plt.ylabel('Density')
         else:
             plt.xlabel('True [cm]')
             plt.ylabel('Reco [cm]')
@@ -147,12 +149,13 @@ def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
         plt.xlim([AXIS_INF[0], 1.0005])
         plt.ylim([AXIS_INF[1], 1.005])
         plt.yscale('log')
-        hep.cms.lumitext(name)
+        #hep.cms.lumitext(name)
+
 
     plt.grid()
     hep.style.use('CMS')
     hep.cms.label(rlabel='')
-
+    plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
     #fig_handle.set_size_inches(20, 15))
     plt.legend(labelcolor='linecolor', loc='upper left')
 
@@ -317,7 +320,17 @@ def plotting_function(out_dir, epoch, roc_type, networks_dict, net_type, network
                 plt.hist2d(x_t, y_r,  bins=limits[0],
                         cmap=plt.cm.jet, density=True,
                         range=limits[1])
-                plt.colorbar().set_label('Density')
+
+                cmap = mpl.cm.jet
+                norm = mpl.colors.Normalize(vmin=0, vmax=1.0)
+                plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap)).set_label('Normalized counts', loc='center', fontsize=20)
+
+                # histo, xedges, yedges = np.histogram2d(x_t, y_r, bins=limits[0], density=True, range=limits[1])
+                # histo_normalized = histo/histo.max((0,1))
+                # extent = [xedges[0], xedges[-1], yedges[0], yedges[-1]]
+                # im = axis.imshow(histo_normalized, cmap=plt.cm.jet, interpolation='none',origin ='lower')
+                #plt.colorbar(im, ax=axis).set_label('Density', loc='center', fontsize=20)
+
                 plt_fts(out_dir,
                         f'Scatter_{roc_type}_{limits[2]}_{network}_{net_type}_{epoch}',
                         fig_handle)
