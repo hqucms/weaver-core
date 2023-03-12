@@ -9,10 +9,6 @@ import argparse
 import time
 import numpy as np
 
-'''orig_stdout = sys.stdout
-f = open('history.txt', 'w')
-sys.stdout = f'''
-
 # parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--not-show', action='store_true', default=False,
@@ -27,9 +23,15 @@ parser.add_argument('--path', type=str, default="",
                     help='input path')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
-parser.add_argument('--in-dict', type=str, default='performance_comparison',
+parser.add_argument('--type', type=str, default='',
                     help='name of the file with the dictionary')
 args = parser.parse_args()
+
+# type of the network
+if not args.type:
+    NET_TYPES = ['lite', 'full']
+else:
+    NET_TYPES = [args.type]
 
 # dictionary with the information to extract from the log files
 history_dict = {
@@ -57,6 +59,13 @@ history_dict = {
 }
 
 def plot(out_dir, name, fig_handle):
+    """Plot the history of the given figure handle
+    and save it in the given output directory
+
+    :param out_dir: output directory
+    :param name: name of the plot
+    :param fig_handle: figure handle
+    """
     plt.xlabel('Epoch')
     hep.style.use("CMS")
     hep.cms.label(rlabel="")
@@ -69,8 +78,12 @@ def plot(out_dir, name, fig_handle):
             pickle.dump(fig_handle, f)
     if not args.not_show:
         plt.show()
+    plt.close()
 
 def load_dict(name):
+    """Load the dictionary with the information to plot
+    :param name: name of the dictionary
+    :return: dictionary with the information to plot"""
     with open(name, 'r') as stream:
         loaded_dict=yaml.safe_load(stream)
     info_dict = defaultdict(list)
@@ -81,46 +94,50 @@ def load_dict(name):
     return info_dict
 
 if __name__ == "__main__":
-    infile_dict=load_dict(f'{args.in_dict}.yaml')
 
     # create output directory
     date_time = time.strftime('%Y%m%d-%H%M%S')
-    out_dir = os.path.join(f'{args.path}history_plot', f'{date_time}_{args.name}_history')
-    os.makedirs(out_dir, exist_ok=True)
+    main_out_dir = os.path.join(f'{args.path}history_plot', f'{date_time}_{args.name}_history')
+    os.makedirs(main_out_dir, exist_ok=True)
 
-    # load history for each input
-    for input_name, info in infile_dict.items():
-        # get all log files in the input directory and sort them in alphabetical order
-        if isinstance(input_name, str):
-            dir_name=os.path.join(args.path, input_name)
-            infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
-            infiles.sort()#key=lambda s: int(re.findall(r'\d+', s)[-1]))
-        # get specific log files and sort them in alphabetical order
-        elif isinstance(input_name, tuple):
-            infiles=[os.path.join(args.path+"input", "logs", f"{k}.log") for k in input_name]
-            infiles.sort()# key=lambda s: int(re.findall(r'\d+', s)[-1]))
-        #print(infiles)
-        # read the log files and extract the information
-        for infile in infiles:
-            with open(infile) as f:
-                f = f.readlines()
-            # find the line with the information and save it in the dictionary
-            for line in f:
-                for name, value in history_dict.items():
-                    if value[0] in line:
-                        if args.not_partial and 'Partial' in line:
-                            continue
-                        info[0][name].append(float(line.split(value[0],1)[1].split(value[1])[0]))
+    for net_type in NET_TYPES:
+        infile_dict=load_dict(f'performance_comparison_{net_type}.yaml')
+        out_dir = os.path.join(main_out_dir, f'{args.name}_history_{net_type}')
+        os.makedirs(out_dir, exist_ok=True)
 
-    # plot the history
-    for history, _ in history_dict.items():
-        fig_handle = plt.figure()
-        for _, info in infile_dict.items():
-            for name, value in info[0].items():
-                if name == history:
-                    x = np.linspace(0, len(value), len(value)) if args.not_partial else np.linspace(0, len(value), len(value)*3)
-                    plt.plot(x, value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
-        plot(out_dir, history, fig_handle)
+        # load history for each input
+        for input_name, info in infile_dict.items():
+            # get all log files in the input directory and sort them in alphabetical order
+            if isinstance(input_name, str):
+                dir_name=os.path.join(args.path, input_name)
+                infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
+                infiles.sort()#key=lambda s: int(re.findall(r'\d+', s)[-1]))
+            # get specific log files and sort them in alphabetical order
+            elif isinstance(input_name, tuple):
+                infiles=[os.path.join(args.path+"input", "logs", f"{k}.log") for k in input_name]
+                infiles.sort()# key=lambda s: int(re.findall(r'\d+', s)[-1]))
+            #print(infiles)
+            # read the log files and extract the information
+            for infile in infiles:
+                with open(infile) as f:
+                    f = f.readlines()
+                # find the line with the information and save it in the dictionary
+                for line in f:
+                    for name, value in history_dict.items():
+                        if value[0] in line:
+                            if args.not_partial and 'Partial' in line:
+                                continue
+                            info[0][name].append(float(line.split(value[0],1)[1].split(value[1])[0]))
+
+        # plot the history
+        for history, _ in history_dict.items():
+            fig_handle = plt.figure()
+            for _, info in infile_dict.items():
+                for name, value in info[0].items():
+                    if name == history:
+                        x = np.linspace(0, len(value), len(value)) if args.not_partial else np.linspace(0, len(value), len(value)*3)
+                        plt.plot(x, value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
+            plot(out_dir, history, fig_handle)
 
 
 
