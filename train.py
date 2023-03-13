@@ -787,7 +787,7 @@ def get_best_metrics(args, last_epoch, best_epoch, best_valid_metric, best_valid
             for line in f:
                 try:
                     if 'Best epoch' in line:
-                        best_epoch=float(line.split(': #',1)[1].split('\n')[0])
+                        best_epoch=int(line.split(': #',1)[1].split('\n')[0])
                         if test: break
                     elif 'validation metric' in line :
                         best_valid_metric=float(line.split('(best: ',1)[1].split(')')[0])
