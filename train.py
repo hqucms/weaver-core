@@ -1133,7 +1133,7 @@ def _main(args):
 
                 if not args.test_epochs:
                     test_epochs = val_epochs
-                if ',' in args.test_epochs:
+                elif ',' in args.test_epochs:
                     test_epochs = [int(i) for i in args.test_epochs.split(',')]
                 elif ':' in args.test_epochs:
                     test_epochs_ext= [int(i) for i in args.test_epochs.split(':')]

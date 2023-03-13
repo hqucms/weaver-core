@@ -357,13 +357,13 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     with torch.no_grad():
                         tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
 
-                divisions = 3
-                for i in range(1, divisions):
-                    if num_batches == (steps_per_epoch // divisions)*i:
-                        _logger.info('Partial Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
-                                     (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
-                        _logger.info('Partial Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
-                                     (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
+            divisions = 3
+            for i in range(1, divisions):
+                if num_batches == (steps_per_epoch // divisions)*i:
+                    _logger.info('Partial Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
+                                    (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
+                    _logger.info('Partial Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
+                                    (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
 
 
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
@@ -678,7 +678,6 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break
-
 
 
     time_diff = time.time() - start_time

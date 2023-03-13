@@ -17,7 +17,7 @@ parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 parser.add_argument('--not-partial', action='store_true', default=False,
                     help='ignore partial epochs in the plots')
-parser.add_argument('--last-epoch', type=int, default=100,
+parser.add_argument('--last-epoch', type=int, default=14,
                     help='save plots')
 parser.add_argument('--in-path', type=str, default='',
                     help='input path')
@@ -27,6 +27,8 @@ parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--type', type=str, default='',
                     help='name of the file with the dictionary')
+parser.add_argument('--num-partial', type=int, default=3,
+                    help='number of partial samplings per epoch')
 args = parser.parse_args()
 
 # type of the network
@@ -120,7 +122,7 @@ if __name__ == "__main__":
             elif isinstance(input_name, tuple):
                 infiles=[os.path.join(args.in_path+"input", "logs", f"{k}.log") for k in input_name]
                 infiles.sort()# key=lambda s: int(re.findall(r'\d+', s)[-1]))
-            print(infiles)
+            #print(infiles)
             # read the log files and extract the information
             for infile in infiles:
                 with open(infile) as f:
@@ -131,16 +133,26 @@ if __name__ == "__main__":
                         if value[0] in line:
                             if args.not_partial and 'Partial' in line:
                                 continue
-                            info[0][name].append(float(line.split(value[0],1)[1].split(value[1])[0]))
+                            val=float(line.split(value[0],1)[1].split(value[1])[0])
+                            if val > 100:
+                                val=-1
+                            info[0][name].append(val)
 
         # plot the history
+        num_tot=(args.last_epoch+1)*args.num_partial
         for history, _ in history_dict.items():
             fig_handle = plt.figure(figsize=(30, 20))
             for _, info in infile_dict.items():
                 for name, value in info[0].items():
                     if name == history and any(val != 0 for val in value):
-                        x = np.linspace(0, len(value), len(value)) if args.not_partial else np.linspace(0, len(value), len(value)*3)
-                        plt.plot(x, value[:args.last_epoch+1], info[2], label=f'{name} {info[1]}')
+                        if len(value[:num_tot]) == num_tot:
+                            x_part = np.linspace(-(args.num_partial-1)/args.num_partial, 0, args.num_partial)
+                            x = np.concatenate([x_part + i for i in range(args.last_epoch+1)])
+                            y=value[:num_tot]
+                        else:
+                            x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
+                            y=value[:args.last_epoch+1]
+                        plt.plot(x, y, info[2], label=f'{name} {info[1]}')
             plot(out_dir, history, fig_handle)
 
 
