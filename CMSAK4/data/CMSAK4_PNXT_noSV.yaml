@@ -16,8 +16,6 @@ new_variables:
    ### [format] name: formula
    ### can use functions from `math`, `np` (numpy), and `awkward` in the expression
    pfcand_mask: ak.ones_like(pfcand_etarel)
-   track_ef_mask: ak.ones_like(pca_significance)
-
    # FIXME: use (px, py, pz, energy) directly once they are available in the ntuples
    pfp4: _p4_from_ptetaphie(pfcand_pt_nopuppi, ak.where(jet_eta >= 0, 1, -1) * pfcand_etarel + jet_eta, pfcand_phirel, np.exp(pfcand_e_log_nopuppi))
    pfcand_px: pfp4.px
@@ -30,8 +28,6 @@ new_variables:
    sv_py: svp4.py
    sv_pz: svp4.pz
    sv_energy: svp4.energy
-
-   #labels
    label_b:     (jet_genjet_pt>0) & (jet_nBHadrons==1)
    label_bb:    (jet_genjet_pt>0) & (jet_nBHadrons>1)
    label_c:     (jet_genjet_pt>0) & (jet_nBHadrons==0) & (jet_nCHadrons==1)
@@ -42,16 +38,6 @@ new_variables:
    label_pu:    (jet_genjet_pt<=0)
    label_catB: (jet_genjet_pt>0) & (jet_hadronFlavour==5)
    label_catC: (jet_genjet_pt>0) & (jet_hadronFlavour==4)
-
-   ## auxiliary labels
-   pf_dist_pv: ak.fill_none(ak.pad_none(pfcand_dist_from_pv, 50, axis=1, clip=True),-1)
-   pf_vtx_x: ak.fill_none(ak.pad_none(pfcand_vtx_x, 50, axis=1, clip=True),-1)
-   pf_vtx_y: ak.fill_none(ak.pad_none(pfcand_vtx_y, 50, axis=1, clip=True),-1)
-   pf_vtx_z: ak.fill_none(ak.pad_none(pfcand_vtx_z, 50, axis=1, clip=True),-1)
-
-   aux_label_mask: (pfcand_from_b != -1) -1
-   from_b_bool: ak.values_astype(pfcand_from_b, np.bool_)
-   pf_from_b: ak.fill_none(ak.pad_none(from_b_bool+aux_label_mask, 50, axis=1, clip=True),-1)
 
 
 preprocess:
@@ -107,74 +93,6 @@ inputs:
       length: 50
       vars:
          - [pfcand_mask, null]
-   track_ef_idx:
-      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      vars:
-         - [track1_index, null]
-         - [track2_index, null]
-   track_ef:
-      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      vars: # there are 26 variables
-         - [pca_distance, null]
-         - [pca_significance, null]
-         - [pcaSeed_x1, null]
-         - [pcaSeed_y1, null]
-         - [pcaSeed_z1, null]
-         - [pcaSeed_x2, null]
-         - [pcaSeed_y2, null]
-         - [pcaSeed_z2, null]
-         - [pcaSeed_xerr1, null]
-         - [pcaSeed_yerr1, null]
-         - [pcaSeed_zerr1, null]
-         - [pcaSeed_xerr2, null]
-         - [pcaSeed_yerr2, null]
-         - [pcaSeed_zerr2, null]
-         - [dotprod1, null]
-         - [dotprod2, null]
-         - [pca_dist1, null]
-         - [pca_dist2, null]
-         - [dotprod12_2D, null]
-         - [dotprod12_2DV, null]
-         - [dotprod12_3D, null]
-         - [dotprod12_3DV, null]
-         - [pca_jetAxis_dist, null]
-         - [pca_jetAxis_dotprod, null]
-         - [pca_jetAxis_dEta, null]
-         - [pca_jetAxis_dPhi_, null]
-   track_ef_mask:
-      length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
-      vars:
-         - [track_ef_mask, null]
-   sv_points:
-      length: 5
-      vars:
-         - [sv_etarel, null]
-         - [sv_phirel, null]
-   sv_features:
-      length: 5
-      vars:
-         - [sv_pt_log, 2.8, 0.8]
-         - [sv_mass, 1.1, 0.6]
-         - [sv_etarel, null]
-         - [sv_phirel, null]
-         - [sv_abseta, 0.8, 1.2]
-         - [sv_ntracks, 3, 0.5]
-         - [sv_normchi2, 0.7, 0.7]
-         - [sv_dxy, 0.2, 0.6]
-         - [sv_dxysig, 5, 0.03]
-         - [sv_d3d, 0.35, 0.4]
-         - [sv_d3dsig, 5, 0.03]
-   sv_vectors:
-      length: 5
-      vars:
-         - [sv_px, null]
-         - [sv_py, null]
-         - [sv_pz, null]
-         - [sv_energy, null]
-   sv_mask:
-      length: 5
-      vars:
-         - [sv_mask, null]
 
 
 labels:
@@ -186,17 +104,6 @@ labels:
    # type: custom
    # value:
       # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass)
-
-aux_labels:
-   type: custom
-   value_regr:
-      aux_labels_pf_regr_dist_pv: pf_dist_pv
-      aux_label_pf_regr_vtx_x: pf_vtx_x
-      aux_label_pf_regr_vtx_y: pf_vtx_y
-      aux_label_pf_regr_vtx_z: pf_vtx_z
-      pf_mask_from_b: pf_from_b
-
-
 
 observers:
    - event_no
@@ -245,11 +152,8 @@ monitor_variables:
       # jet_pt: [15, 25, 43, 72, 122, 207, 350, 592, 1000]
       # np.round(np.exp(np.linspace(np.log(15), np.log(1000), 16))).astype('int').tolist()
       #jet_pt: [15, 20, 26, 35, 46, 61, 80, 106, 141, 186, 247, 326, 432, 571, 756, 1000]
-    #  jet_pt: [35, 46, 61, 80, 106]
       #jet_eta: [-4.7, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.7]
-      #jet_eta: [-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
    #reweight_classes: [label_catB, label_catC, label_uds, label_g, label_undef, label_pu]
    #class_weights: [1, 1, 2.5, 5, 0.15, 1]
    #reweight_threshold: 15
-   #reweight_discard_under_overflow: False
    #reweight_hists:

@@ -17,7 +17,7 @@ def get_model(data_config, **kwargs):
     use_fusion = True
 
     pf_features_dims = len(data_config.input_dicts['pf_features'])
-    sv_features_dims = len(data_config.input_dicts['sv_features'])
+    sv_features_dims = len(data_config.input_dicts['sv_features']) if 'sv_features' in data_config.input_dicts else 0
     edge_features_dims = len(data_config.input_dicts['track_ef'])
     num_classes = len(data_config.label_value)
     model = ParticleEdgeNetTagger(pf_features_dims, sv_features_dims, edge_features_dims,

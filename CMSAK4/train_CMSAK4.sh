@@ -39,19 +39,19 @@ if [[ "$model" == "ParT" ]]; then
 elif [[ "$model" == "ParT_ef" ]]; then
     modelopts="networks/CMSAK4_ParT_ef.py --use-amp"
     batchopts="--batch-size 512 --start-lr 1e-3"
-elif [[ "$model" == "PN" ]]; then
+elif [[ "$model" == "PN" ]] || [[ "$model" == "PN_noSV" ]]; then
     modelopts="networks/CMSAK4_PN.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
 elif [[ "$model" == "PN_ef" ]]; then
     modelopts="networks/CMSAK4_PN_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT" ]]; then
+elif [[ "$model" == "PNXT" ]] || [[ "$model" == "PNXT_noSV" ]]; then
     modelopts="networks/CMSAK4_PNXT.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef" ]]; then
+elif [[ "$model" == "PNXT_ef" ]] || [[ "$model" == "PNXT_ef_noSV" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_clas" ]]; then
+elif [[ "$model" == "PNXT_ef_aux_clas" ]] || [[ "$model" == "PNXT_ef_aux_clas_noSV" ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
 elif [[ "$model" == "PNXT_ef_aux_regr" ]]; then

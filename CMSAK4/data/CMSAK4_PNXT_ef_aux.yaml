@@ -115,36 +115,6 @@ inputs:
       length: 50
       vars:
          - [pfcand_mask, null]
-   sv_points:
-      length: 5
-      vars:
-         - [sv_etarel, null]
-         - [sv_phirel, null]
-   sv_features:
-      length: 5
-      vars:
-         - [sv_pt_log, 2.8, 0.8]
-         - [sv_mass, 1.1, 0.6]
-         - [sv_etarel, null]
-         - [sv_phirel, null]
-         - [sv_abseta, 0.8, 1.2]
-         - [sv_ntracks, 3, 0.5]
-         - [sv_normchi2, 0.7, 0.7]
-         - [sv_dxy, 0.2, 0.6]
-         - [sv_dxysig, 5, 0.03]
-         - [sv_d3d, 0.35, 0.4]
-         - [sv_d3dsig, 5, 0.03]
-   sv_vectors:
-      length: 5
-      vars:
-         - [sv_px, null]
-         - [sv_py, null]
-         - [sv_pz, null]
-         - [sv_energy, null]
-   sv_mask:
-      length: 5
-      vars:
-         - [sv_mask, null]
    track_ef_idx:
       length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
@@ -183,6 +153,36 @@ inputs:
       length: 625 # max lenght of the variable for each event (eg: max number of tracks combinations)
       vars:
          - [track_ef_mask, null]
+   sv_points:
+      length: 5
+      vars:
+         - [sv_etarel, null]
+         - [sv_phirel, null]
+   sv_features:
+      length: 5
+      vars:
+         - [sv_pt_log, 2.8, 0.8]
+         - [sv_mass, 1.1, 0.6]
+         - [sv_etarel, null]
+         - [sv_phirel, null]
+         - [sv_abseta, 0.8, 1.2]
+         - [sv_ntracks, 3, 0.5]
+         - [sv_normchi2, 0.7, 0.7]
+         - [sv_dxy, 0.2, 0.6]
+         - [sv_dxysig, 5, 0.03]
+         - [sv_d3d, 0.35, 0.4]
+         - [sv_d3dsig, 5, 0.03]
+   sv_vectors:
+      length: 5
+      vars:
+         - [sv_px, null]
+         - [sv_py, null]
+         - [sv_pz, null]
+         - [sv_energy, null]
+   sv_mask:
+      length: 5
+      vars:
+         - [sv_mask, null]
 
 
 labels:

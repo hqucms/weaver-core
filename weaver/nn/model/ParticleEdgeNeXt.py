@@ -1057,17 +1057,22 @@ class ParticleEdgeNeXtTagger(nn.Module):
                                for_inference=for_inference,
                                )
 
-    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, sv_points, sv_features, sv_vectors, sv_mask, track_ef_idx, track_ef, track_ef_mask):
+    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx, track_ef, track_ef_mask, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):
         if self.pf_input_dropout:
             pf_mask = self.pf_input_dropout(pf_mask)
-        if self.sv_input_dropout:
-            sv_mask = self.sv_input_dropout(sv_mask)
-
         num_pf=pf_points.size(2)
-        points = torch.cat((pf_points, sv_points), dim=2)
-        features = torch.cat((self.pf_encode(pf_features), self.sv_encode(sv_features)), dim=2)
-        lorentz_vectors = torch.cat((pf_vectors, sv_vectors), dim=2)
-        mask = torch.cat((pf_mask, sv_mask), dim=2)
+        if sv_points is not None and sv_features is not None and sv_vectors is not None and sv_mask is not None:
+            if self.sv_input_dropout:
+                sv_mask = self.sv_input_dropout(sv_mask)
+            points = torch.cat((pf_points, sv_points), dim=2)
+            features = torch.cat((self.pf_encode(pf_features), self.sv_encode(sv_features)), dim=2)
+            lorentz_vectors = torch.cat((pf_vectors, sv_vectors), dim=2)
+            mask = torch.cat((pf_mask, sv_mask), dim=2)
+        else:
+            points = pf_points
+            features = self.pf_encode(pf_features)
+            lorentz_vectors = pf_vectors
+            mask = pf_mask
 
         ef_tensor=build_sparse_tensor(track_ef, track_ef_idx, features.size(-1))
         ef_mask_tensor=build_sparse_tensor(track_ef_mask, track_ef_idx, features.size(-1))

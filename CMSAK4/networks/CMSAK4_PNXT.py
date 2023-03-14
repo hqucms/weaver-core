@@ -6,7 +6,7 @@ from weaver.nn.model.ParticleNeXt import ParticleNeXtTagger
 def get_model(data_config, **kwargs):
     cfg = dict(
         pf_features_dims=len(data_config.input_dicts['pf_features']),
-        sv_features_dims=len(data_config.input_dicts['sv_features']),
+        sv_features_dims = len(data_config.input_dicts['sv_features']) if 'sv_features' in data_config.input_dicts else 0,
         num_classes=len(data_config.label_value),
         # network configurations
         node_dim=32,
