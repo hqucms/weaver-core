@@ -605,16 +605,13 @@ class MultiScaleEdgeConv(nn.Module):
         fts_out = self.shortcut(features) + self.gamma * node_fts # batch size, out_dim, num_pf, 1
         #print('fts_out:\n', fts_out.size())
 
-        #HERE
         if self.node_fc_clas is not None:
             fts_out_label_clas=self.node_fc_clas(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_pf, num_aux_label
         else :
             fts_out_label_clas = None
         if self.node_fc_regr is not None:
             fts_out_label_regr=self.node_fc_regr(fts_out)[:, :, :num_pf, :].squeeze(dim=-1).transpose(1,2)# batch size, num_pf, num_aux_label
-            #print('fts_out_label_regr1:\n', fts_out_label_regr, fts_out_label_regr.size())
             fts_out_label_regr=self.linear(fts_out_label_regr)# batch size, num_pf, num_aux_label
-            #print('fts_out_label_regr2:\n', fts_out_label_regr, fts_out_label_regr.size())
         else :
             fts_out_label_regr = None
 
@@ -933,7 +930,7 @@ class ParticleEdgeNeXt(nn.Module):
             ef_tensor = self.edge_encode(ef_tensor)
 
         for layer in self.layers:
-            #HERE features_label
+            #HERE featurefts_outs_label
             points, features, features_label_clas, features_label_regr, features_label_pair = layer(
                 points=points, features=features, lorentz_vectors=lorentz_vectors,
                 num_pf=num_pf, mask=mask, ef_tensor=ef_tensor,
@@ -970,7 +967,6 @@ class ParticleEdgeNeXt(nn.Module):
             output = torch.softmax(output, dim=1)
         #print('features_label:\n', features_label, features_label_pair)
 
-        #HERE use idx and ef_mask_tensor to build sparse tensor
         #print('\n ef_mask_tensor', ef_mask_tensor.size(), ef_mask_tensor)
         if features_label_pair is not None:
             features_label_pair = build_sparse_aux(features_label_pair, idx, idx_tensor)

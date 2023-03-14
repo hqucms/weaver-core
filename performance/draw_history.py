@@ -23,6 +23,8 @@ parser.add_argument('--in-path', type=str, default='',
                     help='input path')
 parser.add_argument('--out-path', type=str, default='',
                     help='output path')
+parser.add_argument('--in-dict', type=str, default='performance_comparison',
+                    help='input dictionary')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--type', type=str, default='',
@@ -107,7 +109,7 @@ if __name__ == "__main__":
     os.makedirs(main_out_dir, exist_ok=True)
 
     for net_type in NET_TYPES:
-        infile_dict=load_dict(f'performance_comparison_{net_type}.yaml')
+        infile_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
         out_dir = os.path.join(main_out_dir, f'{args.name}_history_{net_type}')
         os.makedirs(out_dir, exist_ok=True)
 
