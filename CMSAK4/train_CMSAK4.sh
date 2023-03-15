@@ -104,7 +104,7 @@ fi
 
 suffix_specs=$2
 
-store=${w}
+store=${CINECA_SCRATCH}
 
 if [ $extra = true ]; then
     extra_selection="(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"

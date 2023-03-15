@@ -72,13 +72,13 @@ def plot(out_dir, name, fig_handle):
     :param name: name of the plot
     :param fig_handle: figure handle
     """
-    plt.xlabel('Epoch')
+    plt.xlabel('Epoch', fontsize=20, loc='right')
     hep.style.use("CMS")
-    hep.cms.label(rlabel="")
-    plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
+    hep.cms.label('Preliminary')
+    hep.cms.label(year='UL18')
+    #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
 
-    #hep.cms.lumitext(name)
-    plt.legend(labelcolor='linecolor')#loc=2, prop={'size': 15})
+    plt.legend(labelcolor='linecolor')
     plt.grid()
     plt.savefig(f'{out_dir}/history_{name}.png', bbox_inches='tight')
     if args.save:

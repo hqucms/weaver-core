@@ -151,4 +151,3 @@ roc_curve*/
 performance/*.yaml
 input/
 *.code-workspace
-presentation/

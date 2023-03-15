@@ -158,28 +158,28 @@ def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
     :param    fig_handle : figure handle
     :param    AXIS_INF : dictionary with the axes limits
     """
+
     if 'PF_VtxPos' in name:
         if 'True-Reco' in name:
-            plt.xlabel('True-Reco [cm]')
-            plt.ylabel('Density')
+            plt.xlabel('True-Reco [cm]', fontsize=20, loc='right')
+            plt.ylabel('Density', fontsize=20, loc='top')
         else:
-            plt.xlabel('True [cm]')
-            plt.ylabel('Reco [cm]')
+            plt.xlabel('True [cm]', fontsize=20, loc='right')
+            plt.ylabel('Reco [cm]', fontsize=20, loc='top')
             plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco')
     else:
-        plt.xlabel('Efficency for b-jet (TP)')
-        plt.ylabel('Mistagging prob (FP)')
+        plt.xlabel('Efficency for b-jet (TP)', fontsize=20, loc='right')
+        plt.ylabel('Mistagging prob (FP)', fontsize=20, loc='top')
         plt.xlim([AXIS_INF[0], 1.0005])
         plt.ylim([AXIS_INF[1], 1.005])
         plt.yscale('log')
-        #hep.cms.lumitext(name)
 
 
     plt.grid()
     hep.style.use('CMS')
-    hep.cms.label(rlabel='')
-    plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
-    #fig_handle.set_size_inches(20, 15))
+    hep.cms.label('Preliminary')
+    hep.cms.label(year='UL18')
+    #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
     plt.legend(labelcolor='linecolor', loc='upper left')
 
     plt.savefig(f'{out_dir}/{name}.png', dpi = 200, bbox_inches='tight')
