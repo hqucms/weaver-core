@@ -8,6 +8,7 @@ import yaml
 import argparse
 import time
 import numpy as np
+from scipy.ndimage import uniform_filter1d
 
 # parse arguments
 parser = argparse.ArgumentParser()
@@ -150,12 +151,13 @@ if __name__ == "__main__":
                         if len(value[:num_tot]) == num_tot:
                             x_part = np.linspace(-(args.num_partial-1)/args.num_partial, 0, args.num_partial)
                             x = np.concatenate([x_part + i for i in range(args.last_epoch+1)])
-                            y=value[:num_tot]
+                            #y=value[:num_tot]
+                            y=uniform_filter1d(value[:num_tot], size=args.num_partial)
                         else:
                             x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
                             y=value[:args.last_epoch+1]
                         plt.plot(x, y, info[2], label=f'{name} {info[1]}')
-            plot(out_dir, history, fig_handle)
+            plot(out_dir, f'{history}_{net_type}', fig_handle)
 
 
 

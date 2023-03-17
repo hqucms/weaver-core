@@ -172,7 +172,8 @@ def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
         plt.ylabel('Mistagging prob (FP)', fontsize=20, loc='top')
         plt.xlim([AXIS_INF[0], 1.0005])
         plt.ylim([AXIS_INF[1], 1.005])
-        plt.yscale('log')
+        if 'JET' in name:
+            plt.yscale('log')
 
 
     plt.grid()

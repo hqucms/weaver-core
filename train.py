@@ -964,9 +964,6 @@ def _main(args):
             else:
                 _logger.info('Epoch #%d training' % epoch)
 
-            train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=no_aux)
-
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 suffix=dirname.split('/')[-1].strip()
@@ -977,6 +974,11 @@ def _main(args):
                     os.makedirs(performance_dir)
                 roc_prefix=os.path.join(performance_dir,suffix)
 
+            train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=no_aux)
+
+
+            if args.model_prefix and (args.backend is None or local_rank == 0):
                 state_dict = model.module.state_dict() if isinstance(
                     model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
                 torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
