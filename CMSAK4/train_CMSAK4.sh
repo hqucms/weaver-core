@@ -104,9 +104,10 @@ fi
 
 suffix_specs=$2
 
-store=${CINECA_SCRATCH}/
 if [[ "$CINECA_SCRATCH" == "" ]]; then
-    store = ""
+    store=""
+else
+    store=${CINECA_SCRATCH}/
 fi
 
 if [ $extra = true ]; then

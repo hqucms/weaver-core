@@ -131,8 +131,8 @@ def save_labels_best_epoch(infile):
 
 
 def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, \
-                        opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, \
-                        grad_scaler=None, tb_helper=None, no_aux=False):
+                        opt, scheduler, train_loader, dev, epoch, aux_weight, steps_per_epoch=None, \
+                        grad_scaler=None, tb_helper=None, epoch_division = 5):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -272,13 +272,9 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_count_pair += num_aux_examples_pair
 
             aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
+            comb_loss = loss + aux_weight * aux_loss
 
-            if no_aux:
-                aux_weight = 0
-            else:
-                aux_weight = 1 / (epoch+1)
-
-            comb_loss = loss + aux_weight*(aux_loss)
+            print(aux_weight)
 
             if grad_scaler is None:
                 comb_loss.backward()
@@ -357,13 +353,12 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                     with torch.no_grad():
                         tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches, mode='train')
 
-            divisions = 3
-            for i in range(1, divisions):
-                if num_batches == (steps_per_epoch // divisions)*i:
+            for i in range(1, epoch_division):
+                if num_batches == (steps_per_epoch // epoch_division)*i:
                     _logger.info('Partial Epoch #%d %d/%d: Train AvgCombLoss: %.5f, Train AvgLoss: %.5f, AvgAcc: %.5f' %
-                                    (epoch, i, divisions, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
+                                    (epoch, i, epoch_division, total_comb_loss / num_batches, total_loss / num_batches, total_correct / count))
                     _logger.info('Partial Epoch #%d %d/%d: Train AvgAuxLoss: %.5f, AvgAuxAccPF: %.5f, AvgAuxDist: %.5f, AvgAuxAccPair: %.5f' %
-                                    (epoch, i, divisions, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
+                                    (epoch, i, epoch_division, total_aux_loss / num_batches, avg_aux_acc_pf, avg_aux_dist, avg_aux_acc_pair))
 
 
             if steps_per_epoch is not None and num_batches >= steps_per_epoch:
@@ -399,11 +394,11 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
         scheduler.step()
 
 
-def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None,
+def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_training=True, loss_func=None,
                             aux_loss_func_clas=None, aux_loss_func_regr=None, aux_loss_func_bin=None, steps_per_epoch=None,
                             eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
                             eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin'],
-                            tb_helper=None, roc_prefix=None, type_eval='validation'):
+                            tb_helper=None, roc_prefix=None, type_eval='validation', epoch_division = 5):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -604,8 +599,10 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                 if not isinstance(loss, float):
                     loss = loss.item()
 
-                aux_loss =aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
-                comb_loss = loss + aux_loss
+                aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
+                comb_loss = loss + aux_weight * aux_loss
+
+                print(aux_weight)
 
                 if not isinstance(comb_loss, float):
                     comb_loss = comb_loss.item()
@@ -668,13 +665,13 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                             tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=num_batches,
                                                 mode='eval' if for_training else 'test')
 
-                divisions = 3
-                for i in range(1, divisions):
-                    if num_batches == (steps_per_epoch // divisions)*i:
+
+                for i in range(1, epoch_division):
+                    if num_batches == (steps_per_epoch // epoch_division)*i:
                         _logger.info('Partial Epoch #%d %d/%d: Current %s metric: %.5f ()  //  Current %s combined loss: %.5f ()  //  Current %s loss: %.5f ()' %
-                                    (epoch, i, divisions, type_eval, total_correct / count, type_eval, total_comb_loss / count_comb, type_eval, total_loss / count), color='bold')
+                                    (epoch, i, epoch_division, type_eval, total_correct / count, type_eval, total_comb_loss / count_comb, type_eval, total_loss / count), color='bold')
                         _logger.info('Partial Epoch #%d %d/%d: Current %s aux metric PF: %.5f ()  //  Current %s aux distance: %.5f ()  //  Current %s aux metric pair: %.5f ()  //  Current %s aux loss: %.5f ()' %
-                                    (epoch, i, divisions, type_eval, avg_aux_acc_pf, type_eval, avg_aux_dist, type_eval, avg_aux_acc_pair, type_eval, avg_aux_loss), color='bold')
+                                    (epoch, i, epoch_division, type_eval, avg_aux_acc_pf, type_eval, avg_aux_dist, type_eval, avg_aux_acc_pair, type_eval, avg_aux_loss), color='bold')
 
                 if steps_per_epoch is not None and num_batches >= steps_per_epoch:
                     break

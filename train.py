@@ -152,7 +152,11 @@ parser.add_argument('--test', action='store_true', default=False,
 parser.add_argument('--force-lr', action='store_true', default=False,
                     help='force the lr to be `--start-lr`')
 parser.add_argument('--no-aux-epoch', type=float, default=1e9,
-                    help='if epoch >= `--no-aux-epoch` do not consider auxiliary loss when training')
+                    help='if epoch >= `--no-aux-epoch` do not consider auxiliary loss when training'
+                    'unlsess `--aux-saturation` is set, in which case the auxiliary loss is saturated to the value'
+                    'it has at `--no-aux-epoch`')
+parser.add_argument('--aux-saturation', action='store_true', default=False,
+                    help='if set, the auxiliary loss is saturated to the value it has at `--no-aux-epoch`')
 parser.add_argument('--val-epochs', type=str, default='-1',
                     help='epochs on which the validation is performed'
                     'if not provided perform on every epoch'
@@ -167,6 +171,8 @@ parser.add_argument('--test-epochs', type=str, default='',
                     'separate the epochs with `:` in order to indicate an interval'
                     'if set to `best+last` the validation is performed on the best and last epochs'
                     'if set to `best` the validation is performed on the best epoch')
+parser.add_argument('--epoch-division', type=int, default=5,
+                    help='number of printouts during an epoch')
 
 def to_filelist(args, mode='train'):
     if mode == 'train':
@@ -951,13 +957,18 @@ def _main(args):
 
         # training loop
         grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
-        no_aux = False
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
                     continue
-            if epoch >= args.no_aux_epoch:
-                no_aux=True
+
+            if epoch >= args.no_aux_epoch and not args.aux_saturation:
+                aux_weight = 0
+            elif epoch >= args.no_aux_epoch and args.aux_saturation:
+                aux_weight= 1/(args.no_aux_epoch)
+            else:
+                aux_weight = 1/(epoch+1)
+
             _logger.info('-' * 50)
             if not args.val:
                 _logger.info('Epoch #%d training only' % epoch)
@@ -974,8 +985,10 @@ def _main(args):
                     os.makedirs(performance_dir)
                 roc_prefix=os.path.join(performance_dir,suffix)
 
-            train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr, aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, no_aux=no_aux)
+            train(model, loss_func, aux_loss_func_clas, aux_loss_func_regr,
+                  aux_loss_func_bin, opt, scheduler, train_loader, dev, epoch, aux_weight,
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler,
+                  tb_helper=tb, epoch_division = args.epoch_division)
 
 
             if args.model_prefix and (args.backend is None or local_rank == 0):
@@ -993,10 +1006,10 @@ def _main(args):
                 _logger.info('Epoch #%d validating' % epoch)
                 valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
                 valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                        evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                        evaluate(model, val_loader, dev, epoch, aux_weight, loss_func=loss_func,
                             aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
                             aux_loss_func_bin=aux_loss_func_bin,
-                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix, epoch_division=args.epoch_division)
 
                 best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                 best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
@@ -1067,12 +1080,20 @@ def _main(args):
                     model = model.to(dev)
                     _logger.info('Epoch #%d validating only' % epoch)
 
+                    if epoch >= args.no_aux_epoch and not args.aux_saturation:
+                        aux_weight = 0
+                    elif epoch >= args.no_aux_epoch and args.aux_saturation:
+                        aux_weight= 1/(args.no_aux_epoch)
+                    else:
+                        aux_weight = 1/(epoch+1)
+
                     valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
                     valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                    evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                    evaluate(model, val_loader, dev, epoch, aux_weight,loss_func=loss_func,
                             aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
                             aux_loss_func_bin=aux_loss_func_bin,
-                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix)
+                            steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb,
+                            roc_prefix=roc_prefix, epoch_division=args.epoch_division)
 
                     best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                     best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
@@ -1169,17 +1190,24 @@ def _main(args):
                     if gpus is not None and len(gpus) > 1:
                         model = torch.nn.DataParallel(model, device_ids=gpus)
                     model = model.to(dev)
-
                     _logger.info('Epoch #%d testing' % epoch)
+
+                    if epoch >= args.no_aux_epoch and not args.aux_saturation:
+                        aux_weight = 0
+                    elif epoch >= args.no_aux_epoch and args.aux_saturation:
+                        aux_weight= 1/(args.no_aux_epoch)
+                    else:
+                        aux_weight = 1/(epoch+1)
+
                     valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
                     valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                            evaluate(model, test_loader, dev, epoch, loss_func=loss_func,
+                            evaluate(model, test_loader, dev, epoch, aux_weight,loss_func=loss_func,
                                 aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
                                 aux_loss_func_bin=aux_loss_func_bin,
                                 steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
                                 eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
                                 eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels'],
-                                type_eval='test')
+                                type_eval='test', epoch_division=args.epoch_division)
 
                     best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                     best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
@@ -1191,7 +1219,8 @@ def _main(args):
                             best_valid_aux_dist, valid_aux_dist,
                             best_valid_aux_metric_pair, valid_aux_metric_pair,
                             best_valid_aux_loss, valid_aux_loss,
-                            local_rank, epoch, roc_prefix, eval_type='test', test = True, best=(epoch == best_epoch))
+                            local_rank, epoch, roc_prefix, eval_type='test',
+                            test = True, best=(epoch == best_epoch))
                     copy_log(args, epoch, "test")
                 del test_loader
 
