@@ -119,17 +119,17 @@ echo "extra selections: ${extra_selection}"
 
 $CMD \
     --data-train \
-    "ttjets:${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
-    "qcd:${CINECA_SCRATCH}/output_big/QCD_Pt-15to7000_TuneCP5_Flat2018_13TeV_pythia8/output_10Mevents_*.root" \
+    "ttjets:${in_dir}/output_big/TTJets_TuneCP5_13TeV-amcatnloFXFX-pythia8/output_10Mevents_*.root" \
+    "qcd:${in_dir}/output_big/QCD_Pt-15to7000_TuneCP5_Flat2018_13TeV_pythia8/output_10Mevents_*.root" \
     --data-val \
-    ${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-madgraphMLM-pythia8_val/output_10Mevents_*.root \
+    ${in_dir}/output_big/TTJets_TuneCP5_13TeV-madgraphMLM-pythia8_val/output_10Mevents_*.root \
     --data-test \
-    ${CINECA_SCRATCH}/output_big/TTJets_TuneCP5_13TeV-madgraphMLM-pythia8_test/output_10Mevents_*.root \
+    ${in_dir}/output_big/TTJets_TuneCP5_13TeV-madgraphMLM-pythia8_test/output_10Mevents_*.root \
     --data-config data/CMSAK4_${model}.yaml --network-config $modelopts \
     --model-prefix ${store}training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
-    --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 \
+    --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 --epoch-division 3\
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} \
     --extra-selection "${extra_selection}" --extra-test-selection "${extra_selection}" \
