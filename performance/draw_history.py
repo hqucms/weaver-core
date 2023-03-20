@@ -37,6 +37,8 @@ args = parser.parse_args()
 # type of the network
 if not args.type:
     NET_TYPES = ['lite', 'full']
+elif ',' in args.type:
+    NET_TYPES = [k for k in args.type.split(',')]
 else:
     NET_TYPES = [args.type]
 

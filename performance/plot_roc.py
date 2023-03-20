@@ -35,17 +35,19 @@ parser.add_argument('--in-path', type=str, default='',
                     help='input path')
 parser.add_argument('--out-path', type=str, default='',
                     help='output path')
-parser.add_argument('--in-dict', type=str, default='performance_comparison',
+parser.add_argument('--in-dict', type=str, default='total',
                     help='input dictionary')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--type', type=str, default='',
-                    help='name of the file with the dictionary')
+                    help='type of network')
 args = parser.parse_args()
 
 # type of the network
 if not args.type:
     NET_TYPES = ['lite', 'full']
+elif ',' in args.type:
+    NET_TYPES = [k for k in args.type.split(',')]
 else:
     NET_TYPES = [args.type]
 
@@ -106,7 +108,6 @@ AXIS_LIMITS ={
 
 def get_labels(y_true, y_score, labels_s, labels_b):
     """ Get the labels for the ROC curves
-
     :param    y_true : array with the true labels
     :param    y_score : array with the scores
     :param    labels_s : list with the labels for the signal
@@ -116,18 +117,21 @@ def get_labels(y_true, y_score, labels_s, labels_b):
     """
     if labels_b is None:
         return y_true, y_score
-
+    # get the true label for signal and background
     y_true_s = np.logical_or.reduce([y_true==label for label in labels_s])
     y_true_b = np.logical_or.reduce([y_true==label for label in labels_b])
+    # consider only the events that are signal or background
     y_true_idx = np.logical_or(y_true_s,y_true_b)
     y_true_tot=y_true_s[y_true_idx].astype(int)
 
     if y_score.shape[1]==1:
         y_score_tot = y_score
     else:
+        # get the score for the signal and background by summing the scores
         y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
         y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
         y_score_tot=y_score_s+y_score_b
+        # consider only the events that are signal or background
         y_score_tot = y_score_tot[y_true_idx]
 
     return y_true_tot, y_score_tot
@@ -370,6 +374,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
     :param    name2 : string with the name of the second network
     :param    network_name : string with the name of the network
     """
+
     if 'PF_VtxPos' not in roc_type:
         fig_handle = plt.figure(figsize=(20, 15))
         # loop over networks
@@ -398,13 +403,14 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
 
         # loop over different types of features
         for i, limits in AXIS_LIMITS.items():
-            fig_handle = plt.figure(figsize=(20, 15))
             # loop over networks
             for network, rates in networks.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
+                    fig_handle = plt.figure(figsize=(20, 15))
+                    ax = plt.gca()
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
                     # plot scatter plot
@@ -414,18 +420,18 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
 
                     cmap = mpl.cm.jet
                     norm = mpl.colors.Normalize(vmin=0, vmax=1.0)
-                    plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap)).set_label('Normalized counts', loc='center', fontsize=20)
+                    plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax).set_label('Normalized counts', loc='center', fontsize=20)
                     plt_fts(out_dir_scatter,
                             f'Scatter_{roc_type}{mask_name}_{limits[2]}_{network}_{net_type}_{epoch}',
                             fig_handle)
 
-            fig_handle = plt.figure(figsize=(20, 15))
             # loop over networks
             for network, rates in networks.items():
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
+                    fig_handle = plt.figure(figsize=(20, 15))
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
                     # plot true-reco histogram
@@ -525,7 +531,7 @@ if __name__ == '__main__':
     start=time.time()
 
     date_time = time.strftime('%Y%m%d-%H%M%S')
-    out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_roc')
+    out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_{args.in_dict}_roc')
     print(f'Output directory: {out_dir}')
 
     parallel_list=[]
@@ -543,12 +549,12 @@ if __name__ == '__main__':
     parallel_list=[]
 
     if len(NET_TYPES) > 1:
-        label_dict=load_dict(f'performance_comparison_{NET_TYPES[0]}.yaml')
+        label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
         epoch_list.append('best')
 
-        os.makedirs(f'{out_dir}/LiteVSFull', exist_ok=True)
+        os.makedirs(f'{out_dir}/net_type_comparison', exist_ok=True)
 
         for info in label_dict.values():
             network=info[1]
@@ -562,8 +568,8 @@ if __name__ == '__main__':
                             #print(roc_type)
                             try:
                                 p=mp.Process(target=plotting_function,
-                                                    args=(f'{out_dir}/LiteVSFull', epoch, f'{roc_type}{mask}',
-                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], 'LiteVSFull',
+                                                    args=(f'{out_dir}/net_type_comparison', epoch, f'{roc_type}{mask}',
+                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], 'net_type_comparison',
                                                     EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
                                                     NET_TYPES[0], NET_TYPES[1], f'{network}_'))
                                 p.start()

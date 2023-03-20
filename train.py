@@ -1158,9 +1158,11 @@ def _main(args):
                     test_epochs = val_epochs
                 elif ',' in args.test_epochs:
                     test_epochs = [int(i) for i in args.test_epochs.split(',')]
+                    if best_epoch not in test_epochs: test_epochs.append(best_epoch)
                 elif ':' in args.test_epochs:
                     test_epochs_ext= [int(i) for i in args.test_epochs.split(':')]
                     test_epochs = [i for i in range(test_epochs_ext[0], test_epochs_ext[1]+1)]
+                    if best_epoch not in test_epochs: test_epochs.append(best_epoch)
                 elif args.test_epochs == '-1':
                     val_epoch_len = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
                                         if '_state.pt' in filename and 'best' not in filename])

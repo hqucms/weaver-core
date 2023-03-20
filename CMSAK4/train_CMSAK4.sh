@@ -30,8 +30,15 @@ samples_per_epoch=50000000 #$((10000 * 1024 / $NGPUS))
 samples_per_epoch_val=1000000 #$((10000 * 128))
 dataopts="--num-workers 4 --fetch-step 0.01"
 
-# PN, PFN, PCNN, ParT
 model=$1
+
+auxopts=""
+if [[ "$model" == *"_saturation"* ]]; then
+    model=${model%"_saturation"}
+    auxopts="--no-aux-epoch 10 --aux-saturation"
+fi
+
+# PN, PFN, PCNN, ParT
 [[ -z ${model} ]] && model="ParT"
 if [[ "$model" == "ParT" ]]; then
     modelopts="networks/CMSAK4_ParT.py --use-amp"
@@ -102,6 +109,7 @@ if [[ "$model" == *"_lite"* ]]; then
     model=${model%"_lite"}
 fi
 
+
 suffix_specs=$2
 
 if [[ "$CINECA_SCRATCH" == "" ]]; then
@@ -131,6 +139,6 @@ $CMD \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
     --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 --epoch-division 3\
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
-    --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} \
+    --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} $auxopts \
     --extra-selection "${extra_selection}" --extra-test-selection "${extra_selection}" \
     "${@:3}"

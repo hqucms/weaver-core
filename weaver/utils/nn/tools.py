@@ -274,7 +274,6 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
             aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
             comb_loss = loss + aux_weight * aux_loss
 
-            print(aux_weight)
 
             if grad_scaler is None:
                 comb_loss.backward()
@@ -602,7 +601,6 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 aux_loss = aux_loss_pf_clas + aux_loss_pf_regr + aux_loss_pair_bin
                 comb_loss = loss + aux_weight * aux_loss
 
-                print(aux_weight)
 
                 if not isinstance(comb_loss, float):
                     comb_loss = comb_loss.item()
