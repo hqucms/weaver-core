@@ -360,7 +360,7 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
         plt.plot(tpr,fpr,label=f'ROC {roc_type} {info[1]} epoch #{epoch}, auc=%0.3f'% roc_auc)
-    plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{net_type}_history', fig_handle)
+    plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{args.in_dict}_{net_type}_history', fig_handle)
 
 def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 = None, name1 = '', name2 = '', network_name=''):
     """ Plot the roc curves for a epoch and a roc type for each network
@@ -392,7 +392,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
             rates=networks_2
             plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'ROC {network_name}{name2} {epoch}, auc=%0.4f'% rates[2])
 
-        plt_fts(out_dir, f"ROC_{roc_type}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '')])
+        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '')])
 
     else:
         out_dir_scatter = os.path.join(out_dir, 'Scatter')
@@ -422,7 +422,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
                     norm = mpl.colors.Normalize(vmin=0, vmax=1.0)
                     plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax).set_label('Normalized counts', loc='center', fontsize=20)
                     plt_fts(out_dir_scatter,
-                            f'Scatter_{roc_type}{mask_name}_{limits[2]}_{network}_{net_type}_{epoch}',
+                            f'Scatter_{roc_type}{mask_name}_{limits[2]}_{network}_{args.in_dict}_{net_type}_{epoch}',
                             fig_handle)
 
             # loop over networks
@@ -440,7 +440,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
                             range=(-limits[3],
                             limits[3]), density=True)
                     plt_fts(out_dir_true_reco,
-                            f'True-Reco_{roc_type}{mask_name}_{limits[2]}_{network}_{net_type}_{epoch}',
+                            f'True-Reco_{roc_type}{mask_name}_{limits[2]}_{network}_{args.in_dict}_{net_type}_{epoch}',
                             fig_handle)
         networks.clear()
 
@@ -553,12 +553,11 @@ if __name__ == '__main__':
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
         epoch_list.append('best')
-
         os.makedirs(f'{out_dir}/net_type_comparison', exist_ok=True)
 
+
         for info in label_dict.values():
-            network=info[1]
-            #print(network)
+            network=info[1].split('_')[0]
             for label_type, labels_info in ROC_TYPE_DICT.items():
                 for roc_type in labels_info.keys():
                     if 'PF_VtxPos' == roc_type:
@@ -567,6 +566,10 @@ if __name__ == '__main__':
                         for mask in ['', '_mask']:
                             #print(roc_type)
                             try:
+                                for net_type in NET_TYPES:
+                                    for key in EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].keys():
+                                        EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'][key.split('_')[0]] = EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].pop(key)
+
                                 p=mp.Process(target=plotting_function,
                                                     args=(f'{out_dir}/net_type_comparison', epoch, f'{roc_type}{mask}',
                                                     EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], 'net_type_comparison',

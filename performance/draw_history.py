@@ -24,7 +24,7 @@ parser.add_argument('--in-path', type=str, default='',
                     help='input path')
 parser.add_argument('--out-path', type=str, default='',
                     help='output path')
-parser.add_argument('--in-dict', type=str, default='performance_comparison',
+parser.add_argument('--in-dict', type=str, default='total',
                     help='input dictionary')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
@@ -104,12 +104,28 @@ def load_dict(name):
         info_dict[k].append(v[1])
     return info_dict
 
+def draw_plot(value, num_tot, name, info, save):
+    if len(value[:num_tot]) == num_tot:
+        x_part = np.linspace(-(args.num_partial-1)/args.num_partial, 0, args.num_partial)
+        x = np.concatenate([x_part + i for i in range(args.last_epoch+1)])
+        #y=value[:num_tot]
+        y=uniform_filter1d(value[:num_tot], size=args.num_partial)
+    else:
+        x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
+        y=value[:args.last_epoch+1]
+    plt.plot(x, y, info[2], label=f'{name} {info[1]}')
+    save=True
+
+    return save
+
 if __name__ == "__main__":
 
+    tot_dict = {}
     # create output directory
     date_time = time.strftime('%Y%m%d-%H%M%S')
     main_out_dir = os.path.join(f'{args.out_path}history_plot', f'{date_time}_{args.name}_history')
     os.makedirs(main_out_dir, exist_ok=True)
+    print(main_out_dir)
 
     for net_type in NET_TYPES:
         infile_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
@@ -142,25 +158,39 @@ if __name__ == "__main__":
                             if val > 100:
                                 val=-1
                             info[0][name].append(val)
+        tot_dict[net_type]=infile_dict
 
         # plot the history
         num_tot=(args.last_epoch+1)*args.num_partial
         for history, _ in history_dict.items():
             fig_handle = plt.figure(figsize=(30, 20))
+            save=False
             for _, info in infile_dict.items():
                 for name, value in info[0].items():
                     if name == history and any(val != 0 for val in value):
-                        if len(value[:num_tot]) == num_tot:
-                            x_part = np.linspace(-(args.num_partial-1)/args.num_partial, 0, args.num_partial)
-                            x = np.concatenate([x_part + i for i in range(args.last_epoch+1)])
-                            #y=value[:num_tot]
-                            y=uniform_filter1d(value[:num_tot], size=args.num_partial)
-                        else:
-                            x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
-                            y=value[:args.last_epoch+1]
-                        plt.plot(x, y, info[2], label=f'{name} {info[1]}')
-            plot(out_dir, f'{history}_{net_type}', fig_handle)
+                        save=draw_plot(value, num_tot, name, info, save)
+            # call function plot only if figure is not empty
+            if save:
+                plot(out_dir, f'{history}_{args.in_dict}_{net_type}', fig_handle)
 
+    if len(NET_TYPES) > 1:
+        infile_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
+        out_dir = os.path.join(main_out_dir, f'{args.name}_history_net_type_comparison')
+        os.makedirs(out_dir, exist_ok=True)
+
+        # plot the history
+        num_tot=(args.last_epoch+1)*args.num_partial
+        for history, _ in history_dict.items():
+            fig_handle = plt.figure(figsize=(30, 20))
+            save=False
+            for net_type in NET_TYPES:
+                for _, info in tot_dict[net_type].items():
+                    for name, value in info[0].items():
+                        if name == history and any(val != 0 for val in value):
+                            save=draw_plot(value, num_tot, name, info, save)
+            # call function plot only if figure is not empty
+            if save:
+                plot(out_dir, f'{history}_{args.in_dict}_net_type_comparison', fig_handle)
 
 
 
