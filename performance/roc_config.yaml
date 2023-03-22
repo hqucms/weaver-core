@@ -27,18 +27,18 @@ PF_EXTRA_FTS:
 
 # dictionary with the axes inf
 AXIS_INF:
-    PF_SIP_b+bcVSc+other: (0.4, 5e-3)
-    PF_b+bcVSc+other:  (0.4, 5e-3)
-    PF_comparison_b+bcVSc+other:  (0.4, 5e-3)
-    PAIR_SameVtx:  (0.4, 1e-1)
-    JET_bVSuds:  (0.5, 1e-4)
-    JET_bVSg: (0.5, 1e-4)
-    JET_bVSudsg: (0.5, 1e-4)
+    PF_SIP_b+bcVSc+other: [0.4, 5e-3]
+    PF_b+bcVSc+other:  [0.4, 5e-3]
+    PF_comparison_b+bcVSc+other:  [0.4, 5e-3]
+    PAIR_SameVtx:  [0.4, 1e-1]
+    JET_bVSuds:  [0.5, 1e-4]
+    JET_bVSg: [0.5, 1e-4]
+    JET_bVSudsg: [0.5, 1e-4]
 
 
 # dictionary with the axes limits
 AXIS_LIMITS:
-    0: ((30, 100),[[0,0.5],[0,3]], vtx_dist_pv, 3)
-    1: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], vtx_x, 0.2)
-    2: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], vtx_y, 0.2)
-    3: ((200, 200),[[-3, 3],[-3,3]], vtx_z, 3)
+    0: [[30, 100],[[0,0.5],[0,3]], vtx_dist_pv, 3]
+    1: [[200, 200],[[-0.06,0.06],[-0.06,0.06]], vtx_x, 0.2]
+    2: [[200, 200],[[-0.06,0.06],[-0.06,0.06]], vtx_y, 0.2]
+    3: [[200, 200],[[-3, 3],[-3,3]], vtx_z, 3]

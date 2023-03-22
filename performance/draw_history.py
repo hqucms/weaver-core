@@ -145,7 +145,7 @@ if __name__ == "__main__":
                 infiles = [os.path.join(dir_name,filename) for filename in os.listdir(dir_name) if '.log' in filename]
                 infiles.sort()#key=lambda s: int(re.findall(r'\d+', s)[-1]))
             # get specific log files and sort them in alphabetical order
-            elif isinstance(input_name, tuple):
+            elif isinstance(input_name, list):
                 infiles=[os.path.join(args.in_path+"input", "logs", f"{k}.log") for k in input_name]
                 infiles.sort()# key=lambda s: int(re.findall(r'\d+', s)[-1]))
             #print(infiles)

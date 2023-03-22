@@ -64,7 +64,7 @@ for _net_type in NET_TYPES:
     EPOCHS_DICT[_net_type] = manager.dict()
 
 
-with open(f'config/{args.roc_config}.yaml', 'r') as stream:
+with open(f'{args.roc_config}.yaml', 'r') as stream:
     config_dicts=yaml.safe_load(stream)
 
 print(config_dicts)
@@ -408,14 +408,14 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
         if isinstance(networks, mp.managers.DictProxy):
             for network, rates in networks.items():
                 plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network} {epoch}, auc=%0.4f'% rates[2])
-        elif isinstance(networks, tuple):
+        elif isinstance(networks, list):
             rates=networks
             plt.plot(rates[1],rates[0],rates[3],label=f'ROC {network_name}{name1} {epoch}, auc=%0.4f'% rates[2])
 
         if isinstance(networks_2, mp.managers.DictProxy):
             for network, rates in networks_2.items():
                 plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'ROC {network}{name2} {epoch}, auc=%0.4f'% rates[2])
-        elif isinstance(networks_2, tuple):
+        elif isinstance(networks_2, list):
             rates=networks_2
             plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'ROC {network_name}{name2} {epoch}, auc=%0.4f'% rates[2])
 
@@ -564,7 +564,7 @@ if __name__ == '__main__':
     parallel_list=[]
     for net_type in NET_TYPES:
         #label_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
-        label_dict=load_dict2(f'{args.complete_dict}.yaml', f'{args.in_dict}_{net_type}.yaml')
+        label_dict=load_dict2(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{net_type}.yaml')
         p=mp.Process(target=_main,
                         args=(net_type, out_dir, label_dict))
         p.start()
@@ -578,7 +578,7 @@ if __name__ == '__main__':
 
     if len(NET_TYPES) > 1:
         #label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
-        label_dict=load_dict2(f'{args.complete_dict}.yaml',f'{args.in_dict}_{NET_TYPES[0]}.yaml')
+        label_dict=load_dict2(f'config/{args.complete_dict}.yaml',f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
         epoch_list.append('best')
