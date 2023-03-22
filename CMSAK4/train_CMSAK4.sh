@@ -55,55 +55,63 @@ elif [[ "$model" == "PN_ef" ]]; then
 elif [[ "$model" == "PNXT" ]] || [[ "$model" == "PNXT_noSV" ]]; then
     modelopts="networks/CMSAK4_PNXT.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef" ]] || [[ "$model" == "PNXT_ef_noSV" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_clas" ]] || [[ "$model" == "PNXT_ef_aux_clas_noSV" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_regr" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_bin" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_tot" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_cb" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
 elif [[ "$model" == "PNXT_lite" ]]; then
     modelopts="networks/CMSAK4_PNXT_lite.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" != *"lite"* ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_clas_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_regr_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_bin_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_tot_lite" ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite.py"
-    batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == "PNXT_ef_aux_cb_lite" ]]; then
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" == *"lite"* ]]; then
     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
 else
     echo "Invalid model $model!"
     exit 1
 fi
+
+# elif [[ "$model" == "PNXT_ef" ]] || [[ "$model" == "PNXT_ef_noSV" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_clas" ]] || [[ "$model" == "PNXT_ef_aux_clas_noSV" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_regr" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_bin" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_tot" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_cb" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+
+# elif [[ "$model" == "PNXT_ef_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_clas_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_regr_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_bin_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_tot_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
+# elif [[ "$model" == "PNXT_ef_aux_cb_lite" ]]; then
+#     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
+#     batchopts="--batch-size 512 --start-lr 1e-2"
 
 if [[ "$model" == *"_lite"* ]]; then
     model=${model%"_lite"}
@@ -137,7 +145,7 @@ $CMD \
     --model-prefix ${store}training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
-    --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 --epoch-division 3\
+    --num-epochs $epochs --gpus 0 --no-aux-epoch 6 --epoch-division 3\
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} $auxopts \
     --extra-selection "${extra_selection}" --extra-test-selection "${extra_selection}" \

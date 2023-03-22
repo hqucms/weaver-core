@@ -249,23 +249,20 @@ def build_sparse_aux(x, idx, ef_idx):
 
     batch_size, num_aux, num_pf, k = x.size()
     num_pairs= num_pf * k
-    #print('x_aux:\n', x.size(), x)
-    #print('idx_aux:\n', idx.size(), idx)
+    
     idx = torch.min(idx, torch.ones_like(idx) * num_pf) # oppure num_pf-1
-    ef_idx = torch.min(ef_idx, torch.ones_like(ef_idx) * num_pf) # oppure num_pf-1
     idx=idx[:, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
-    #print('idx:\n', idx.size(), idx)
-    ef_idx=ef_idx[:,0, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
-    #print('ef_mask_tensor2:\n', ef_idx.size(), ef_idx)
-    idx_tot=torch.cat((idx, ef_idx), dim=2).flatten(start_dim=1).unsqueeze(1)
-    #print('idx_tot:\n', idx_tot.size(), idx_tot)
+    if ef_idx is not None:
+        ef_idx = torch.min(ef_idx, torch.ones_like(ef_idx) * num_pf) # oppure num_pf-1
+        ef_idx=ef_idx[:,0, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
+        idx_tot=torch.cat((idx, ef_idx), dim=2).flatten(start_dim=1).unsqueeze(1)
+    else:
+        idx_tot=idx.flatten(start_dim=1).unsqueeze(1)
+
     i_aux=torch.arange(0, num_pf, device=x.device).repeat_interleave(k).repeat(batch_size, 1).unsqueeze(1)
-    #print('i_aux:\n', i_aux.size(), i_aux)
 
     i2=torch.cat((i_aux, idx_tot), dim=1)
-    #print('i2_aux:\n', i2.size(), i2)
     x=x.flatten(start_dim=2)
-    #print('x2:\n', x.size(), x)
 
     i = torch.cat((
         torch.arange(0, batch_size, device=x.device).repeat_interleave(num_aux * num_pairs).unsqueeze(0),
@@ -273,9 +270,7 @@ def build_sparse_aux(x, idx, ef_idx):
         i2[:, :1, :].expand_as(x).flatten().unsqueeze(0),
         i2[:, 1:, :].expand_as(x).flatten().unsqueeze(0),
     ), dim=0)
-    #print('i:\n', i.size(), i)
     #idx=idx.unsqueeze(3).expand(-1, -1, -1, num_aux)
-    #print('idx2:\n', idx.size(), idx)
     #x=x[:, :, :int(k_/2), :].flatten()
 
     #out = torch.sparse_coo_tensor(idx, x)#, (batch_size, num_pf, num_pf, num_aux))
@@ -284,7 +279,6 @@ def build_sparse_aux(x, idx, ef_idx):
         size=(batch_size, num_aux, num_pf + 1, num_pf + 1),
         device=x.device).to_dense()[:, :, :num_pf, :num_pf].permute(0,2,3,1)
     # (batch_size, num_pf, num_pf, num_aux_pair_label)
-    #print("x_final\n", x_final.size(), x_final)
 
     return x_final
 
@@ -517,8 +511,10 @@ class MultiScaleEdgeConv(nn.Module):
                 fts=fts_encode, mask=mask, ef_tensor=ef_tensor, idx=idx, null_edge_pos=null_edge_pos)
             if edge_inputs is not None:
                 batch_size, num_efts_tensor, num_points, _ = ef_tensor.size()
-                dummy_tensor= torch.zeros(batch_size, num_efts_tensor, num_points, self.k, device=ef_tensor.device)
+                dummy_tensor= torch.zeros(batch_size, num_efts_tensor, num_points, edge_inputs.size(3)-self.k, device=ef_tensor.device)
+                print(ef_tensor.size())
                 ef_tensor=torch.cat((ef_tensor, dummy_tensor), dim=3)
+                print(ef_tensor.size())
                 ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1) #(batch_size, num_ef+num_fts, num_points, k+k)
 
         #print('ef_tensor:\n', ef_tensor.size())
@@ -1053,7 +1049,7 @@ class ParticleEdgeNeXtTagger(nn.Module):
                                for_inference=for_inference,
                                )
 
-    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx, track_ef, track_ef_mask, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):
+    def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx=None, track_ef=None, track_ef_mask=None, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):
         if self.pf_input_dropout:
             pf_mask = self.pf_input_dropout(pf_mask)
         num_pf=pf_points.size(2)
@@ -1070,7 +1066,11 @@ class ParticleEdgeNeXtTagger(nn.Module):
             lorentz_vectors = pf_vectors
             mask = pf_mask
 
-        ef_tensor=build_sparse_tensor(track_ef, track_ef_idx, features.size(-1))
-        ef_mask_tensor=build_sparse_tensor(track_ef_mask, track_ef_idx, features.size(-1))
+        if track_ef_idx is not None and track_ef is not None and track_ef_mask is not None:
+            ef_tensor=build_sparse_tensor(track_ef, track_ef_idx, features.size(-1))
+            ef_mask_tensor=build_sparse_tensor(track_ef_mask, track_ef_idx, features.size(-1))
+        else:
+            ef_tensor=None
+            ef_mask_tensor=None
 
         return self.pn(points, features, lorentz_vectors, num_pf, mask, ef_tensor, ef_mask_tensor)

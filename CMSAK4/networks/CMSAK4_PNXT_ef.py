@@ -5,9 +5,9 @@ from weaver.nn.model.ParticleEdgeNeXt import ParticleEdgeNeXtTagger
 
 def get_model(data_config, **kwargs):
     cfg = dict(
-        pf_features_dims=len(data_config.input_dicts['pf_features']),
+        pf_features_dims=len(data_config.input_dicts['pf_features'])  if 'pf_features' in data_config.input_dicts else 0,
         sv_features_dims = len(data_config.input_dicts['sv_features']) if 'sv_features' in data_config.input_dicts else 0,
-        edge_input_dim=len(data_config.input_dicts['track_ef']),
+        edge_input_dim=len(data_config.input_dicts['track_ef']) if 'track_ef' in data_config.input_dicts else 0,
         num_classes=len(data_config.label_value),
         num_aux_classes_clas=len([k for k in data_config.aux_label_value_clas if 'clas' in k]),
         num_aux_classes_regr=len([k for k in data_config.aux_label_value_regr if 'regr' in k]),

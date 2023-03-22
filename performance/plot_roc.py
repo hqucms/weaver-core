@@ -37,6 +37,8 @@ parser.add_argument('--out-path', type=str, default='',
                     help='output path')
 parser.add_argument('--in-dict', type=str, default='total',
                     help='input dictionary')
+parser.add_argument('--complete-dict', type=str, default='complete_dict',
+                    help='dictionary with names')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--type', type=str, default='',
@@ -203,6 +205,25 @@ def load_dict(name):
         loaded_dict=yaml.safe_load(stream)
     info_dict = defaultdict(list)
     for k, v in loaded_dict.items():
+        # dictionary with the roc type and the epoch
+        info_dict[k].append(manager.dict())
+        info_dict[k].append(v[0])
+        info_dict[k].append(v[1])
+    return info_dict
+
+
+def load_dict2(complete_dict, in_dict):
+    """ Load the dictionary from the yaml file
+    :param    name : string with the name of the file
+    """
+    with open(complete_dict, 'r') as stream:
+        loaded_dict=yaml.safe_load(stream)
+    with open(in_dict, 'r') as stream:
+        in_names=yaml.safe_load(stream)['networks']
+    info_dict = defaultdict(list)
+    for k, v in loaded_dict.items():
+        if v[0] not in in_names:
+            continue
         # dictionary with the roc type and the epoch
         info_dict[k].append(manager.dict())
         info_dict[k].append(v[0])
@@ -536,7 +557,8 @@ if __name__ == '__main__':
 
     parallel_list=[]
     for net_type in NET_TYPES:
-        label_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
+        #label_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
+        label_dict=load_dict2(f'{args.complete_dict}.yaml', f'{args.in_dict}_{net_type}.yaml')
         p=mp.Process(target=_main,
                         args=(net_type, out_dir, label_dict))
         p.start()
@@ -549,7 +571,8 @@ if __name__ == '__main__':
     parallel_list=[]
 
     if len(NET_TYPES) > 1:
-        label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
+        #label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
+        label_dict=load_dict2(f'{args.complete_dict}.yaml',f'{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
         epoch_list.append('best')

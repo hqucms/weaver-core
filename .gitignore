@@ -148,6 +148,6 @@ monitor/
 *.pickle
 history_plot*/
 roc_curve*/
-performance/*.yaml
+performance/*/*.yaml
 input/
 *.code-workspace
