@@ -249,7 +249,7 @@ def build_sparse_aux(x, idx, ef_idx):
 
     batch_size, num_aux, num_pf, k = x.size()
     num_pairs= num_pf * k
-    
+
     idx = torch.min(idx, torch.ones_like(idx) * num_pf) # oppure num_pf-1
     idx=idx[:, :num_pf, :]#.flatten(start_dim=1).unsqueeze(1)
     if ef_idx is not None:
@@ -512,9 +512,7 @@ class MultiScaleEdgeConv(nn.Module):
             if edge_inputs is not None:
                 batch_size, num_efts_tensor, num_points, _ = ef_tensor.size()
                 dummy_tensor= torch.zeros(batch_size, num_efts_tensor, num_points, edge_inputs.size(3)-self.k, device=ef_tensor.device)
-                print(ef_tensor.size())
                 ef_tensor=torch.cat((ef_tensor, dummy_tensor), dim=3)
-                print(ef_tensor.size())
                 ef_tensor = torch.cat([ef_tensor, edge_inputs], dim=1) #(batch_size, num_ef+num_fts, num_points, k+k)
 
         #print('ef_tensor:\n', ef_tensor.size())

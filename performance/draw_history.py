@@ -32,6 +32,8 @@ parser.add_argument('--type', type=str, default='',
                     help='name of the file with the dictionary')
 parser.add_argument('--num-partial', type=int, default=3,
                     help='number of partial samplings per epoch')
+parser.add_argument('--history-config', type=str, default='history_config',
+                    help='name of the file with the dictionary')
 args = parser.parse_args()
 
 # type of the network
@@ -42,30 +44,33 @@ elif ',' in args.type:
 else:
     NET_TYPES = [args.type]
 
-# dictionary with the information to extract from the log files
-history_dict = {
-    'primary_train_loss': ('AvgLoss: ', ','),
-    'primary_train_acc': ('AvgAcc: ', '\n'),
-    'comb_train_loss': ('AvgCombLoss: ', ','),
-    'aux_train_loss': ('AvgAuxLoss: ', ','),
-    'aux_train_accPF': ('AvgAuxAccPF: ', ','),
-    'aux_train_dist': ('AvgAuxDist: ', ','),
-    'aux_train_accPair': ('AvgAuxAccPair: ', '\n'),
-    'primary_val_metric': ('validation metric: ', ' ('),
-    'primary_val_loss': ('validation loss: ', ' ('),
-    'comb_val_loss': ('validation combined loss: ', ' ('),
-    'aux_val_metricPF': ('validation aux metric PF: ', ' ('),
-    'aux_val_dist': ('validation aux distance: ', ' ('),
-    'aux_val_metricPair': ('validation aux metric pair: ', ' ('),
-    'aux_val_loss': ('validation aux loss: ', ' ('),
-    'primary_test_metric': ('test metric: ', ' ('),
-    'primary_test_loss': ('test loss: ', ' ('),
-    'comb_test_loss': ('test combined loss: ', ' ('),
-    'aux_test_metricPF': ('test aux metric PF: ', ' ('),
-    'aux_test_dist': ('test aux distance: ', ' ('),
-    'aux_test_metricPair': ('test aux metric pair: ', ' ('),
-    'aux_test_loss': ('test aux loss: ', ' ('),
-}
+with open(f'{args.history_config}.yaml', 'r') as stream:
+    history_dict=yaml.safe_load(stream)
+
+# # dictionary with the information to extract from the log files
+# history_dict = {
+#     'primary_train_loss': ('AvgLoss: ', ','),
+#     'primary_train_acc': ('AvgAcc: ', '\n'),
+#     'comb_train_loss': ('AvgCombLoss: ', ','),
+#     'aux_train_loss': ('AvgAuxLoss: ', ','),
+#     'aux_train_accPF': ('AvgAuxAccPF: ', ','),
+#     'aux_train_dist': ('AvgAuxDist: ', ','),
+#     'aux_train_accPair': ('AvgAuxAccPair: ', '\n'),
+#     'primary_val_metric': ('validation metric: ', ' ('),
+#     'primary_val_loss': ('validation loss: ', ' ('),
+#     'comb_val_loss': ('validation combined loss: ', ' ('),
+#     'aux_val_metricPF': ('validation aux metric PF: ', ' ('),
+#     'aux_val_dist': ('validation aux distance: ', ' ('),
+#     'aux_val_metricPair': ('validation aux metric pair: ', ' ('),
+#     'aux_val_loss': ('validation aux loss: ', ' ('),
+#     'primary_test_metric': ('test metric: ', ' ('),
+#     'primary_test_loss': ('test loss: ', ' ('),
+#     'comb_test_loss': ('test combined loss: ', ' ('),
+#     'aux_test_metricPF': ('test aux metric PF: ', ' ('),
+#     'aux_test_dist': ('test aux distance: ', ' ('),
+#     'aux_test_metricPair': ('test aux metric pair: ', ' ('),
+#     'aux_test_loss': ('test aux loss: ', ' ('),
+# }
 
 def plot(out_dir, name, fig_handle):
     """Plot the history of the given figure handle

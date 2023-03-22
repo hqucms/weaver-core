@@ -43,6 +43,8 @@ parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
 parser.add_argument('--type', type=str, default='',
                     help='type of network')
+parser.add_argument('--roc-config', type=str, default='roc_config',
+                    help='name of the file with the dictionary')
 args = parser.parse_args()
 
 # type of the network
@@ -62,51 +64,55 @@ for _net_type in NET_TYPES:
     EPOCHS_DICT[_net_type] = manager.dict()
 
 
-# dictionary with the labels for the ROC curves
-# first element in the list is the label for the signal
-# second element in the list is the label for the background
-# third element in the list is the label
-ROC_TYPE_DICT={
-    'aux_labels': {
-        #0=b, 1=c, 2=bc, 3=other
-        'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-        'PF_VtxPos' : [None, None, 'pf_regr'],
-        'PAIR_SameVtx' : [[0], None, 'pair_bin'],
-    },
-    'primary_labels':{
-        #0=b, 1=bb, 4=uds, 5=g
-        'JET_bVSuds':[[0,1], [4], 'primary'],
-        'JET_bVSg':[[0,1], [5], 'primary'],
-        'JET_bVSudsg':[[0,1], [4,5], 'primary']
-    }
-}
+with open(f'config/{args.roc_config}.yaml', 'r') as stream:
+    config_dicts=yaml.safe_load(stream)
 
-PF_EXTRA_FTS = {
-    'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_IPsig'],
-    'PF_b+bcVSc+other' : ['pf_mask_charged'],
-    'PF_VtxPos' : ['pf_mask_from_b'],
-    #'PF_VtxPos' : ['y_score_pf_clas'],
-}
+print(config_dicts)
+# # dictionary with the labels for the ROC curves
+# # first element in the list is the label for the signal
+# # second element in the list is the label for the background
+# # third element in the list is the label
+# config_dicts['ROC_TYPE_DICT']={
+#     'aux_labels': {
+#         #0=b, 1=c, 2=bc, 3=other
+#         'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+#         'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
+#         'PF_VtxPos' : [None, None, 'pf_regr'],
+#         'PAIR_SameVtx' : [[0], None, 'pair_bin'],
+#     },
+#     'primary_labels':{
+#         #0=b, 1=bb, 4=uds, 5=g
+#         'JET_bVSuds':[[0,1], [4], 'primary'],
+#         'JET_bVSg':[[0,1], [5], 'primary'],
+#         'JET_bVSudsg':[[0,1], [4,5], 'primary']
+#     }
+# }
 
-# dictionary with the axes inf
-AXIS_INF ={
-    'PF_SIP_b+bcVSc+other': (0.4, 5e-3),
-    'PF_b+bcVSc+other':  (0.4, 5e-3),
-    'PF_comparison_b+bcVSc+other':  (0.4, 5e-3),
-    'PAIR_SameVtx':  (0.4, 1e-1),
-    'JET_bVSuds':  (0.5, 1e-4),
-    'JET_bVSg': (0.5, 1e-4),
-    'JET_bVSudsg': (0.5, 1e-4),
-}
+# config_dicts['PF_EXTRA_FTS'] = {
+#     'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_IPsig'],
+#     'PF_b+bcVSc+other' : ['pf_mask_charged'],
+#     'PF_VtxPos' : ['pf_mask_from_b'],
+#     #'PF_VtxPos' : ['y_score_pf_clas'],
+# }
 
-# dictionary with the axes limits
-AXIS_LIMITS ={
-    0: ((30, 100),[[0,0.5],[0,3]], 'vtx_dist_pv', 3),
-    1: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_x', 0.2),
-    2: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_y', 0.2),
-    3: ((200, 200),[[-3, 3],[-3,3]], 'vtx_z', 3),
-}
+# # dictionary with the axes inf
+# config_dicts['AXIS_INF'] ={
+#     'PF_SIP_b+bcVSc+other': (0.4, 5e-3),
+#     'PF_b+bcVSc+other':  (0.4, 5e-3),
+#     'PF_comparison_b+bcVSc+other':  (0.4, 5e-3),
+#     'PAIR_SameVtx':  (0.4, 1e-1),
+#     'JET_bVSuds':  (0.5, 1e-4),
+#     'JET_bVSg': (0.5, 1e-4),
+#     'JET_bVSudsg': (0.5, 1e-4),
+# }
+
+# # dictionary with the axes limits
+# config_dicts['AXIS_LIMITS'] ={
+#     0: ((30, 100),[[0,0.5],[0,3]], 'vtx_dist_pv', 3),
+#     1: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_x', 0.2),
+#     2: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_y', 0.2),
+#     3: ((200, 200),[[-3, 3],[-3,3]], 'vtx_z', 3),
+# }
 
 def get_labels(y_true, y_score, labels_s, labels_b):
     """ Get the labels for the ROC curves
@@ -157,12 +163,12 @@ def get_rates(y_t, y_s, l_s, l_b):
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
 
-def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
+def plt_fts(out_dir, name, fig_handle, axis_inf=None):
     """ Plot features
     :param    out_dir : string with the output directory
     :param    name : string with the name of the plot
     :param    fig_handle : figure handle
-    :param    AXIS_INF : dictionary with the axes limits
+    :param    axis_inf : dictionary with the axes limits
     """
 
     if 'PF_VtxPos' in name:
@@ -176,8 +182,8 @@ def plt_fts(out_dir, name, fig_handle, AXIS_INF=None):
     else:
         plt.xlabel('Efficency for b-jet (TP)', fontsize=20, loc='right')
         plt.ylabel('Mistagging prob (FP)', fontsize=20, loc='top')
-        plt.xlim([AXIS_INF[0], 1.0005])
-        plt.ylim([AXIS_INF[1], 1.005])
+        plt.xlim([axis_inf[0], 1.0005])
+        plt.ylim([axis_inf[1], 1.005])
         if 'JET' in name:
             plt.yscale('log')
 
@@ -281,7 +287,7 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
     """
     if epoch not in EPOCHS_DICT[net_type].keys():
         EPOCHS_DICT[net_type][epoch] = manager.dict()
-    for label_type, labels_info in ROC_TYPE_DICT.items():
+    for label_type, labels_info in config_dicts['ROC_TYPE_DICT'].items():
         #print(label_type)
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
@@ -293,19 +299,19 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
                 if roc_type in EPOCHS_DICT[net_type][epoch].keys(): continue
 
                 # load the extra features for the labels (if present)
-                if (roc_type in PF_EXTRA_FTS.keys() \
-                    and ((len(PF_EXTRA_FTS[roc_type])==2 \
-                    and PF_EXTRA_FTS[roc_type][1] in file.files) \
-                    or (len(PF_EXTRA_FTS[roc_type])==1 \
+                if (roc_type in config_dicts['PF_EXTRA_FTS'].keys() \
+                    and ((len(config_dicts['PF_EXTRA_FTS'][roc_type])==2 \
+                    and config_dicts['PF_EXTRA_FTS'][roc_type][1] in file.files) \
+                    or (len(config_dicts['PF_EXTRA_FTS'][roc_type])==1 \
                     and f'y_score_{labels[2]}' in file.files)))\
-                    or (roc_type not in PF_EXTRA_FTS.keys() \
+                    or (roc_type not in config_dicts['PF_EXTRA_FTS'].keys() \
                     and f'y_score_{labels[2]}' in file.files):
 
                     if history: info[0][roc_type] = manager.dict()
                     EPOCHS_DICT[net_type][epoch][roc_type] = manager.dict()
 
-                if roc_type in PF_EXTRA_FTS.keys() \
-                    and PF_EXTRA_FTS[roc_type][0] in file.files:
+                if roc_type in config_dicts['PF_EXTRA_FTS'].keys() \
+                    and config_dicts['PF_EXTRA_FTS'][roc_type][0] in file.files:
 
                     if history: info[0][f'{roc_type}_mask']= manager.dict()
                     EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'] = manager.dict()
@@ -320,7 +326,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
     :param    epoch : epoch to load
     :param    net_type : string with the type of the network
     """
-    for label_type, labels_info in ROC_TYPE_DICT.items():
+    for label_type, labels_info in config_dicts['ROC_TYPE_DICT'].items():
         if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
             continue
         print(infile)
@@ -335,8 +341,8 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
 
                 # load the extra features for the labels (if present)
                 try:
-                    y_score = file[PF_EXTRA_FTS[roc_type][1]]
-                    #print(f'EXTRA FEATURE {PF_EXTRA_FTS[roc_type][1]} found in {infile}! \n')
+                    y_score = file[config_dicts['PF_EXTRA_FTS'][roc_type][1]]
+                    #print(f'EXTRA FEATURE {config_dicts['PF_EXTRA_FTS'][roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
                     try:
                         y_score = file[f'y_score_{labels[2]}']
@@ -353,12 +359,12 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
 
                 # load the mask for the labels (if present)
                 try:
-                    y_mask = file[PF_EXTRA_FTS[roc_type][0]].astype(bool)
-                    if PF_EXTRA_FTS[roc_type][0] == 'y_score_pf_clas':
+                    y_mask = file[config_dicts['PF_EXTRA_FTS'][roc_type][0]].astype(bool)
+                    if config_dicts['PF_EXTRA_FTS'][roc_type][0] == 'y_score_pf_clas':
                         y_mask = np.expand_dims(np.argmax(y_mask, axis=1), axis=1) == 0
                     y_true = y_true[y_mask[:, 0]]
                     y_score = y_score[y_mask[:, 0]]
-                    #print(f'MASK {PF_EXTRA_FTS[roc_type][0]} found in {infile}! \n')
+                    #print(f'MASK {config_dicts['PF_EXTRA_FTS'][roc_type][0]} found in {infile}! \n')
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(y_true,y_score,
                                                 labels[0], labels[1])
@@ -413,7 +419,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
             rates=networks_2
             plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'ROC {network_name}{name2} {epoch}, auc=%0.4f'% rates[2])
 
-        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '')])
+        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, config_dicts['AXIS_INF'][roc_type.replace('_mask', '')])
 
     else:
         out_dir_scatter = os.path.join(out_dir, 'Scatter')
@@ -423,7 +429,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
         os.makedirs(out_dir_true_reco, exist_ok=True)
 
         # loop over different types of features
-        for i, limits in AXIS_LIMITS.items():
+        for i, limits in config_dicts['AXIS_LIMITS'].items():
             # loop over networks
             for network, rates in networks.items():
                 x_t=rates[1][:, i]
@@ -509,7 +515,7 @@ def _main(net_type, out_dir, label_dict):
     parallel_list = []
     for input_name, info in label_dict.items():
         # compute roc curve for each epoch
-        for label_type, labels_info in ROC_TYPE_DICT.items():
+        for label_type, labels_info in config_dicts['ROC_TYPE_DICT'].items():
             for roc_type, labels in labels_info.items():
                 if roc_type not in info[0].keys() or 'PF_VtxPos' == roc_type:
                     continue
@@ -581,7 +587,7 @@ if __name__ == '__main__':
 
         for info in label_dict.values():
             network=info[1].split('_')[0]
-            for label_type, labels_info in ROC_TYPE_DICT.items():
+            for label_type, labels_info in config_dicts['ROC_TYPE_DICT'].items():
                 for roc_type in labels_info.keys():
                     if 'PF_VtxPos' == roc_type:
                         continue
