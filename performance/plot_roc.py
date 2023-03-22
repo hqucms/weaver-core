@@ -41,16 +41,14 @@ parser.add_argument('--complete-dict', type=str, default='complete_dict',
                     help='dictionary with names')
 parser.add_argument('--name', type=str, default='',
                     help='name of the configuration')
-parser.add_argument('--type', type=str, default='',
+parser.add_argument('--type', type=str, default='lite,full',
                     help='type of network')
 parser.add_argument('--roc-config', type=str, default='roc_config',
                     help='name of the file with the dictionary')
 args = parser.parse_args()
 
 # type of the network
-if not args.type:
-    NET_TYPES = ['lite', 'full']
-elif ',' in args.type:
+if ',' in args.type:
     NET_TYPES = [k for k in args.type.split(',')]
 else:
     NET_TYPES = [args.type]
@@ -67,52 +65,6 @@ for _net_type in NET_TYPES:
 with open(f'{args.roc_config}.yaml', 'r') as stream:
     config_dicts=yaml.safe_load(stream)
 
-print(config_dicts)
-# # dictionary with the labels for the ROC curves
-# # first element in the list is the label for the signal
-# # second element in the list is the label for the background
-# # third element in the list is the label
-# config_dicts['ROC_TYPE_DICT']={
-#     'aux_labels': {
-#         #0=b, 1=c, 2=bc, 3=other
-#         'PF_SIP_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-#         'PF_b+bcVSc+other' : [[0,2], [1,3], 'pf_clas'],
-#         'PF_VtxPos' : [None, None, 'pf_regr'],
-#         'PAIR_SameVtx' : [[0], None, 'pair_bin'],
-#     },
-#     'primary_labels':{
-#         #0=b, 1=bb, 4=uds, 5=g
-#         'JET_bVSuds':[[0,1], [4], 'primary'],
-#         'JET_bVSg':[[0,1], [5], 'primary'],
-#         'JET_bVSudsg':[[0,1], [4,5], 'primary']
-#     }
-# }
-
-# config_dicts['PF_EXTRA_FTS'] = {
-#     'PF_SIP_b+bcVSc+other' : ['pf_mask_charged', 'pf_var_IPsig'],
-#     'PF_b+bcVSc+other' : ['pf_mask_charged'],
-#     'PF_VtxPos' : ['pf_mask_from_b'],
-#     #'PF_VtxPos' : ['y_score_pf_clas'],
-# }
-
-# # dictionary with the axes inf
-# config_dicts['AXIS_INF'] ={
-#     'PF_SIP_b+bcVSc+other': (0.4, 5e-3),
-#     'PF_b+bcVSc+other':  (0.4, 5e-3),
-#     'PF_comparison_b+bcVSc+other':  (0.4, 5e-3),
-#     'PAIR_SameVtx':  (0.4, 1e-1),
-#     'JET_bVSuds':  (0.5, 1e-4),
-#     'JET_bVSg': (0.5, 1e-4),
-#     'JET_bVSudsg': (0.5, 1e-4),
-# }
-
-# # dictionary with the axes limits
-# config_dicts['AXIS_LIMITS'] ={
-#     0: ((30, 100),[[0,0.5],[0,3]], 'vtx_dist_pv', 3),
-#     1: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_x', 0.2),
-#     2: ((200, 200),[[-0.06,0.06],[-0.06,0.06]], 'vtx_y', 0.2),
-#     3: ((200, 200),[[-3, 3],[-3,3]], 'vtx_z', 3),
-# }
 
 def get_labels(y_true, y_score, labels_s, labels_b):
     """ Get the labels for the ROC curves
@@ -203,24 +155,11 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
         plt.show()
     plt.close()
 
-def load_dict(name):
+def load_dict(complete_dict, in_dict):
     """ Load the dictionary from the yaml file
-    :param    name : string with the name of the file
-    """
-    with open(name, 'r') as stream:
-        loaded_dict=yaml.safe_load(stream)
-    info_dict = defaultdict(list)
-    for k, v in loaded_dict.items():
-        # dictionary with the roc type and the epoch
-        info_dict[k].append(manager.dict())
-        info_dict[k].append(v[0])
-        info_dict[k].append(v[1])
-    return info_dict
-
-
-def load_dict2(complete_dict, in_dict):
-    """ Load the dictionary from the yaml file
-    :param    name : string with the name of the file
+    :param    complete_dict : string with the name of the file containing the paths to the models
+    :param    in_dict : string with the name of the file containing the names of the models to load
+    :return   info_dict : dictionary with the models to load
     """
     with open(complete_dict, 'r') as stream:
         loaded_dict=yaml.safe_load(stream)
@@ -230,7 +169,7 @@ def load_dict2(complete_dict, in_dict):
     for k, v in loaded_dict.items():
         if v[0] not in in_names:
             continue
-        # dictionary with the roc type and the epoch
+        # dictionary with the path, the name of the model and the color
         info_dict[k].append(manager.dict())
         info_dict[k].append(v[0])
         info_dict[k].append(v[1])
@@ -558,13 +497,13 @@ if __name__ == '__main__':
     start=time.time()
 
     date_time = time.strftime('%Y%m%d-%H%M%S')
-    out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_{args.in_dict}_roc')
+    out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_{args.in_dict}_{args.type}_roc')
     print(f'Output directory: {out_dir}')
 
     parallel_list=[]
     for net_type in NET_TYPES:
         #label_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
-        label_dict=load_dict2(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{net_type}.yaml')
+        label_dict=load_dict(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{net_type}.yaml')
         p=mp.Process(target=_main,
                         args=(net_type, out_dir, label_dict))
         p.start()
@@ -578,7 +517,7 @@ if __name__ == '__main__':
 
     if len(NET_TYPES) > 1:
         #label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
-        label_dict=load_dict2(f'config/{args.complete_dict}.yaml',f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
+        label_dict=load_dict(f'config/{args.complete_dict}.yaml',f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
         epoch_list.append('best')

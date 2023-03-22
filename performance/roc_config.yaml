@@ -27,13 +27,13 @@ PF_EXTRA_FTS:
 
 # dictionary with the axes inf
 AXIS_INF:
-    PF_SIP_b+bcVSc+other: [0.4, 5e-3]
-    PF_b+bcVSc+other:  [0.4, 5e-3]
-    PF_comparison_b+bcVSc+other:  [0.4, 5e-3]
-    PAIR_SameVtx:  [0.4, 1e-1]
-    JET_bVSuds:  [0.5, 1e-4]
-    JET_bVSg: [0.5, 1e-4]
-    JET_bVSudsg: [0.5, 1e-4]
+    PF_SIP_b+bcVSc+other: [0.4, 0.005]
+    PF_b+bcVSc+other:  [0.4, 0.005]
+    PF_comparison_b+bcVSc+other:  [0.4, 0.005]
+    PAIR_SameVtx:  [0.4, 0.1]
+    JET_bVSuds:  [0.5, 0.0001]
+    JET_bVSg: [0.5, 0.0001]
+    JET_bVSudsg: [0.5, 0.0001]
 
 
 # dictionary with the axes limits
