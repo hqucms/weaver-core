@@ -8,21 +8,27 @@ ROC_TYPE_DICT:
         #0=b, 1=c, 2=bc, 3=other
         PF_SIP_b+bcVSc+other: [[0,2], [1,3], pf_clas]
         PF_b+bcVSc+other: [[0,2], [1,3], pf_clas]
-        PF_VtxPos: [None, None, pf_regr]
-        PAIR_SameVtx: [[0], None, pair_bin]
+        PF_VtxPos: [null, null, pf_regr]
+        PAIR_SameVtx: [[0], null, pair_bin]
     primary_labels:
         #0=b, 1=bb, 4=uds, 5=g
         JET_bVSuds: [[0,1], [4], primary]
         JET_bVSg: [[0,1], [5], primary]
         JET_bVSudsg: [[0,1], [4,5], primary]
+        JET_deep_bVSuds: [[0,1], [4], primary]
+        JET_deep_bVSg: [[0,1], [5], primary]
+        JET_deep_bVSudsg: [[0,1], [4,5], primary]
 
 
 # dictionary with the extra features for the ROC curves
 PF_EXTRA_FTS:
-    PF_SIP_b+bcVSc+other : [pf_mask_charged, pf_var_IPsig]
-    PF_b+bcVSc+other : [pf_mask_charged]
-    PF_VtxPos : [pf_mask_from_b]
+    PF_SIP_b+bcVSc+other: [pf_mask_charged, pf_var_IPsig]
+    PF_b+bcVSc+other: [pf_mask_charged]
+    PF_VtxPos: [pf_mask_from_b]
     #PF_VtxPos : [y_score_pf_clas]
+    JET_deep_bVSuds: [null, y_deep_score_primary]
+    JET_deep_bVSg: [null, y_deep_score_primary]
+    JET_deep_bVSudsg: [null, y_deep_score_primary]
 
 
 # dictionary with the axes inf

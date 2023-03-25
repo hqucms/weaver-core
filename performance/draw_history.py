@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
     for net_type in NET_TYPES:
         infile_dict=load_dict(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{net_type}.yaml')
-        out_dir = os.path.join(main_out_dir, f'{args.name}_history_{net_type}')
+        out_dir = os.path.join(main_out_dir, f'{args.name}_{args.in_dict}_{net_type}_history')
         os.makedirs(out_dir, exist_ok=True)
 
         # load history for each input
@@ -165,7 +165,7 @@ if __name__ == "__main__":
 
     if len(NET_TYPES) > 1:
         infile_dict=load_dict(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
-        out_dir = os.path.join(main_out_dir, f'{args.name}_history_net_type_comparison')
+        out_dir = os.path.join(main_out_dir, f'{args.name}_{args.in_dict}_{args.type}_history')
         os.makedirs(out_dir, exist_ok=True)
 
         # plot the history
@@ -180,7 +180,7 @@ if __name__ == "__main__":
                             save=draw_plot(value, num_tot, name, info, save)
             # call function plot only if figure is not empty
             if save:
-                plot(out_dir, f'{history}_{args.in_dict}_net_type_comparison', fig_handle)
+                plot(out_dir, f'{history}_{args.in_dict}_{args.type}', fig_handle)
             else:
                 plt.close()
 

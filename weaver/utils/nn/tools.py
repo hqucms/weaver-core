@@ -204,10 +204,10 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                         if out is not None and i != 0:
                             num_pf = out.size(1)
                             break
-                    aux_output_clas = model_output[1]
-                    aux_output_regr = model_output[2]
-                    aux_output_pair = model_output[3]
-                    model_output = model_output[0]
+                    aux_output_clas = model_output[1] # (batch_size, num_pf, num_aux_pf_clas)
+                    aux_output_regr = model_output[2] # (batch_size, num_pf, num_aux_pf_regr)
+                    aux_output_pair = model_output[3] # (batch_size, num_pf, num_pf, num_aux_pair_label)
+                    model_output = model_output[0] # (batch_size, num_classes)
                     #print('\n aux_output pair\n', aux_output_pair.size(), aux_output_pair)
                     #print('\n model_output\n', model_output.size(), model_output)
                     #print('\n aux_output_regr\n', aux_output_regr)
@@ -429,11 +429,13 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
     aux_scores = {}
     labels_counts = []
     observers = defaultdict(list)
+    deepFlavour = []
     pf_exra_fts={}
     start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
+                #print('\n z\n', Z)
                 inputs = [X[k].to(dev) for k in data_config.input_names]
                 label = y[data_config.label_names[0]].long()
                 #print('\n\data_config.aux_label_names\n', data_config.aux_label_names)
@@ -455,7 +457,7 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                     aux_label_pair_bin= None
 
                 for k in data_config.aux_label_names:
-                    if any(aux in k for aux in ('clas', 'regr', 'bin', 'pair')): continue
+                    if any(aux in k for aux in ('clas', 'regr', 'bin', 'pair')) or 'pf' not in k: continue
                     pf_exra_fts[k] = torch.stack([y[k].float()]).permute(1,2,0).to(dev)
 
                 #print(data_config.aux_label_names)
@@ -492,18 +494,31 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                         if out is not None and i != 0:
                             num_pf = out.size(1)
                             break
-                    aux_output_clas = model_output[1]
-                    aux_output_regr = model_output[2]
-                    aux_output_pair = model_output[3]
-                    model_output = model_output[0]
-                    # print('\n aux_output pair\n', aux_output_pair.size())
-                    # print('\n model_output\n', model_output.size())
-                    # print('\n aux_output_clas\n', aux_output_clas.size())
-                    # print('\n aux_output_regr\n', aux_output_regr.size())
+                    aux_output_clas = model_output[1] # (batch_size, num_pf, num_aux_pf_clas)
+                    aux_output_regr = model_output[2] # (batch_size, num_pf, num_aux_pf_regr)
+                    aux_output_pair = model_output[3] # (batch_size, num_pf, num_pf, num_aux_pair_label)
+                    model_output = model_output[0] # (batch_size, num_classes)
+                    # #print('\n aux_output pair\n', aux_output_pair.size())
+                    #print('\n model_output\n', model_output.size())
+                    # #print('\n aux_output_clas\n', aux_output_clas.size())
+                    # #print('\n aux_output_regr\n', aux_output_regr.size())
 
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
+                #print('\n\nlogits\n', logits.size(),'\n', logits)
+                #print(scores)
                 loss = 0. if loss_func is None else loss_func(logits, label)
+
+                df_list = []
+                for k, v in Z.items():
+                    #print('\n\nk, v\n', k, v.size(), v)
+                    if 'pfDeepFlavourJetTags' in k:
+                        df_list.append(v.cpu().numpy())
+                #print('\n\n df_list\n', df_list)
+                df_array = np.stack(df_list).T
+                #print('\n\n df_array\n', df_array)
+                deepFlavour.append(df_array)
+                #print('\n\n deepFlavour\n', deepFlavour)
 
                 #HERE
                 aux_mask_pf = None
@@ -586,6 +601,7 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 if not for_training:
                     for k, v in Z.items():
                         observers[k].append(v.cpu().numpy())
+
 
                 _, preds = logits.max(1)
 
@@ -692,8 +708,10 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode=tb_mode)
 
     scores = np.concatenate(scores)
+    deepFlavour = np.concatenate(deepFlavour)
     #print('labels', labels)
     #print('scores', scores)
+    #print('deepFlavour', deepFlavour)
 
     labels = {k: _concat(v) for k, v in labels.items()}
     #print('labels2', labels)
@@ -720,7 +738,8 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
     #print('aux_labels2', aux_labels)
     #print('aux_scores_pf_clas\n', aux_scores_pf_clas)
 
-    metric_results = evaluate_metrics(labels[data_config.label_names[0]], scores,
+    metric_results = evaluate_metrics(labels[data_config.label_names[0]],
+                        scores, deepFlavour,
                         aux_labels, aux_scores, eval_metrics,
                         eval_aux_metrics, epoch, roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(
