@@ -182,6 +182,12 @@ monitor_variables:
   # - jet_nBHadrons
   # - jet_nCHadrons
   # - jet_genjet_pt
+  - pfDeepFlavourJetTags_probb
+  - pfDeepFlavourJetTags_probbb
+  - pfDeepFlavourJetTags_problepb
+  - pfDeepFlavourJetTags_probc
+  - pfDeepFlavourJetTags_probuds
+  - pfDeepFlavourJetTags_probg
 
 
 #weights:

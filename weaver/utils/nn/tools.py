@@ -515,9 +515,12 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                     if 'pfDeepFlavourJetTags' in k:
                         df_list.append(v.cpu().numpy())
                 #print('\n\n df_list\n', df_list)
-                df_array = np.stack(df_list).T
+                
+                # check if df_list is not empty
+                if df_list:
+                    df_array = np.stack(df_list).T
+                    deepFlavour.append(df_array)
                 #print('\n\n df_array\n', df_array)
-                deepFlavour.append(df_array)
                 #print('\n\n deepFlavour\n', deepFlavour)
 
                 #HERE

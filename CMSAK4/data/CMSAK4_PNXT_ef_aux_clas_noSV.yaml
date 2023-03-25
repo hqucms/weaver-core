@@ -204,7 +204,13 @@ monitor_variables:
   # - jet_nBHadrons
   # - jet_nCHadrons
   # - jet_genjet_pt
-
+   - pfDeepFlavourJetTags_probb
+   - pfDeepFlavourJetTags_probbb
+   - pfDeepFlavourJetTags_problepb
+   - pfDeepFlavourJetTags_probc
+   - pfDeepFlavourJetTags_probuds
+   - pfDeepFlavourJetTags_probg
+   
 #weights:
   ### [option 1] use precomputed weights stored in the input files
   # use_precomputed_weights: true
