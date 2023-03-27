@@ -3,6 +3,9 @@
 # second element in the list is the label for the background
 # third element in the list is the label
 
+# the name is composed by the level of the feature
+# (JET, PF, PAIR), an optional features
+# and the plot type
 ROC_TYPE_DICT:
     aux_labels:
         #0=b, 1=c, 2=bc, 3=other
@@ -15,9 +18,9 @@ ROC_TYPE_DICT:
         JET_bVSuds: [[0,1], [4], primary]
         JET_bVSg: [[0,1], [5], primary]
         JET_bVSudsg: [[0,1], [4,5], primary]
-        JET_deep_bVSuds: [[0,1], [4], primary]
-        JET_deep_bVSg: [[0,1], [5], primary]
-        JET_deep_bVSudsg: [[0,1], [4,5], primary]
+        JET_DeepFlavour_bVSuds: [[0,1], [4], primary]
+        JET_DeepFlavour_bVSg: [[0,1], [5], primary]
+        JET_DeepFlavour_bVSudsg: [[0,1], [4,5], primary]
 
 
 # dictionary with the extra features for the ROC curves
@@ -26,21 +29,18 @@ PF_EXTRA_FTS:
     PF_b+bcVSc+other: [pf_mask_charged]
     PF_VtxPos: [pf_mask_from_b]
     #PF_VtxPos : [y_score_pf_clas]
-    JET_deep_bVSuds: [null, y_deep_score_primary]
-    JET_deep_bVSg: [null, y_deep_score_primary]
-    JET_deep_bVSudsg: [null, y_deep_score_primary]
+    JET_DeepFlavour_bVSuds: [null, y_deep_score_primary]
+    JET_DeepFlavour_bVSg: [null, y_deep_score_primary]
+    JET_DeepFlavour_bVSudsg: [null, y_deep_score_primary]
 
 
 # dictionary with the axes inf
 AXIS_INF:
-    PF_SIP_b+bcVSc+other: [0.4, 0.005]
-    PF_b+bcVSc+other:  [0.4, 0.005]
-    PF_comparison_b+bcVSc+other:  [0.4, 0.005]
-    PAIR_SameVtx:  [0.4, 0.1]
-    JET_bVSuds:  [0.5, 0.0001]
-    JET_bVSg: [0.5, 0.0001]
-    JET_bVSudsg: [0.5, 0.0001]
-
+    b+bcVSc+other: [0.4, 0.005]
+    SameVtx:  [0.4, 0.1]
+    bVSuds:  [0.5, 0.0001]
+    bVSg: [0.5, 0.0001]
+    bVSudsg: [0.5, 0.0001]
 
 # dictionary with the axes limits
 AXIS_LIMITS:
@@ -48,3 +48,12 @@ AXIS_LIMITS:
     1: [[200, 200],[[-0.06,0.06],[-0.06,0.06]], vtx_x, 0.2]
     2: [[200, 200],[[-0.06,0.06],[-0.06,0.06]], vtx_y, 0.2]
     3: [[200, 200],[[-3, 3],[-3,3]], vtx_z, 3]
+
+# dictionary with the special requests
+SPECIAL_DICT:
+    Scatter_True-Reco: VtxPos
+    LogScale: JET
+    Primary: primary
+    SpecialMask: y_score_pf_clas
+    LabelsEpoch: labels_epoch
+    LabelsBest: labels_best

@@ -85,10 +85,11 @@ def load_dict(complete_dict, in_dict):
     for k, v in loaded_dict.items():
         if v[0] not in in_names:
             continue
-        #dictionary with the path, the name of the model and the color
+        #dictionary with the path, the name of the model, the color and the linestyle
         info_dict[k].append(defaultdict(list))
         info_dict[k].append(v[0])
         info_dict[k].append(v[1])
+        info_dict[k].append(v[2])
     return info_dict
 
 def draw_plot(value, num_tot, name, info, save):
@@ -100,7 +101,7 @@ def draw_plot(value, num_tot, name, info, save):
     else:
         x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
         y=value[:args.last_epoch+1]
-    plt.plot(x, y, color=info[2], label=f'{name} {info[1]}')
+    plt.plot(x, y, color=info[2], linestyle=info[3], label=f'{name} {info[1]}')
     save=True
 
     return save

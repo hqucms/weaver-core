@@ -1065,11 +1065,6 @@ def _main(args):
 
             if args.val and not args.train:
                 performance_files = os.listdir(performance_dir)
-                # for file in performance_files:
-                #     if file.endswith(f"val.log"):
-                #         epoch = int(file.split('val.log')[0][-2:])
-                #         if epoch > max(val_epochs):
-                #             os.remove(os.path.join(performance_dir, file))
 
                 for epoch in val_epochs:
                     model_path = f'{args.model_prefix}_epoch-{epoch}_state.pt'
@@ -1158,31 +1153,24 @@ def _main(args):
                     test_epochs = val_epochs
                 elif ',' in args.test_epochs:
                     test_epochs = [int(i) for i in args.test_epochs.split(',')]
-                    if best_epoch not in test_epochs: test_epochs.append(best_epoch)
                 elif ':' in args.test_epochs:
                     test_epochs_ext= [int(i) for i in args.test_epochs.split(':')]
                     test_epochs = [i for i in range(test_epochs_ext[0], test_epochs_ext[1]+1)]
-                    if best_epoch not in test_epochs: test_epochs.append(best_epoch)
                 elif args.test_epochs == '-1':
-                    val_epoch_len = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
+                    test_epoch_len = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
                                         if '_state.pt' in filename and 'best' not in filename])
-                    test_epochs = [int(i) for i in range(val_epoch_len)]
+                    test_epochs = [int(i) for i in range(test_epoch_len)]
                 elif args.test_epochs == 'best+last':
                     last_epoch = len([filename for filename in os.listdir(os.path.dirname(args.model_prefix))\
                                         if '_state.pt' in filename and 'best' not in filename])-1
-                    test_epochs = [best_epoch, last_epoch] if best_epoch != last_epoch else [best_epoch]
+                    test_epochs = [last_epoch]
                 elif args.test_epochs == 'best':
                     test_epochs = [best_epoch]
                 else:
                     test_epochs = [int(args.test_epochs)]
+                if best_epoch not in test_epochs: test_epochs.append(best_epoch)
 
                 performance_files = os.listdir(performance_dir)
-                # for file in performance_files:
-                #     for name in [".npz", "test.log"]:
-                #         if file.endswith(name) and "best" not in file:
-                #             epoch = int(file.split(name)[0][-2:])
-                #             if epoch > max(test_epochs):
-                #                 os.remove(os.path.join(performance_dir, file))
 
                 # Test on epoch
                 for epoch in test_epochs:
@@ -1267,6 +1255,8 @@ def main():
             args.gpus = '0'
         args.extra_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
         args.extra_test_selection = "(np.abs(jet_eta)<1.4) & (jet_pt>30) & (jet_pt<200)"
+        print('Using extra selection: %s' % args.extra_selection)
+        print('Using extra test selection: %s' % args.extra_test_selection)
 
     if args.predict_gpus is None:
         args.predict_gpus = args.gpus

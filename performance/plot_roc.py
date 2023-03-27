@@ -69,6 +69,25 @@ ROC_TYPE_DICT=config_dicts['ROC_TYPE_DICT']
 PF_EXTRA_FTS=config_dicts['PF_EXTRA_FTS']
 AXIS_INF=config_dicts['AXIS_INF']
 AXIS_LIMITS=config_dicts['AXIS_LIMITS']
+SPECIAL_DICT=config_dicts['SPECIAL_DICT']
+
+def find_matching_suffix_pairs(d):
+    matching_pairs = []
+    keys = list(d.keys())
+    for i in range(len(keys)):
+        for j in range(i+1, len(keys)):
+            suffix_i = keys[i].replace('_mask', '').split('_')[-1]
+            suffix_j = keys[j].replace('_mask', '').split('_')[-1]
+            if suffix_i == suffix_j:
+                matching_pairs.append((keys[i], keys[j], suffix_i))
+    return matching_pairs
+
+def get_middle_substring(s):
+    substrings = s.split('_')
+    if len(substrings) == 3:
+        return substrings[1]
+    else:
+        return ""
 
 
 def get_labels(y_true, y_score, labels_s, labels_b):
@@ -128,7 +147,7 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
     :param    axis_inf : dictionary with the axes limits
     """
 
-    if 'PF_VtxPos' in name:
+    if SPECIAL_DICT['Scatter_True-Reco'] in name:
         if 'True-Reco' in name:
             plt.xlabel('True-Reco [cm]', fontsize=20, loc='right')
             plt.ylabel('Density', fontsize=20, loc='top')
@@ -137,11 +156,11 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
             plt.ylabel('Reco [cm]', fontsize=20, loc='top')
             plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco')
     else:
-        plt.xlabel('Efficency for b-jet (TP)', fontsize=20, loc='right')
-        plt.ylabel('Mistagging prob (FP)', fontsize=20, loc='top')
+        plt.xlabel('Signal efficency (TP)', fontsize=20, loc='right')
+        plt.ylabel('Background efficency (FP)', fontsize=20, loc='top')
         plt.xlim([axis_inf[0], 1.0005])
         plt.ylim([axis_inf[1], 1.005])
-        if 'JET' in name:
+        if SPECIAL_DICT['LogScale'] in name:
             plt.yscale('log')
 
 
@@ -174,10 +193,11 @@ def load_dict(complete_dict, in_dict):
     for k, v in loaded_dict.items():
         if v[0] not in in_names:
             continue
-        # dictionary with the path, the name of the model and the color
+        # dictionary with the path, the name of the model, the color and the line style
         info_dict[k].append(manager.dict())
         info_dict[k].append(v[0])
         info_dict[k].append(v[1])
+        info_dict[k].append(v[2])
     return info_dict
 
 def create_lists(input_name):
@@ -190,13 +210,13 @@ def create_lists(input_name):
     # files to load
     dir_name=f'{args.in_path}{input_name}'
     files = [filename for filename in os.listdir(dir_name)
-                if ('labels_epoch' in filename)]
+                if (SPECIAL_DICT['LabelsEpoch'] in filename)]
     best_files = [filename for filename in os.listdir(dir_name)
-                if ('labels_best' in filename)]
+                if (SPECIAL_DICT['LabelsBest'] in filename)]
 
     # epochs to load
     if args.epochs == '-1':
-            epoch_list=[len([k for k in files if 'primary' in k])-1]
+            epoch_list=[len([k for k in files if SPECIAL_DICT['Primary'] in k])-1]
     elif args.epochs:
         epoch_list=[int(i) for i in args.epochs.split(',')]
     else:
@@ -233,7 +253,7 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
         EPOCHS_DICT[net_type][epoch] = manager.dict()
     for label_type, labels_info in ROC_TYPE_DICT.items():
         #print(label_type)
-        if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
+        if (args.only_primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
         #print(infile)
         # load labels for each epoch and label type
@@ -271,7 +291,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
     :param    net_type : string with the type of the network
     """
     for label_type, labels_info in ROC_TYPE_DICT.items():
-        if (args.only_primary and 'primary' not in label_type) or label_type not in infile:
+        if (args.only_primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
         print(infile)
         # load labels for each epoch and label type
@@ -286,7 +306,6 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
                 # load the extra features for the labels (if present)
                 try:
                     y_score = file[PF_EXTRA_FTS[roc_type][1]]
-                    #print(f'EXTRA FEATURE {PF_EXTRA_FTS[roc_type][1]} found in {infile}! \n')
                 except (KeyError, IndexError):
                     try:
                         y_score = file[f'y_score_{labels[2]}']
@@ -299,22 +318,21 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
 
                 # save roc curve for each epoch
                 if history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
-                EPOCHS_DICT[net_type][epoch][roc_type][info[1]]=(fpr, tpr, roc_auc, info[2])
+                EPOCHS_DICT[net_type][epoch][roc_type][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
 
                 # load the mask for the labels (if present)
                 try:
                     y_mask = file[PF_EXTRA_FTS[roc_type][0]].astype(bool)
-                    if PF_EXTRA_FTS[roc_type][0] == 'y_score_pf_clas':
+                    if PF_EXTRA_FTS[roc_type][0] == SPECIAL_DICT['SpecialMask']:
                         y_mask = np.expand_dims(np.argmax(y_mask, axis=1), axis=1) == 0
                     y_true = y_true[y_mask[:, 0]]
                     y_score = y_score[y_mask[:, 0]]
-                    #print(f'MASK {PF_EXTRA_FTS[roc_type][0]} found in {infile}! \n')
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(y_true,y_score,
                                                 labels[0], labels[1])
                     # save roc curve for each epoch
                     if history: info[0][f'{roc_type}_mask'][epoch]=(fpr, tpr, roc_auc)
-                    EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'][info[1]]=(fpr, tpr, roc_auc, info[2])
+                    EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
                 except KeyError:
                     pass
 
@@ -330,10 +348,10 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
     # loop over epochs
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
-        plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch}, auc=%0.3f'% roc_auc)
+        plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch} (AUC=%0.4f)'% roc_auc)
     plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{args.in_dict}_{net_type}_history', fig_handle)
 
-def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 = None, name1 = '', name2 = '', network_name=''):
+def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name=''):
     """ Plot the roc curves for a epoch and a roc type for each network
     :param    out_dir : string with the name of the output directory
     :param    epoch : epoch to plot
@@ -346,36 +364,38 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
     :param    network_name : string with the name of the network
     """
 
-    if 'PF_VtxPos' not in roc_type:
+    if SPECIAL_DICT['Scatter_True-Reco'] not in roc_type:
         fig_handle = plt.figure(figsize=(20, 15))
         # loop over networks
-        if isinstance(networks, mp.managers.DictProxy):
-            for network, rates in networks.items():
-                plt.plot(rates[1],rates[0],rates[3],label=f'{network} {epoch}, auc=%0.4f'% rates[2])
-        elif isinstance(networks, tuple):
-            rates=networks
-            plt.plot(rates[1],rates[0],rates[3],label=f'{network_name}{name1} {epoch}, auc=%0.4f'% rates[2])
+        if isinstance(networks_1, mp.managers.DictProxy):
+            for network, rates in networks_1.items():
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network}_{net_type} {name1} {epoch} (AUC=%0.4f)'% rates[2])
+        elif isinstance(networks_1, tuple):
+            rates=networks_1
+            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} {epoch} (AUC=%0.4f)'% rates[2])
 
         if isinstance(networks_2, mp.managers.DictProxy):
             for network, rates in networks_2.items():
-                plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'{network}{name2} {epoch}, auc=%0.4f'% rates[2])
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], label=f'{network}_{net_type} {name2} {epoch} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_2, tuple):
             rates=networks_2
-            plt.plot(rates[1],rates[0],color=f'{rates[3]}', linestyle='dotted', label=f'{network_name}{name2} {epoch}, auc=%0.4f'% rates[2])
+            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], label=f'{network_name} {name2} {epoch} (AUC=%0.4f)'% rates[2])
 
-        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '')])
+        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').split('_')[-1]])
 
     else:
         out_dir_scatter = os.path.join(out_dir, 'Scatter')
         os.makedirs(out_dir_scatter, exist_ok=True)
 
-        out_dir_true_reco = os.path.join(out_dir, 'True_Reco')
+        out_dir_true_reco = os.path.join(out_dir, 'True-Reco')
         os.makedirs(out_dir_true_reco, exist_ok=True)
 
         # loop over different types of features
         for i, limits in AXIS_LIMITS.items():
             # loop over networks
-            for network, rates in networks.items():
+            for network, rates in networks_1.items():
+                if i >= len(rates[0][0]):
+                    continue
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
 
@@ -397,7 +417,9 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
                             fig_handle)
 
             # loop over networks
-            for network, rates in networks.items():
+            for network, rates in networks_1.items():
+                if i >= len(rates[0][0]):
+                    continue
                 x_t=rates[1][:, i]
                 y_r=rates[0][:, i]
 
@@ -413,7 +435,7 @@ def plotting_function(out_dir, epoch, roc_type, networks, net_type, networks_2 =
                     plt_fts(out_dir_true_reco,
                             f'True-Reco_{roc_type}{mask_name}_{limits[2]}_{network}_{args.in_dict}_{net_type}_{epoch}',
                             fig_handle)
-        networks.clear()
+        networks_1.clear()
 
 
 def _main(net_type, out_dir, label_dict):
@@ -461,7 +483,7 @@ def _main(net_type, out_dir, label_dict):
         # compute roc curve for each epoch
         for label_type, labels_info in ROC_TYPE_DICT.items():
             for roc_type, labels in labels_info.items():
-                if roc_type not in info[0].keys() or 'PF_VtxPos' == roc_type:
+                if roc_type not in info[0].keys() or SPECIAL_DICT['Scatter_True-Reco'] == roc_type:
                     continue
                 p=mp.Process(target=plotting_history_function,
                                     args=(epoch_list, info,  roc_type, out_dir, net_type))
@@ -476,22 +498,24 @@ def _main(net_type, out_dir, label_dict):
     parallel_list = []
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in EPOCHS_DICT[net_type].items():
+        matching_pairs = find_matching_suffix_pairs(epoch_dict)
         # loop over roc types
         for roc_type, networks_dict in epoch_dict.items():
             p=mp.Process(target=plotting_function,
-                                args=(out_dir, epoch, roc_type, networks_dict, net_type))
+                            args=(out_dir, epoch, roc_type, networks_dict,
+                                  get_middle_substring(roc_type), net_type))
             p.start()
             parallel_list.append(p)
 
-        for mask in ['', '_mask']:
-            if f'PF_SIP_b+bcVSc+other{mask}' in epoch_dict.keys() and f'PF_b+bcVSc+other{mask}' in epoch_dict.keys():
+        for pair in matching_pairs:
+            prefix = pair[0].split('_')[0]
+            for mask in ['', '_mask']:
                 p=mp.Process(target=plotting_function,
-                                    args=(out_dir, epoch, f'PF_comparison_b+bcVSc+other{mask}',
-                                            epoch_dict[f'PF_b+bcVSc+other{mask}'], net_type,
-                                            epoch_dict[f'PF_SIP_b+bcVSc+other{mask}'], '',  '_SIP'))
+                                    args=(out_dir, epoch, f'{prefix}_comparison_{pair[2]}{mask}',
+                                            epoch_dict[pair[0]], get_middle_substring(pair[0]),
+                                            net_type, epoch_dict[pair[1]], f'{get_middle_substring(pair[1])}'))
                 p.start()
                 parallel_list.append(p)
-
 
     # Join parallel
     for parallel_elem in parallel_list:
@@ -533,7 +557,7 @@ if __name__ == '__main__':
             network=info[1].split('_')[0]
             for label_type, labels_info in ROC_TYPE_DICT.items():
                 for roc_type in labels_info.keys():
-                    if 'PF_VtxPos' == roc_type:
+                    if SPECIAL_DICT['Scatter_True-Reco'] == roc_type:
                         continue
                     for epoch in epoch_list:
                         for mask in ['', '_mask']:
@@ -546,9 +570,9 @@ if __name__ == '__main__':
 
                                 p=mp.Process(target=plotting_function,
                                                     args=(f'{main_out_dir}/{args.in_dict}_{args.type}', epoch, f'{roc_type}{mask}',
-                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], args.type,
-                                                    EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
-                                                    NET_TYPES[0], NET_TYPES[1], f'{network}_'))
+                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], NET_TYPES[0],
+                                                    args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
+                                                    NET_TYPES[1], f'{network}_'))
                                 p.start()
                                 parallel_list.append(p)
                             except KeyError:
