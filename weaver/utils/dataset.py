@@ -294,7 +294,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
     def __init__(self, file_dict, data_config_file,
                  for_training=True, load_range_and_fraction=None, extra_selection=None,
                  fetch_by_files=False, fetch_step=0.01, file_fraction=1, remake_weights=False, up_sample=True,
-                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name='', shuffle=True):
+                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name='', training=True):
         self._iters = {} if infinity_mode or in_memory else None
         _init_args = set(self.__dict__.keys())
         self._init_file_dict = file_dict
@@ -315,7 +315,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         }
 
         if for_training:
-            self._sampler_options.update(training=True, shuffle=shuffle, reweight=True)
+            self._sampler_options.update(training=True, shuffle=True, reweight=True)
         else:
             self._sampler_options.update(training=False, shuffle=False, reweight=False)
 

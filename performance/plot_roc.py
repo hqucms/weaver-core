@@ -76,8 +76,14 @@ def find_matching_suffix_pairs(d):
     keys = list(d.keys())
     for i in range(len(keys)):
         for j in range(i+1, len(keys)):
-            suffix_i = keys[i].replace('_mask', '').split('_')[-1]
-            suffix_j = keys[j].replace('_mask', '').split('_')[-1]
+            prefix_i = keys[i].replace('_mask', '')
+            prefix_j = keys[j].replace('_mask', '')
+            if ('_mask' in keys[i] and '_mask' not in keys[j]) or \
+                ('_mask' not in keys[i] and '_mask' in keys[j]):# or \
+            #    prefix_i == prefix_j:
+                continue
+            suffix_i = prefix_i.split('_')[-1]
+            suffix_j = prefix_j.split('_')[-1]
             if suffix_i == suffix_j:
                 matching_pairs.append((keys[i], keys[j], suffix_i))
     return matching_pairs
@@ -156,8 +162,8 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
             plt.ylabel('Reco [cm]', fontsize=20, loc='top')
             plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco')
     else:
-        plt.xlabel('Signal efficency (TP)', fontsize=20, loc='right')
-        plt.ylabel('Background efficency (FP)', fontsize=20, loc='top')
+        plt.xlabel('b-jet efficiency (TP)', fontsize=20, loc='right')
+        plt.ylabel('Mistagging probability (FP)', fontsize=20, loc='top')
         plt.xlim([axis_inf[0], 1.0005])
         plt.ylim([axis_inf[1], 1.005])
         if SPECIAL_DICT['LogScale'] in name:
@@ -351,7 +357,7 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
         plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch} (AUC=%0.4f)'% roc_auc)
     plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{args.in_dict}_{net_type}_history', fig_handle)
 
-def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name=''):
+def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name='', line_style=None):
     """ Plot the roc curves for a epoch and a roc type for each network
     :param    out_dir : string with the name of the output directory
     :param    epoch : epoch to plot
@@ -369,17 +375,19 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
         # loop over networks
         if isinstance(networks_1, mp.managers.DictProxy):
             for network, rates in networks_1.items():
-                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network}_{net_type} {name1} {epoch} (AUC=%0.4f)'% rates[2])
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} {name1} {epoch} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_1, tuple):
             rates=networks_1
             plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} {epoch} (AUC=%0.4f)'% rates[2])
 
         if isinstance(networks_2, mp.managers.DictProxy):
             for network, rates in networks_2.items():
-                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], label=f'{network}_{net_type} {name2} {epoch} (AUC=%0.4f)'% rates[2])
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4] if line_style is None else line_style,
+                        label=f'{network} {name2} {epoch} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_2, tuple):
             rates=networks_2
-            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], label=f'{network_name} {name2} {epoch} (AUC=%0.4f)'% rates[2])
+            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], #if line_style is None else line_style,
+                    label=f'{network_name} {name2} {epoch} {line_style} (AUC=%0.4f)'% rates[2])
 
         plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').split('_')[-1]])
 
@@ -509,13 +517,15 @@ def _main(net_type, out_dir, label_dict):
 
         for pair in matching_pairs:
             prefix = pair[0].split('_')[0]
-            for mask in ['', '_mask']:
-                p=mp.Process(target=plotting_function,
-                                    args=(out_dir, epoch, f'{prefix}_comparison_{pair[2]}{mask}',
-                                            epoch_dict[pair[0]], get_middle_substring(pair[0]),
-                                            net_type, epoch_dict[pair[1]], f'{get_middle_substring(pair[1])}'))
-                p.start()
-                parallel_list.append(p)
+
+            mask = '_mask' if 'mask' in pair[0] else ''
+            p=mp.Process(target=plotting_function,
+                                args=(out_dir, epoch, f'{prefix}_comparison_{pair[2]}{mask}',
+                                        epoch_dict[pair[0]], get_middle_substring(pair[0].replace('_mask', '')),
+                                        net_type, epoch_dict[pair[1]], get_middle_substring(pair[1].replace('_mask', ''))),
+                                kwargs={'line_style':'dotted'})
+            p.start()
+            parallel_list.append(p)
 
     # Join parallel
     for parallel_elem in parallel_list:
@@ -566,11 +576,13 @@ if __name__ == '__main__':
                                 for net_type in NET_TYPES:
                                     for key in EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].keys():
                                         EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'][key.split('_')[0]] = \
-                                            EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].pop(key)
+                                        EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].pop(key)
 
                                 p=mp.Process(target=plotting_function,
-                                                    args=(f'{main_out_dir}/{args.in_dict}_{args.type}', epoch, f'{roc_type}{mask}',
-                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network], NET_TYPES[0],
+                                                    args=(f'{main_out_dir}/{args.in_dict}_{args.type}',
+                                                    epoch, f'{roc_type}{mask}',
+                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network],
+                                                    NET_TYPES[0],
                                                     args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
                                                     NET_TYPES[1], f'{network}_'))
                                 p.start()
