@@ -357,7 +357,7 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
         plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch} (AUC=%0.4f)'% roc_auc)
     plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{args.in_dict}_{net_type}_history', fig_handle)
 
-def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name='', line_style=None):
+def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name='', line_style=None, line_color=None):
     """ Plot the roc curves for a epoch and a roc type for each network
     :param    out_dir : string with the name of the output directory
     :param    epoch : epoch to plot
@@ -382,12 +382,14 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
 
         if isinstance(networks_2, mp.managers.DictProxy):
             for network, rates in networks_2.items():
-                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4] if line_style is None else line_style,
+                plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
+                        linestyle=rates[4] if line_style is None else line_style,
                         label=f'{network} {name2} {epoch} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_2, tuple):
             rates=networks_2
-            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4], #if line_style is None else line_style,
-                    label=f'{network_name} {name2} {epoch} {line_style} (AUC=%0.4f)'% rates[2])
+            plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
+                    linestyle=rates[4] if line_style is None else line_style,
+                    label=f'{network_name} {name2} {epoch} (AUC=%0.4f)'% rates[2])
 
         plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').split('_')[-1]])
 
@@ -521,9 +523,11 @@ def _main(net_type, out_dir, label_dict):
             mask = '_mask' if 'mask' in pair[0] else ''
             p=mp.Process(target=plotting_function,
                                 args=(out_dir, epoch, f'{prefix}_comparison_{pair[2]}{mask}',
-                                        epoch_dict[pair[0]], get_middle_substring(pair[0].replace('_mask', '')),
-                                        net_type, epoch_dict[pair[1]], get_middle_substring(pair[1].replace('_mask', ''))),
-                                kwargs={'line_style':'dotted'})
+                                        epoch_dict[pair[0]],
+                                        get_middle_substring(pair[0].replace('_mask', '')),
+                                        net_type, list(epoch_dict[pair[1]].values())[0],# epoch_dict[pair[1]]['ParticleNet'],
+                                        get_middle_substring(pair[1].replace('_mask', ''))),
+                                kwargs={'line_style':'dotted', 'line_color': 'y'})
             p.start()
             parallel_list.append(p)
 
@@ -584,7 +588,7 @@ if __name__ == '__main__':
                                                     EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network],
                                                     NET_TYPES[0],
                                                     args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
-                                                    NET_TYPES[1], f'{network}_'))
+                                                    NET_TYPES[1], network))
                                 p.start()
                                 parallel_list.append(p)
                             except KeyError:
