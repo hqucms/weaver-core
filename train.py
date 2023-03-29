@@ -316,31 +316,8 @@ def train_load(args):
 
     return train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names
 
+
 def test_load(args):
-    """
-    Loads the test data.
-    :param args:
-    :return: test_loader, data_config
-    """
-    if args.data_test:
-        test_file_dict, test_files = to_filelist(args, 'test')
-    else:
-        test_file_dict, test_files = to_filelist(args, 'val')
-    test_range = (0, 1)
-
-    test_data = SimpleIterDataset(test_file_dict, args.data_config, for_training=False,
-                                extra_selection=args.extra_test_selection,
-                                load_range_and_fraction=(test_range, args.data_fraction),
-                                fetch_by_files=True,
-                                fetch_step=1,
-                                name='test', test_mode=True)
-    test_loader = DataLoader(test_data, batch_size=args.batch_size, drop_last=False, pin_memory=True,
-                            num_workers=min(args.num_workers, len(test_files)))
-    data_config = test_data.config
-    return test_loader, data_config
-
-
-def prediction_load(args):
     """
     Loads the test data.
     :param args:
@@ -876,10 +853,8 @@ def _main(args):
     # load data
     if args.train or args.val:
         train_loader, val_loader, data_config, train_input_names, train_label_names, train_aux_label_names = train_load(args)
-    elif args.predict:
-        test_loaders, data_config = prediction_load(args)
-    elif args.test:
-        test_loader, data_config = test_load(args)
+    elif args.predict or args.test:
+        test_loaders, data_config = test_load(args)
 
     if args.io_test:
         data_loader = train_loader if training_mode else list(test_loaders.values())[0]()
@@ -1160,7 +1135,7 @@ def _main(args):
                 except UnboundLocalError:
                     pass
                 if args.val:
-                    test_loader, data_config = test_load(args)
+                    test_loaders, data_config = test_load(args)
 
                 best_valid_metric, best_valid_loss, best_valid_comb_loss, \
                 best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
@@ -1205,32 +1180,33 @@ def _main(args):
                     else:
                         aux_weight = 1/(epoch+1)
 
-                    # for name, get_test_loader in test_loaders.items():
-                    #     test_loader = get_test_loader()
-                    valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
-                    valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
-                            evaluate(model, test_loader, dev, epoch, aux_weight,loss_func=loss_func,
-                                aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
-                                aux_loss_func_bin=aux_loss_func_bin,
-                                steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
-                                eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
-                                eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels'],
-                                type_eval='test', epoch_division=args.epoch_division)
+                    for name, get_test_loader in test_loaders.items():
+                        test_loader = get_test_loader()
+                        valid_metric, valid_comb_loss, valid_loss, valid_aux_metric_pf,\
+                        valid_aux_dist, valid_aux_metric_pair, valid_aux_loss = \
+                                evaluate(model, test_loader, dev, epoch, aux_weight,loss_func=loss_func,
+                                    aux_loss_func_clas=aux_loss_func_clas, aux_loss_func_regr=aux_loss_func_regr,
+                                    aux_loss_func_bin=aux_loss_func_bin,
+                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, roc_prefix=roc_prefix,
+                                    eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix', 'save_labels'],
+                                    eval_aux_metrics = ['aux_confusion_matrix_pf_clas', 'aux_confusion_matrix_pair_bin', 'aux_save_labels'],
+                                    type_eval='test', epoch_division=args.epoch_division)
 
-                    best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
-                    best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
-                    best_valid_aux_metric_pair = best_epoch_handler(args, best_epoch,
-                            best_valid_metric, valid_metric,
-                            best_valid_comb_loss, valid_comb_loss,
-                            best_valid_loss, valid_loss,
-                            best_valid_aux_metric_pf, valid_aux_metric_pf,
-                            best_valid_aux_dist, valid_aux_dist,
-                            best_valid_aux_metric_pair, valid_aux_metric_pair,
-                            best_valid_aux_loss, valid_aux_loss,
-                            local_rank, epoch, roc_prefix, eval_type='test',
-                            test = True, best=(epoch == best_epoch))
-                    copy_log(args, epoch, "test")
-                del test_loader
+                        best_epoch, best_valid_metric, best_valid_loss, best_valid_comb_loss, \
+                        best_valid_aux_metric_pf, best_valid_aux_dist, best_valid_aux_loss,\
+                        best_valid_aux_metric_pair = best_epoch_handler(args, best_epoch,
+                                best_valid_metric, valid_metric,
+                                best_valid_comb_loss, valid_comb_loss,
+                                best_valid_loss, valid_loss,
+                                best_valid_aux_metric_pf, valid_aux_metric_pf,
+                                best_valid_aux_dist, valid_aux_dist,
+                                best_valid_aux_metric_pair, valid_aux_metric_pair,
+                                best_valid_aux_loss, valid_aux_loss,
+                                local_rank, epoch, roc_prefix, eval_type='test',
+                                test = True, best=(epoch == best_epoch))
+                        copy_log(args, epoch, "test")
+                        break
+                    del test_loader
 
 
 def main():

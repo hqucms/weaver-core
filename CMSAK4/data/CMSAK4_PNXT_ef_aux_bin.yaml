@@ -10,7 +10,11 @@ selection:
 test_time_selection:
    # (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7==0)
    # (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000)
-   (np.abs(jet_eta)<4.7) & (jet_corr_pt>10) & (jet_corr_pt<1000)
+   >-
+  (np.abs(jet_eta)<4.7) & (jet_pt>15) & (jet_pt<1000) & (event_no%7!=0)
+  & ( (jet_hadronFlavour>0) | ((jet_hadronFlavour==0) & (np.abs(jet_partonFlavour)!=4) & (np.abs(jet_partonFlavour)!=5)) )
+  & ( ~((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0)) | ((jet_genjet_pt>0) & (jet_hadronFlavour==0) & (jet_partonFlavour==0) & (jet_pt<186)) )
+  & ( (jet_genjet_pt>0) | ((jet_genjet_pt<=0) & (jet_pt<61)) )
 
 new_variables:
    ### [format] name: formula
@@ -230,7 +234,7 @@ monitor_variables:
    - pfDeepFlavourJetTags_probc
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
-   
+
 #weights:
    ### [option 1] use precomputed weights stored in the input files
    # use_precomputed_weights: true
