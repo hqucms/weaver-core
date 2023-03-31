@@ -157,6 +157,14 @@ observers:
    - pfDeepFlavourJetTags_probc
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
+   - pfParticleNetAK4JetTags_probb
+   - pfParticleNetAK4JetTags_probbb
+   - pfParticleNetAK4JetTags_probc
+   - pfParticleNetAK4JetTags_probcc
+   - pfParticleNetAK4JetTags_probuds
+   - pfParticleNetAK4JetTags_probg
+   - pfParticleNetAK4JetTags_probundef
+   - pfParticleNetAK4JetTags_probpu
    - jet_qgl
    - jet_puId
 

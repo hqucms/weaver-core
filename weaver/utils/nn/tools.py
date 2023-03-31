@@ -430,6 +430,7 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
     labels_counts = []
     observers = defaultdict(list)
     deepFlavour = []
+    particleNet = []
     pf_exra_fts={}
     start_time = time.time()
     with torch.no_grad():
@@ -506,20 +507,29 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 #print('\n\nlogits\n', logits.size(),'\n', logits)
-                #print(scores)
+                print('score\n',scores)
                 loss = 0. if loss_func is None else loss_func(logits, label)
 
                 df_list = []
-                for k, v in Z.items():
-                    #print('\n\nk, v\n', k, v.size(), v)
-                    if 'pfDeepFlavourJetTags' in k:
-                        df_list.append(v.cpu().numpy())
+                pn_list = []
+                if type_eval == 'test':
+                    for k, v in Z.items():
+                        #print('\n\nk, v\n', k, v.size(), v)
+                        if 'pfDeepFlavourJetTags' in k:
+                            print(k, v)
+                            df_list.append(v.cpu().numpy())
+                        if 'pfParticleNetAK4JetTags' in k:
+                            print(k, v)
+                            pn_list.append(v.cpu().numpy())
                 #print('\n\n df_list\n', df_list)
-                
+
                 # check if df_list is not empty
                 if df_list:
                     df_array = np.stack(df_list).T
                     deepFlavour.append(df_array)
+                if pn_list:
+                    pn_array = np.stack(pn_list).T
+                    particleNet.append(pn_array)
                 #print('\n\n df_array\n', df_array)
                 #print('\n\n deepFlavour\n', deepFlavour)
 
@@ -711,10 +721,12 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 tb_helper.custom_fn(model_output=model_output, model=model, epoch=epoch, i_batch=-1, mode=tb_mode)
 
     scores = np.concatenate(scores)
-    deepFlavour = np.concatenate(deepFlavour)
+    deepFlavour = np.concatenate(deepFlavour) if deepFlavour else None
+    particleNet = np.concatenate(particleNet) if particleNet else None
     #print('labels', labels)
-    #print('scores', scores)
-    #print('deepFlavour', deepFlavour)
+    print('scores', scores)
+    print('deepFlavour', deepFlavour)
+    print('particleNet', particleNet)
 
     labels = {k: _concat(v) for k, v in labels.items()}
     #print('labels2', labels)
@@ -742,7 +754,7 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
     #print('aux_scores_pf_clas\n', aux_scores_pf_clas)
 
     metric_results = evaluate_metrics(labels[data_config.label_names[0]],
-                        scores, deepFlavour,
+                        scores, deepFlavour, particleNet,
                         aux_labels, aux_scores, eval_metrics,
                         eval_aux_metrics, epoch, roc_prefix)
     _logger.info('Evaluation metrics: \n%s', '\n'.join(

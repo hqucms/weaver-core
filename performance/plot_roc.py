@@ -1,6 +1,7 @@
 import numpy as np
 import sklearn.metrics as _m
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 import matplotlib as mpl
 import os
 import sys
@@ -88,6 +89,13 @@ def find_matching_suffix_pairs(d):
                 matching_pairs.append((keys[i], keys[j], suffix_i))
     return matching_pairs
 
+def find_matching_suffix_groups(d):
+    groups = {k.replace('_mask', '').rsplit('_', 1)[1]: [] for k in d}
+    for k in d:
+        groups[k.replace('_mask', '').rsplit('_', 1)[1]].append(k)
+    sorted_groups = {suffix: sorted(keys, key=lambda k: get_middle_substring(k.replace('_mask', '')) != '') for suffix, keys in groups.items()}
+    return {suffix: keys for suffix, keys in sorted_groups.items() if len(keys) > 1}
+
 def get_middle_substring(s):
     substrings = s.split('_')
     if len(substrings) == 3:
@@ -166,16 +174,21 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
         plt.ylabel('Mistagging probability (FP)', fontsize=20, loc='top')
         plt.xlim([axis_inf[0], 1.0005])
         plt.ylim([axis_inf[1], 1.005])
+        minorLocator = MultipleLocator(0.05)
+        ax = plt.gca()
+        ax.xaxis.set_minor_locator(minorLocator)
         if SPECIAL_DICT['LogScale'] in name:
             plt.yscale('log')
+        else:
+            ax.yaxis.set_minor_locator(minorLocator)
 
 
-    plt.grid()
+    plt.grid(which='both')
     hep.style.use('CMS')
     hep.cms.label('Preliminary')
     hep.cms.label(year='UL18')
     #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
-    plt.legend(labelcolor='linecolor', loc='upper left')
+    plt.legend( loc='upper left') #labelcolor='linecolor',
 
     plt.savefig(f'{out_dir}/{name}.png', dpi = 200, bbox_inches='tight')
     if args.save:
@@ -375,7 +388,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
         # loop over networks
         if isinstance(networks_1, mp.managers.DictProxy):
             for network, rates in networks_1.items():
-                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} {name1} {epoch} (AUC=%0.4f)'% rates[2])
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} {epoch} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_1, tuple):
             rates=networks_1
             plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} {epoch} (AUC=%0.4f)'% rates[2])
@@ -384,12 +397,12 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
             for network, rates in networks_2.items():
                 plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                         linestyle=rates[4] if line_style is None else line_style,
-                        label=f'{network} {name2} {epoch} (AUC=%0.4f)'% rates[2])
+                        label=f'{network}(AUC=%0.4f)'% rates[2])
         elif isinstance(networks_2, tuple):
             rates=networks_2
             plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                     linestyle=rates[4] if line_style is None else line_style,
-                    label=f'{network_name} {name2} {epoch} (AUC=%0.4f)'% rates[2])
+                    label=f'{network_name} {name2} (AUC=%0.4f)'% rates[2])
 
         plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').split('_')[-1]])
 
@@ -508,26 +521,29 @@ def _main(net_type, out_dir, label_dict):
     parallel_list = []
     # plot roc curves for each epoch comparing different networks
     for epoch, epoch_dict in EPOCHS_DICT[net_type].items():
-        matching_pairs = find_matching_suffix_pairs(epoch_dict)
         # loop over roc types
         for roc_type, networks_dict in epoch_dict.items():
             p=mp.Process(target=plotting_function,
                             args=(out_dir, epoch, roc_type, networks_dict,
-                                  get_middle_substring(roc_type), net_type))
+                                  get_middle_substring(roc_type.replace('_mask', '')), net_type))
             p.start()
             parallel_list.append(p)
 
-        for pair in matching_pairs:
-            prefix = pair[0].split('_')[0]
+        matching_groups = find_matching_suffix_groups(epoch_dict)
+        for suffix, group in matching_groups.items():
+            prefix = group[0].split('_')[0]
 
-            mask = '_mask' if 'mask' in pair[0] else ''
+            mask = '_mask' if 'mask' in group[0] else ''
+            extra_dict = {}
+            extra_style = [('dotted', 'y'), ('dashed', 'y'), ('dashdot', 'y'), ('solid', 'y')]
+            for i in range(1, len(group)):
+                extra_dict[get_middle_substring(group[i].replace('_mask', ''))] = \
+                list(epoch_dict[group[i]].values())[0][:3] + (extra_style[i-1][0],)+ (extra_style[i-1][1],)
             p=mp.Process(target=plotting_function,
-                                args=(out_dir, epoch, f'{prefix}_comparison_{pair[2]}{mask}',
-                                        epoch_dict[pair[0]],
-                                        get_middle_substring(pair[0].replace('_mask', '')),
-                                        net_type, list(epoch_dict[pair[1]].values())[0],# epoch_dict[pair[1]]['ParticleNet'],
-                                        get_middle_substring(pair[1].replace('_mask', ''))),
-                                kwargs={'line_style':'dotted', 'line_color': 'y'})
+                                args=(out_dir, epoch, f'{prefix}_comparison_{suffix}{mask}',
+                                        epoch_dict[group[0]],
+                                        get_middle_substring(group[0].replace('_mask', '')),
+                                        net_type, extra_dict))
             p.start()
             parallel_list.append(p)
 

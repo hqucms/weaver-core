@@ -61,7 +61,7 @@ def plot(out_dir, name, fig_handle):
     hep.cms.label(year='UL18')
     #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
 
-    plt.legend(labelcolor='linecolor')
+    plt.legend() #labelcolor='linecolor')
     plt.grid()
     plt.savefig(f'{out_dir}/history_{name}.png', bbox_inches='tight')
     if args.save:

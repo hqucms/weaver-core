@@ -618,7 +618,7 @@ class MultiScaleEdgeConv(nn.Module):
 
 
 
-class ParticleEdgeNeXt(nn.Module):
+class ParticleEdge(nn.Module):
 
     def __init__(self,
                  feature_input_dim=None,
@@ -657,7 +657,7 @@ class ParticleEdgeNeXt(nn.Module):
                  for_inference=False,
                  for_segmentation=False,
                  **kwargs):
-        super(ParticleEdgeNeXt, self).__init__(**kwargs)
+        super(ParticleEdge, self).__init__(**kwargs)
 
         # input augmentation
         self.input_dropout = nn.Dropout(input_dropout) if input_dropout else None
@@ -971,7 +971,7 @@ class ParticleEdgeNeXt(nn.Module):
         return (output, features_label_clas, features_label_regr, features_label_pair)
 
 
-class ParticleEdgeNeXtTagger(nn.Module):
+class ParticleEdgeTagger(nn.Module):
 
     def __init__(self,
                  pf_features_dims=None,
@@ -1006,7 +1006,7 @@ class ParticleEdgeNeXtTagger(nn.Module):
                  trim=True,
                  for_inference=False,
                  **kwargs):
-        super(ParticleEdgeNeXtTagger, self).__init__(**kwargs)
+        super(ParticleEdgeTagger, self).__init__(**kwargs)
         self.pf_input_dropout = nn.Dropout(pf_input_dropout) if pf_input_dropout else None
         self.sv_input_dropout = nn.Dropout(sv_input_dropout) if sv_input_dropout else None
         self.pf_encode = nn.Sequential(
@@ -1017,7 +1017,7 @@ class ParticleEdgeNeXtTagger(nn.Module):
             nn.BatchNorm1d(sv_features_dims),
             nn.Conv1d(sv_features_dims, node_dim, 1, bias=False)
         )
-        self.pn = ParticleEdgeNeXt(feature_input_dim=node_dim,
+        self.pn = ParticleEdge(feature_input_dim=node_dim,
                                edge_input_dim=edge_input_dim,
                                num_classes=num_classes,
                                num_aux_classes_clas=num_aux_classes_clas,

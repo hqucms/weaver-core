@@ -1,6 +1,6 @@
 import torch
 from weaver.utils.logger import _logger
-from weaver.nn.model.ParticleEdgeNeXt import ParticleEdgeNeXtTagger
+from weaver.nn.model.ParticleEdge import ParticleEdgeTagger
 
 
 def get_model(data_config, **kwargs):
@@ -34,7 +34,7 @@ def get_model(data_config, **kwargs):
     cfg.update(**kwargs)
     _logger.info('Model config: %s' % str(cfg))
 
-    model = ParticleEdgeNeXtTagger(**cfg)
+    model = ParticleEdgeTagger(**cfg)
 
     model_info = {
         'input_names': list(data_config.input_names),

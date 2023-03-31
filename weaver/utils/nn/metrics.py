@@ -56,7 +56,7 @@ def confusion_matrix(y_true, y_score, aux_type=None):
     return _m.confusion_matrix(y_true, y_pred, normalize='true')
 
 
-def save_labels(y_true, y_score, epoch, roc_prefix, label_type, deep_score=None):
+def save_labels(y_true, y_score, epoch, roc_prefix, label_type, deep_score=None, pn_score=None):
 
     outfile=f'{roc_prefix}{label_type}_labels_epoch_{epoch:02d}.npz'
 
@@ -67,7 +67,7 @@ def save_labels(y_true, y_score, epoch, roc_prefix, label_type, deep_score=None)
             np.savez(f, **y_true, **y_score)
     else:
         with open(outfile, 'wb') as f:
-            np.savez(f, y_true_primary=y_true, y_score_primary=y_score, y_deep_score_primary=deep_score)
+            np.savez(f, y_true_primary=y_true, y_score_primary=y_score, y_deep_score_primary=deep_score, y_pn_score_primary=pn_score)
 
     return f'y_true and y_score {label_type} for epoch {epoch} properly saved in file: \n {outfile}\n'
 
@@ -90,12 +90,12 @@ def _get_metric(metric):
         return getattr(_m, metric)
 
 
-def evaluate_metrics(y_true, y_score, deep_score, aux_y_true, aux_y_scores,  eval_metrics=[], eval_aux_metrics=[], epoch=-1, roc_prefix=None):
+def evaluate_metrics(y_true, y_score, deep_score, pn_score, aux_y_true, aux_y_scores,  eval_metrics=[], eval_aux_metrics=[], epoch=-1, roc_prefix=None):
     results = {}
     for metric in eval_metrics:
         func = _get_metric(metric)
         try:
-            results[metric] = func(y_true, y_score, epoch, roc_prefix, 'primary', deep_score) if 'label' in metric else func(y_true, y_score)
+            results[metric] = func(y_true, y_score, epoch, roc_prefix, 'primary', deep_score, pn_score) if 'label' in metric else func(y_true, y_score)
         except Exception as e:
             results[metric] = None
             _logger.error(str(e))

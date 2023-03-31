@@ -235,6 +235,14 @@ observers:
    - pfDeepFlavourJetTags_probc
    - pfDeepFlavourJetTags_probuds
    - pfDeepFlavourJetTags_probg
+   - pfParticleNetAK4JetTags_probb
+   - pfParticleNetAK4JetTags_probbb
+   - pfParticleNetAK4JetTags_probc
+   - pfParticleNetAK4JetTags_probcc
+   - pfParticleNetAK4JetTags_probuds
+   - pfParticleNetAK4JetTags_probg
+   - pfParticleNetAK4JetTags_probundef
+   - pfParticleNetAK4JetTags_probpu
    - jet_qgl
    #- jet_puId
 
@@ -246,12 +254,7 @@ monitor_variables:
    # - jet_nBHadrons
    # - jet_nCHadrons
    # - jet_genjet_pt
-   - pfDeepFlavourJetTags_probb
-   - pfDeepFlavourJetTags_probbb
-   - pfDeepFlavourJetTags_problepb
-   - pfDeepFlavourJetTags_probc
-   - pfDeepFlavourJetTags_probuds
-   - pfDeepFlavourJetTags_probg
+
 
 #weights:
    ### [option 1] use precomputed weights stored in the input files
