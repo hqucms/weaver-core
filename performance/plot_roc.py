@@ -71,6 +71,7 @@ PF_EXTRA_FTS=config_dicts['PF_EXTRA_FTS']
 AXIS_INF=config_dicts['AXIS_INF']
 AXIS_LIMITS=config_dicts['AXIS_LIMITS']
 SPECIAL_DICT=config_dicts['SPECIAL_DICT']
+WEIGHTS_DICT=config_dicts['WEIGHTS_DICT']
 
 def find_matching_suffix_pairs(d):
     matching_pairs = []
@@ -89,12 +90,16 @@ def find_matching_suffix_pairs(d):
                 matching_pairs.append((keys[i], keys[j], suffix_i))
     return matching_pairs
 
+def roc_string(k):
+    return k.replace('_mask', '').rsplit('_', 1)[1] +( '_mask' if '_mask' in k else '')
+
 def find_matching_suffix_groups(d):
-    groups = {k.replace('_mask', '').rsplit('_', 1)[1]: [] for k in d}
-    for k in d:
-        groups[k.replace('_mask', '').rsplit('_', 1)[1]].append(k)
+    groups = {roc_string(k): [] for k in d.keys()}
+    for k in d.keys():
+        groups[roc_string(k)].append(k)
     sorted_groups = {suffix: sorted(keys, key=lambda k: get_middle_substring(k.replace('_mask', '')) != '') for suffix, keys in groups.items()}
-    return {suffix: keys for suffix, keys in sorted_groups.items() if len(keys) > 1}
+    final_group={suffix: keys for suffix, keys in sorted_groups.items() if len(keys) > 1}
+    return final_group
 
 def get_middle_substring(s):
     substrings = s.split('_')
@@ -104,7 +109,7 @@ def get_middle_substring(s):
         return ""
 
 
-def get_labels(y_true, y_score, labels_s, labels_b):
+def get_labels(y_true, y_score, labels_s, labels_b,roc_type):
     """ Get the labels for the ROC curves
     :param    y_true : array with the true labels
     :param    y_score : array with the scores
@@ -125,16 +130,29 @@ def get_labels(y_true, y_score, labels_s, labels_b):
     if y_score.shape[1]==1:
         y_score_tot = y_score
     else:
-        # get the score for the signal and background by summing the scores
-        y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
-        y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
+        roc_name=roc_type.replace('_mask', '').split('_')[-1]
+        if roc_name in WEIGHTS_DICT.keys():
+            weights=WEIGHTS_DICT[roc_name]
+            print('Using weights: ', weights)
+            # get the score for the signal and background by summing the scores with weights
+            y_score_s=sum([y_score[:,label]*weights[label] for label in labels_s])*y_true_s
+            y_score_b=sum([y_score[:,label]*weights[label] for label in labels_s])*y_true_b
+            # print('y_true_s: ', y_true_s[:10])
+            # print('y_true_b: ', y_true_b[:10])
+            # print([y_score[:10,label] for label in labels_s])
+            # print('y_score_s: ', y_score_s[:10])
+            # print('y_score_b: ', y_score_b[:10])
+        else:
+            # get the score for the signal and background by summing the scores
+            y_score_s=sum([y_score[:,label] for label in labels_s])*y_true_s
+            y_score_b=sum([y_score[:,label] for label in labels_s])*y_true_b
         y_score_tot=y_score_s+y_score_b
         # consider only the events that are signal or background
         y_score_tot = y_score_tot[y_true_idx]
 
     return y_true_tot, y_score_tot
 
-def get_rates(y_t, y_s, l_s, l_b):
+def get_rates(y_t, y_s, l_s, l_b, roc_type):
     """ Compute the ROC curve and the AUC
     :param    y_t : array with the true labels
     :param    y_s : array with the scores
@@ -148,7 +166,7 @@ def get_rates(y_t, y_s, l_s, l_b):
     if l_s is None and l_b is None:
         fpr, tpr, roc_auc = y_s, y_t, np.nan
     else:
-        y_true, y_score = get_labels(y_t,  y_s, l_s, l_b)
+        y_true, y_score = get_labels(y_t,  y_s, l_s, l_b, roc_type)
         fpr, tpr, threshold = _m.roc_curve(y_true, y_score)
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
@@ -182,13 +200,14 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
         else:
             ax.yaxis.set_minor_locator(minorLocator)
 
-
     plt.grid(which='both')
     hep.style.use('CMS')
     hep.cms.label('Preliminary')
     hep.cms.label(year='UL18')
+    # TODO: add ttbar and the pt range
+    #hep.cms.label(exp='', label='$\mathrm{t}\overline{\mathrm{t}}, 30<p_{\mathrm{T}}<200 \mathrm{GeV}$', loc=1)
     #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
-    plt.legend( loc='upper left') #labelcolor='linecolor',
+    plt.legend(loc='upper left')#, order='alphabetical') #labelcolor='linecolor',
 
     plt.savefig(f'{out_dir}/{name}.png', dpi = 200, bbox_inches='tight')
     if args.save:
@@ -333,7 +352,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
 
                 # compute roc curve for each epoch
                 fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                            labels[0], labels[1])
+                                            labels[0], labels[1], roc_type)
 
                 # save roc curve for each epoch
                 if history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
@@ -348,7 +367,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
                     y_score = y_score[y_mask[:, 0]]
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                                labels[0], labels[1])
+                                                labels[0], labels[1], roc_type)
                     # save roc curve for each epoch
                     if history: info[0][f'{roc_type}_mask'][epoch]=(fpr, tpr, roc_auc)
                     EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
