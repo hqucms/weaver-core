@@ -514,13 +514,13 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 pn_list = []
                 if type_eval == 'test':
                     for k, v in Z.items():
-                        #print('\n\nk, v\n', k, v.size(), v)
+                        #print('\n\nk, v\n', k, v.size(), v.detach())
                         if 'pfDeepFlavourJetTags' in k:
                             #print(k, v)
-                            df_list.append(v.cpu().numpy())
+                            df_list.append(v.detach().cpu().numpy())
                         if 'pfParticleNetAK4JetTags' in k:
                             #print(k, v)
-                            pn_list.append(v.cpu().numpy())
+                            pn_list.append(v.detach().cpu().numpy())
                 #print('\n\n df_list\n', df_list)
 
                 # check if df_list is not empty
@@ -554,7 +554,8 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                                     aux_mask_pf, aux_loss_func_clas,
                                     num_aux_examples_pf,total_aux_correct_pf_clas,
                                     dev, aux_label_counter_pf, aux_scores_pf_clas)
-                    aux_labels['y_true_pf_clas'].append(aux_label_pf_clas_masked.cpu().numpy())
+                    if type_eval == 'test':
+                        aux_labels['y_true_pf_clas'].append(aux_label_pf_clas_masked.detach().cpu().numpy())
 
                 if aux_label_pf_regr is not None:
                     aux_label_pf_regr_masked, aux_mask_pf, aux_loss_pf_regr, aux_correct_pf_regr, \
@@ -565,7 +566,8 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                                     aux_mask_pf, aux_loss_func_regr,
                                     num_aux_examples_pf,total_aux_correct_pf_regr,
                                     dev, aux_scores=aux_scores_pf_regr)
-                    aux_labels['y_true_pf_regr'].append(aux_label_pf_regr_masked.cpu().numpy())
+                    if type_eval == 'test':
+                        aux_labels['y_true_pf_regr'].append(aux_label_pf_regr_masked.detach().cpu().numpy())
 
                 if aux_label_pair_bin is not None:
                     aux_label_pair_bin = aux_label_pair_bin[:,:num_pf, :num_pf,:]
@@ -592,16 +594,18 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                                     aux_mask_pair_or, aux_loss_func_bin,
                                     num_aux_examples_pair,total_aux_correct_pair_bin,
                                     dev, aux_label_counter_pair, aux_scores_pair_bin)
-                    aux_labels['y_true_pair_bin'].append(aux_label_pair_bin_masked.cpu().numpy())
+                    if type_eval == 'test':
+                        aux_labels['y_true_pair_bin'].append(aux_label_pair_bin_masked.detach().cpu().numpy())
 
                 #loop over the pf extra features
-                for fts_name, fts in pf_exra_fts.items():
-                    fts = _aux_halder(None,
-                                    fts[:, :num_pf, :],
-                                    aux_mask_pf, None,
-                                    None,None,
-                                    dev, None, None)
-                    aux_labels[fts_name].append(fts.cpu().numpy())
+                if type_eval == 'test':
+                    for fts_name, fts in pf_exra_fts.items():
+                        fts = _aux_halder(None,
+                                        fts[:, :num_pf, :],
+                                        aux_mask_pf, None,
+                                        None,None,
+                                        dev, None, None)
+                        aux_labels[fts_name].append(fts.detach().cpu().numpy())
 
                 aux_count_pf += num_aux_examples_pf
                 aux_count_pair += num_aux_examples_pair

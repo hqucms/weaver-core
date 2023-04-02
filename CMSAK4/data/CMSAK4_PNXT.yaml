@@ -139,22 +139,24 @@ labels:
       # target_mass: np.where(fj_isQCD, fj_genjet_sdmass, fj_gen_mass)
 
 observers:
-   - event_no
-   - jet_no
-   - jet_corr_pt
-   - jet_pt
-   - jet_eta
-   - jet_phi
-   - jet_hadronFlavour
-   - jet_partonFlavour
-   - jet_nBHadrons
-   - jet_nCHadrons
-   - jet_genjet_pt
-   #- jet_matched_genjet_pt
-   #- jet_matched_genjet_eta
-   #- jet_matched_genjet_phi
-   #- jet_matched_genjet_deltaR
-   - npfcands
+   # - event_no
+   # - jet_no
+   # - jet_corr_pt
+   # - jet_pt
+   # - jet_eta
+   # - jet_phi
+   # - jet_hadronFlavour
+   # - jet_partonFlavour
+   # - jet_nBHadrons
+   # - jet_nCHadrons
+   # - jet_genjet_pt
+   # - jet_matched_genjet_pt
+   # - jet_matched_genjet_eta
+   # - jet_matched_genjet_phi
+   # - jet_matched_genjet_deltaR
+   # - npfcands
+   # - jet_qgl
+   # - jet_puId
    - pfDeepFlavourJetTags_probb
    - pfDeepFlavourJetTags_probbb
    - pfDeepFlavourJetTags_problepb
@@ -169,10 +171,8 @@ observers:
    - pfParticleNetAK4JetTags_probg
    - pfParticleNetAK4JetTags_probundef
    - pfParticleNetAK4JetTags_probpu
-   - jet_qgl
-   #- jet_puId
 
-monitor_variables:
+#monitor_variables:
    # - jet_pt
    # - jet_eta
    # - jet_hadronFlavour

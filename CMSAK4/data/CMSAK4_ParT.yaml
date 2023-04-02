@@ -168,7 +168,7 @@ observers:
    - jet_qgl
    - jet_puId
 
-monitor_variables:
+#monitor_variables:
    # - jet_pt
    # - jet_eta
    # - jet_hadronFlavour
