@@ -78,8 +78,8 @@ def find_matching_suffix_pairs(d):
     keys = list(d.keys())
     for i in range(len(keys)):
         for j in range(i+1, len(keys)):
-            prefix_i = keys[i].replace('_mask', '')
-            prefix_j = keys[j].replace('_mask', '')
+            prefix_i = keys[i].replace('_mask', '').replace('_weights', '')
+            prefix_j = keys[j].replace('_mask', '').replace('_weights', '')
             if ('_mask' in keys[i] and '_mask' not in keys[j]) or \
                 ('_mask' not in keys[i] and '_mask' in keys[j]):# or \
             #    prefix_i == prefix_j:
@@ -91,13 +91,13 @@ def find_matching_suffix_pairs(d):
     return matching_pairs
 
 def roc_string(k):
-    return k.replace('_mask', '').rsplit('_', 1)[1] +( '_mask' if '_mask' in k else '')
+    return k.replace('_mask', '').replace('_weights', '').rsplit('_', 1)[1] + ( '_mask' if '_mask' in k else '') + ( '_weights' if '_weights' in k else '')
 
 def find_matching_suffix_groups(d):
     groups = {roc_string(k): [] for k in d.keys()}
     for k in d.keys():
         groups[roc_string(k)].append(k)
-    sorted_groups = {suffix: sorted(keys, key=lambda k: get_middle_substring(k.replace('_mask', '')) != '') for suffix, keys in groups.items()}
+    sorted_groups = {suffix: sorted(keys, key=lambda k: get_middle_substring(k.replace('_mask', '').replace('_weights', '')) != '') for suffix, keys in groups.items()}
     final_group={suffix: keys for suffix, keys in sorted_groups.items() if len(keys) > 1}
     return final_group
 
@@ -109,7 +109,7 @@ def get_middle_substring(s):
         return ""
 
 
-def get_labels(y_true, y_score, labels_s, labels_b,roc_type):
+def get_labels(y_true, y_score, labels_s, labels_b,weights):
     """ Get the labels for the ROC curves
     :param    y_true : array with the true labels
     :param    y_score : array with the scores
@@ -130,10 +130,7 @@ def get_labels(y_true, y_score, labels_s, labels_b,roc_type):
     if y_score.shape[1]==1:
         y_score_tot = y_score
     else:
-        roc_name=roc_type.replace('_mask', '').split('_')[-1]
-        if roc_name in WEIGHTS_DICT.keys():
-            weights=WEIGHTS_DICT[roc_name]
-            print('Using weights: ', weights)
+        if weights is not None:
             # get the score for the signal and background by summing the scores with weights
             y_score_s=sum([y_score[:,label]*weights[label] for label in labels_s])*y_true_s
             y_score_b=sum([y_score[:,label]*weights[label] for label in labels_s])*y_true_b
@@ -152,7 +149,7 @@ def get_labels(y_true, y_score, labels_s, labels_b,roc_type):
 
     return y_true_tot, y_score_tot
 
-def get_rates(y_t, y_s, l_s, l_b, roc_type):
+def get_rates(y_t, y_s, l_s, l_b, weights=None):
     """ Compute the ROC curve and the AUC
     :param    y_t : array with the true labels
     :param    y_s : array with the scores
@@ -166,7 +163,7 @@ def get_rates(y_t, y_s, l_s, l_b, roc_type):
     if l_s is None and l_b is None:
         fpr, tpr, roc_auc = y_s, y_t, np.nan
     else:
-        y_true, y_score = get_labels(y_t,  y_s, l_s, l_b, roc_type)
+        y_true, y_score = get_labels(y_t,  y_s, l_s, l_b, weights)
         fpr, tpr, threshold = _m.roc_curve(y_true, y_score)
         roc_auc = _m.roc_auc_score(y_true, y_score)
     return fpr, tpr, roc_auc
@@ -314,9 +311,17 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
 
                 if roc_type in PF_EXTRA_FTS.keys() \
                     and PF_EXTRA_FTS[roc_type][0] in file.files:
-
                     if history: info[0][f'{roc_type}_mask']= manager.dict()
                     EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'] = manager.dict()
+                    roc_name=roc_type.split('_')[-1]
+                    if roc_name in WEIGHTS_DICT.keys():
+                        if history: info[0][f'{roc_type}_mask_weights']= manager.dict()
+                        EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask_weights'] = manager.dict()
+
+                roc_name=roc_type.split('_')[-1]
+                if roc_name in WEIGHTS_DICT.keys():
+                    if history: info[0][f'{roc_type}_weights']= manager.dict()
+                    EPOCHS_DICT[net_type][epoch][f'{roc_type}_weights'] = manager.dict()
 
 
 def compute_roc(info, infile, dir_name, history, epoch, net_type):
@@ -352,7 +357,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
 
                 # compute roc curve for each epoch
                 fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                            labels[0], labels[1], roc_type)
+                                            labels[0], labels[1])
 
                 # save roc curve for each epoch
                 if history: info[0][roc_type][epoch]=(fpr, tpr, roc_auc)
@@ -367,10 +372,31 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
                     y_score = y_score[y_mask[:, 0]]
                     # compute roc curve for each epoch
                     fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                                labels[0], labels[1], roc_type)
+                                                labels[0], labels[1])
                     # save roc curve for each epoch
                     if history: info[0][f'{roc_type}_mask'][epoch]=(fpr, tpr, roc_auc)
                     EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask'][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
+
+                    roc_name=roc_type.split('_')[-1]
+
+                    # compute roc curve for each epoch
+                    fpr, tpr, roc_auc=get_rates(y_true,y_score,
+                                                labels[0], labels[1], WEIGHTS_DICT[roc_name])
+                    # save roc curve for each epoch
+                    if history: info[0][f'{roc_type}_mask_weights'][epoch]=(fpr, tpr, roc_auc)
+                    EPOCHS_DICT[net_type][epoch][f'{roc_type}_mask_weights'][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
+                except KeyError:
+                    pass
+
+                roc_name=roc_type.split('_')[-1]
+                try:
+
+                    # compute roc curve for each epoch
+                    fpr, tpr, roc_auc=get_rates(y_true,y_score,
+                                                labels[0], labels[1], WEIGHTS_DICT[roc_name])
+                    # save roc curve for each epoch
+                    if history: info[0][f'{roc_type}_weights'][epoch]=(fpr, tpr, roc_auc)
+                    EPOCHS_DICT[net_type][epoch][f'{roc_type}_weights'][info[1]]=(fpr, tpr, roc_auc, info[2], info[3])
                 except KeyError:
                     pass
 
@@ -412,7 +438,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
             rates=networks_1
             plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} {epoch} (AUC=%0.4f)'% rates[2])
 
-        if isinstance(networks_2, mp.managers.DictProxy):
+        if isinstance(networks_2, mp.managers.DictProxy) or isinstance(networks_2, dict):
             for network, rates in networks_2.items():
                 plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                         linestyle=rates[4] if line_style is None else line_style,
@@ -423,7 +449,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                     linestyle=rates[4] if line_style is None else line_style,
                     label=f'{network_name} {name2} (AUC=%0.4f)'% rates[2])
 
-        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').split('_')[-1]])
+        plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').replace('_weights', '').split('_')[-1]])
 
     else:
         out_dir_scatter = os.path.join(out_dir, 'Scatter')
@@ -544,7 +570,7 @@ def _main(net_type, out_dir, label_dict):
         for roc_type, networks_dict in epoch_dict.items():
             p=mp.Process(target=plotting_function,
                             args=(out_dir, epoch, roc_type, networks_dict,
-                                  get_middle_substring(roc_type.replace('_mask', '')), net_type))
+                                  get_middle_substring(roc_type.replace('_mask', '').replace('_weights', '')), net_type))
             p.start()
             parallel_list.append(p)
 
@@ -552,16 +578,14 @@ def _main(net_type, out_dir, label_dict):
         for suffix, group in matching_groups.items():
             prefix = group[0].split('_')[0]
 
-            mask = '_mask' if 'mask' in group[0] else ''
             extra_dict = {}
-            extra_style = [('dotted', 'y'), ('dashed', 'y'), ('dashdot', 'y'), ('solid', 'y')]
+            extra_style = [('y', 'solid'), ('y', 'dotted'), ('y', 'dashed'), ('y', 'dashdot')]
             for i in range(1, len(group)):
-                extra_dict[get_middle_substring(group[i].replace('_mask', ''))] = \
-                list(epoch_dict[group[i]].values())[0][:3] + (extra_style[i-1][0],)+ (extra_style[i-1][1],)
+                extra_dict[get_middle_substring(group[i].replace('_mask', '').replace('_weights', ''))] = \
+                tuple(list(epoch_dict[group[i]].values())[0][:3]) + (extra_style[i-1][0],)+ (extra_style[i-1][1],)
             p=mp.Process(target=plotting_function,
-                                args=(out_dir, epoch, f'{prefix}_comparison_{suffix}{mask}',
-                                        epoch_dict[group[0]],
-                                        get_middle_substring(group[0].replace('_mask', '')),
+                                args=(out_dir, epoch, f'{prefix}_comparison_{suffix}',
+                                        epoch_dict[group[0]], '',
                                         net_type, extra_dict))
             p.start()
             parallel_list.append(p)
@@ -610,24 +634,25 @@ if __name__ == '__main__':
                         continue
                     for epoch in epoch_list:
                         for mask in ['', '_mask']:
-                            #print(roc_type)
-                            try:
-                                for net_type in NET_TYPES:
-                                    for key in EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].keys():
-                                        EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'][key.split('_')[0]] = \
-                                        EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}'].pop(key)
+                            for weight in ['', '_weights']:
+                                #print(roc_type)
+                                try:
+                                    for net_type in NET_TYPES:
+                                        for key in EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'].keys():
+                                            EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'][key.split('_')[0]] = \
+                                            EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'].pop(key)
 
-                                p=mp.Process(target=plotting_function,
-                                                    args=(f'{main_out_dir}/{args.in_dict}_{args.type}',
-                                                    epoch, f'{roc_type}{mask}',
-                                                    EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}'][network],
-                                                    NET_TYPES[0],
-                                                    args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}'][network],
-                                                    NET_TYPES[1], network))
-                                p.start()
-                                parallel_list.append(p)
-                            except KeyError:
-                                pass
+                                    p=mp.Process(target=plotting_function,
+                                                        args=(f'{main_out_dir}/{args.in_dict}_{args.type}',
+                                                        epoch, f'{roc_type}{mask}{weight}',
+                                                        EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}{weight}'][network],
+                                                        NET_TYPES[0],
+                                                        args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}{weight}'][network],
+                                                        NET_TYPES[1], network))
+                                    p.start()
+                                    parallel_list.append(p)
+                                except KeyError:
+                                    pass
         # Join parallel
         for parallel_elem in parallel_list:
             parallel_elem.join()

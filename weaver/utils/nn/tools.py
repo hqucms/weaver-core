@@ -507,7 +507,7 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                 logits = _flatten_preds(model_output, label_mask).float()
                 scores.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
                 #print('\n\nlogits\n', logits.size(),'\n', logits)
-                print('score\n',scores)
+                #print('score\n',scores)
                 loss = 0. if loss_func is None else loss_func(logits, label)
 
                 df_list = []
@@ -516,10 +516,10 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
                     for k, v in Z.items():
                         #print('\n\nk, v\n', k, v.size(), v)
                         if 'pfDeepFlavourJetTags' in k:
-                            print(k, v)
+                            #print(k, v)
                             df_list.append(v.cpu().numpy())
                         if 'pfParticleNetAK4JetTags' in k:
-                            print(k, v)
+                            #print(k, v)
                             pn_list.append(v.cpu().numpy())
                 #print('\n\n df_list\n', df_list)
 
@@ -724,9 +724,9 @@ def evaluate_classification(model, test_loader, dev, epoch, aux_weight, for_trai
     deepFlavour = np.concatenate(deepFlavour) if deepFlavour else None
     particleNet = np.concatenate(particleNet) if particleNet else None
     #print('labels', labels)
-    print('scores', scores)
-    print('deepFlavour', deepFlavour)
-    print('particleNet', particleNet)
+    #print('scores', scores)
+    #print('deepFlavour', deepFlavour)
+    #print('particleNet', particleNet)
 
     labels = {k: _concat(v) for k, v in labels.items()}
     #print('labels2', labels)

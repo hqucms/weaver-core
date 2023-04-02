@@ -22,7 +22,7 @@ ROC_TYPE_DICT:
         JET_bVSudsg: [[0,1], [4,5], primary]
         #JET_CMSSWPN_bVSuds: [[0,1], [4], primary]
         #JET_CMSSWPN_bVSg: [[0,1], [5], primary]
-        #JET_CMSSWPN_bVSudsg: [[0,1], [4,5], primary]
+        JET_CMSSWPN_bVSudsg: [[0,1], [4,5], primary]
         ## 2 lepb
         #JET_DeepFlavour_bVSuds: [[0,1,2], [4], primary]
         #JET_DeepFlavour_bVSg: [[0,1,2], [5], primary]
@@ -46,8 +46,8 @@ PF_EXTRA_FTS:
 
 # dictionary with the weights
 WEIGHTS_DICT:
-    b+bcVSc+other: [0.2, 0.1, 0.03, 0.67]
-    b+bc+cVSother: [0.2, 0.1, 0.03, 0.67]
+    b+bcVSc+other: [0.22, 0.12, 0.03, 0.63]
+    b+bc+cVSother: [0.22, 0.12, 0.03, 0.63]
 
 # dictionary with the axes inf
 AXIS_INF:
