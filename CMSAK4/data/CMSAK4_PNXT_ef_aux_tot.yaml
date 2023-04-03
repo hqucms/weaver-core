@@ -224,7 +224,7 @@ aux_labels:
       pair_threshold: pair_dist_threshold
 
 
-#observers:
+observers:
    # - event_no
    # - jet_no
    # - jet_corr_pt
