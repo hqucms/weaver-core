@@ -206,7 +206,7 @@ aux_labels:
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
       pf_mask_charged: pf_charged
-      pf_var_IPsig: pf_IPsig
+      # pf_var_IPsig: pf_IPsig
    value_pair:
       aux_label_pair_bin_dist_vtx: pair_dist_vtx
       pair_threshold: pair_dist_threshold

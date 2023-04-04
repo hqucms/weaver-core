@@ -133,7 +133,7 @@ aux_labels:
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
       pf_mask_charged: pf_charged
-      pf_var_IPsig: pf_IPsig
+      # pf_var_IPsig: pf_IPsig
 
 observers:
    # - event_no

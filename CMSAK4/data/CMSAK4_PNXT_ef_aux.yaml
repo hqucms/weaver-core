@@ -208,7 +208,7 @@ aux_labels:
       aux_label_pf_clas_bc: pf_bc
       aux_label_pf_clas_other: pf_other
       pf_mask_charged: pf_charged
-      pf_var_IPsig: pf_IPsig
+      # pf_var_IPsig: pf_IPsig
    value_regr:
       aux_labels_pf_regr_dist_pv: pf_dist_pv
       aux_label_pf_regr_vtx_x: pf_vtx_x
