@@ -417,7 +417,7 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
     :param    out_dir : string with the name of the output directory
     :param    net_type : string with the type of the network
     """
-    fig_handle = plt.figure(figsize=(20, 15))
+    fig_handle = plt.figure(figsize=(15, 10))
     # loop over epochs
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
@@ -438,7 +438,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
     """
 
     if SPECIAL_DICT['Scatter_True-Reco'] not in roc_type:
-        fig_handle = plt.figure(figsize=(20, 15))
+        fig_handle = plt.figure(figsize=(15, 10))
         # loop over networks
         if isinstance(networks_1, mp.managers.DictProxy):
             for network, rates in networks_1.items():
@@ -451,7 +451,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
             for network, rates in networks_2.items():
                 plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                         linestyle=rates[4] if line_style is None else line_style,
-                        label=f'{network}(AUC=%0.4f)'% rates[2])
+                        label=f'{network} (AUC=%0.4f)'% rates[2])
         elif isinstance(networks_2, tuple):
             rates=networks_2
             plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
@@ -477,7 +477,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(20, 15))
+                    fig_handle = plt.figure(figsize=(15, 10))
                     ax = plt.gca()
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
@@ -501,7 +501,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(20, 15))
+                    fig_handle = plt.figure(figsize=(15, 10))
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
                     # plot true-reco histogram
@@ -646,15 +646,11 @@ def _main(net_type, out_dir, label_dict):
         matching_groups = find_matching_suffix_groups(epoch_dict)
         for suffix, group in matching_groups.items():
             prefix = group[0].split('_')[0]
+            cmssw_dict={get_middle_substring(key.replace('_mask', '')): CMSSW_NETS[key] for key in group[1:]}
 
-            extra_dict = {}
-            # extra_style = [('y', 'solid'), ('y', 'dotted'), ('y', 'dashed'), ('y', 'dashdot')]
-            #for i in range(1, len(group)):
-            #    extra_dict[group[i]] = tuple(list(CMSSW_NETS[group[i]])[0])
             p=mp.Process(target=plotting_function,
                                 args=(out_dir, epoch, f'{prefix}_comparison_{suffix}',
-                                    epoch_dict[group[0]], '', net_type,
-                                    {key: CMSSW_NETS[key] for key in group[1:]}))
+                                    epoch_dict[group[0]], '', net_type, cmssw_dict))
             p.start()
             parallel_list.append(p)
 

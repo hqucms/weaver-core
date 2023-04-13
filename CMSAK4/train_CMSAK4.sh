@@ -17,7 +17,7 @@ NGPUS=${DDP_NGPUS}
 [[ -z $NGPUS ]] && NGPUS=1
 if ((NGPUS > 1)); then
     #CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS $(which weaver) --backend nccl"
-    CMD="torchrun --standalone --nnodes=1 --nproc_per_node=$NGPUS ../train.py --backend nccl"
+    CMD="torchrun  --master_port=99 --nnodes=2 --nproc_per_node=$NGPUS --max_restarts=0  --rdzv_id=98 --rdzv_backend=c10d  --rdzv_endpoint=r225n14:29800 ../train.py --backend nccl "
 
 
 else

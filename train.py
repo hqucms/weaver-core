@@ -841,7 +841,12 @@ def _main(args):
             torch.cuda.set_device(local_rank)
             gpus = [local_rank]
             dev = torch.device(local_rank)
-            torch.distributed.init_process_group(backend=args.backend)
+            #torch.distributed.init_process_group(backend=args.backend)
+            torch.distributed.init_process_group(backend=args.backend,
+                                                 init_method='env://',
+                                                 world_size=int(os.environ['WORLD_SIZE']),
+                                                 rank=int(os.environ["LOCAL_RANK"]))
+
             _logger.info(f'Using distributed PyTorch with {args.backend} backend')
         else:
             gpus = [int(i) for i in args.gpus.split(',')]
@@ -923,8 +928,9 @@ def _main(args):
 
         # DistributedDataParallel
         if args.backend is not None:
+            torch.cuda.set_device(local_rank)
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=gpus, output_device=local_rank)
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=gpus)#, output_device=local_rank)
 
         # optimizer & learning rate
         opt, scheduler = optim(args, model, dev)
