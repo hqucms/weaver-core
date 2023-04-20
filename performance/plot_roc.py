@@ -138,7 +138,7 @@ def get_labels(y_true, y_score, labels_s, labels_b, weights):
     y_true_tot=y_true_s[y_true_idx].astype(int)
 
     if y_score.shape[1]==1:
-        y_score_tot = y_score
+        y_score_tot = y_score[y_true_idx]
     else:
         if weights is not None:
             # get the score for the signal and background by summing the scores with weights
@@ -189,10 +189,10 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
         else:
             plt.xlabel('True [cm]', fontsize=20, loc='right')
             plt.ylabel('Reco [cm]', fontsize=20, loc='top')
-            plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco')
+            plt.plot([-10, 10], [-10, 10], 'y--', label='True = Reco', linewidth=1)
     else:
-        plt.xlabel('b-jet efficiency (TP)', fontsize=20, loc='right')
-        plt.ylabel('Mistagging probability (FP)', fontsize=20, loc='top')
+        plt.xlabel('True positive rate', fontsize=20, loc='right')
+        plt.ylabel('False positive rate ', fontsize=20, loc='top')
         plt.xlim([axis_inf[0], 1.0005])
         plt.ylim([axis_inf[1], 1.005])
         minorLocator = MultipleLocator(0.05)
@@ -210,7 +210,7 @@ def plt_fts(out_dir, name, fig_handle, axis_inf=None):
     # TODO: add ttbar and the pt range
     #hep.cms.label(exp='', label='$\mathrm{t}\overline{\mathrm{t}}, 30<p_{\mathrm{T}}<200 \mathrm{GeV}$', loc=1)
     #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
-    plt.legend(loc='upper left')#, order='alphabetical') #labelcolor='linecolor',
+    plt.legend(loc='upper left', fontsize=20)#, order='alphabetical') #labelcolor='linecolor',
 
     plt.savefig(f'{out_dir}/{name}.png', dpi = 200, bbox_inches='tight')
     if args.save:
@@ -417,11 +417,11 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
     :param    out_dir : string with the name of the output directory
     :param    net_type : string with the type of the network
     """
-    fig_handle = plt.figure(figsize=(15, 10))
+    fig_handle = plt.figure(figsize=(15, 12))
     # loop over epochs
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
-        plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch} (AUC=%0.4f)'% roc_auc)
+        plt.plot(tpr,fpr,label=f'{roc_type} {info[1]} epoch #{epoch} (AUC=%0.4f)'% roc_auc, linewidth=1)
     plt_fts(out_dir, f'ROC_{roc_type}_{info[1]}_{args.in_dict}_{net_type}_history', fig_handle)
 
 def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, networks_2 = None, name2 = '', network_name='', line_style=None, line_color=None):
@@ -438,25 +438,25 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
     """
 
     if SPECIAL_DICT['Scatter_True-Reco'] not in roc_type:
-        fig_handle = plt.figure(figsize=(15, 10))
+        fig_handle = plt.figure(figsize=(15, 12))
         # loop over networks
         if isinstance(networks_1, mp.managers.DictProxy):
             for network, rates in networks_1.items():
-                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} {epoch} (AUC=%0.4f)'% rates[2])
+                plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} (AUC=%0.4f)'% rates[2], linewidth=1)
         elif isinstance(networks_1, tuple):
             rates=networks_1
-            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} {epoch} (AUC=%0.4f)'% rates[2])
+            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} (AUC=%0.4f)'% rates[2], linewidth=1)
 
         if isinstance(networks_2, mp.managers.DictProxy) or isinstance(networks_2, dict):
             for network, rates in networks_2.items():
                 plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                         linestyle=rates[4] if line_style is None else line_style,
-                        label=f'{network} (AUC=%0.4f)'% rates[2])
+                        label=f'{network} (AUC=%0.4f)'% rates[2], linewidth=1)
         elif isinstance(networks_2, tuple):
             rates=networks_2
             plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                     linestyle=rates[4] if line_style is None else line_style,
-                    label=f'{network_name} {name2} (AUC=%0.4f)'% rates[2])
+                    label=f'{network_name} {name2} (AUC=%0.4f)'% rates[2], linewidth=1)
 
         plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').replace('_weights', '').split('_')[-1]])
 
@@ -477,7 +477,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(15, 10))
+                    fig_handle = plt.figure(figsize=(15, 12))
                     ax = plt.gca()
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
@@ -501,7 +501,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(15, 10))
+                    fig_handle = plt.figure(figsize=(15, 12))
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
                     # plot true-reco histogram
@@ -522,33 +522,21 @@ def fill_cmssw_net():
             cmssw_net=get_middle_substring(roc_type)
             net_list=in_dict[cmssw_net]
             dir_name=f'{args.in_path}{net_list[0]}'
-            files = [filename for filename in os.listdir(dir_name)
+            files_name = [filename for filename in os.listdir(dir_name)
                 if (SPECIAL_DICT['LabelsEpoch'] in filename)]
-            for file in files:
-                with open(os.path.join(dir_name, file), 'rb') as f:
+            for file_name in files_name:
+                with open(os.path.join(dir_name, file_name), 'rb') as f:
                     file=np.load(f, allow_pickle=True, mmap_mode='r')
                     try:
                         y_true = file[f'y_true_{CMSSW_ROC_TYPE_DICT[roc_type][2]}']
                         y_score = file[PF_EXTRA_FTS[roc_type][1]]
                     except KeyError:
                         continue
+
                     fpr, tpr, roc_auc=get_rates(y_true,y_score,
                         CMSSW_ROC_TYPE_DICT[roc_type][0],
                         CMSSW_ROC_TYPE_DICT[roc_type][1])
                     CMSSW_NETS[roc_type]=(fpr, tpr, roc_auc, net_list[1], net_list[2])
-
-                    '''# load the weights for the labels (if present)
-                    roc_name=roc_type.split('_')[-1]
-                    try:
-                        # compute roc curve for each epoch
-                        fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                                    CMSSW_ROC_TYPE_DICT[roc_type][0],
-                                                    CMSSW_ROC_TYPE_DICT[roc_type][1],
-                                                    WEIGHTS_DICT[roc_name])
-
-                        CMSSW_NETS[f'{roc_type}_weights']=(fpr, tpr, roc_auc, net_list[1], net_list[2])
-                    except KeyError:
-                        pass'''
 
                     # load the mask for the labels (if present)
                     try:
@@ -563,14 +551,6 @@ def fill_cmssw_net():
                                                     CMSSW_ROC_TYPE_DICT[roc_type][1])
                         CMSSW_NETS[f'{roc_type}_mask']=(fpr, tpr, roc_auc, net_list[1], net_list[2])
 
-                        '''roc_name=roc_type.split('_')[-1]
-
-                        # compute roc curve for each epoch
-                        fpr, tpr, roc_auc=get_rates(y_true,y_score,
-                                                    CMSSW_ROC_TYPE_DICT[roc_type][0],
-                                                    CMSSW_ROC_TYPE_DICT[roc_type][1],
-                                                    WEIGHTS_DICT[roc_name])
-                        CMSSW_NETS[f'{roc_type}_mask_weights']=(fpr, tpr, roc_auc, net_list[1], net_list[2])'''
                     except KeyError:
                         pass
 

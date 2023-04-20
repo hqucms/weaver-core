@@ -169,7 +169,7 @@ def train_classification(model, loss_func, aux_loss_func_clas, aux_loss_func_reg
                 aux_label_pf_clas = None
 
             if len([k for k in data_config.aux_label_names if 'pf_regr' in k]) > 0:
-                aux_label_pf_regr = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_regr' in k]).permute(1,2,0).to(dev).float()# (batch_size, num_pf, num_labels_pf_clas)
+                aux_label_pf_regr = torch.stack([y[k].float() for k in data_config.aux_label_names if 'pf_regr' in k]).permute(1,2,0).to(dev).float()# (batch_size, num_pf, num_labels_pf_regr)
             else:
                 aux_label_pf_regr = None
 

@@ -95,7 +95,7 @@ $CMD \
     --model-prefix ${store}training/CMSAK4/${model}/{auto}${suffix}_${suffix_specs}/net \
     $dataopts $batchopts \
     --samples-per-epoch ${samples_per_epoch} --samples-per-epoch-val ${samples_per_epoch_val} \
-    --num-epochs $epochs --gpus 0 --no-aux-epoch 6 --epoch-division 3\
+    --num-epochs $epochs --gpus 0,1,2,3 --no-aux-epoch 6 --epoch-division 3\
     --optimizer ranger --log logs/{auto}${suffix}_${suffix_specs}.log \
     --tensorboard CMSAK4_${model}${suffix}_${suffix_specs} $auxopts \
     --extra-selection "${extra_selection}" --extra-test-selection "${extra_selection}" \
