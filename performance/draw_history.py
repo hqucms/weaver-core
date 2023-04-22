@@ -152,7 +152,7 @@ if __name__ == "__main__":
         # plot the history
         num_tot=(args.last_epoch+1)*args.num_partial
         for history, _ in history_dict.items():
-            fig_handle = plt.figure(figsize=(30, 20))
+            fig_handle = plt.figure(figsize=(15, 10))
             save=False
             for _, info in infile_dict.items():
                 for name, value in info[0].items():
@@ -172,7 +172,7 @@ if __name__ == "__main__":
         # plot the history
         num_tot=(args.last_epoch+1)*args.num_partial
         for history, _ in history_dict.items():
-            fig_handle = plt.figure(figsize=(30, 20))
+            fig_handle = plt.figure(figsize=(15, 10))
             save=False
             for net_type in NET_TYPES:
                 for _, info in tot_dict[net_type].items():

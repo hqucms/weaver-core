@@ -24,9 +24,9 @@ ROC_TYPE_DICT:
 
 
 CMSSW_ROC_TYPE_DICT:
-    #JET_CMSSWPN_bVSuds: [[0,1], [4], primary]
-    #JET_CMSSWPN_bVSg: [[0,1], [5], primary]
-    JET_CMSSWPN_bVSudsg: [[0,1], [4,5], primary]
+    #JET_CMSSWParticleNet_bVSuds: [[0,1], [4], primary]
+    #JET_CMSSWParticleNet_bVSg: [[0,1], [5], primary]
+    JET_CMSSWParticleNet_bVSudsg: [[0,1], [4,5], primary]
     #JET_CMSSWDeepFlavour_bVSuds: [[0,1], [4], primary]
     #JET_CMSSWDeepFlavour_bVSg: [[0,1], [5], primary]
     JET_CMSSWDeepFlavour_bVSudsg: [[0,1], [4,5], primary]
@@ -47,9 +47,9 @@ PF_EXTRA_FTS:
     JET_CMSSWDeepFlavour_bVSuds: [null, y_deep_score_primary]
     JET_CMSSWDeepFlavour_bVSg: [null, y_deep_score_primary]
     JET_CMSSWDeepFlavour_bVSudsg: [null, y_deep_score_primary]
-    JET_CMSSWPN_bVSuds: [null, y_pn_score_primary]
-    JET_CMSSWPN_bVSg: [null, y_pn_score_primary]
-    JET_CMSSWPN_bVSudsg: [null, y_pn_score_primary]
+    JET_CMSSWParticleNet_bVSuds: [null, y_pn_score_primary]
+    JET_CMSSWParticleNet_bVSg: [null, y_pn_score_primary]
+    JET_CMSSWParticleNet_bVSudsg: [null, y_pn_score_primary]
 
 # dictionary with the weights
 WEIGHTS_DICT:
@@ -82,3 +82,5 @@ SPECIAL_DICT:
     SpecialMask: y_score_pf_clas
     LabelsEpoch: labels_epoch
     LabelsBest: labels_best
+    LabesTypes: {'full': ' Full', 'lite': ' Lite', 'noSV_full': ' (w/o SV) Full', 'noSV_lite': ' (w/o SV) Lite'}
+    ReplaceString: {' (w/o SV)': 'noSV'}

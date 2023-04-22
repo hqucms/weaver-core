@@ -4,15 +4,14 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 import matplotlib as mpl
 import os
-import sys
-import re
 import pickle
 import argparse
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 import mplhep as hep
 import yaml
 import time
 import multiprocessing as mp
+from weaver.utils.logger import _logger
 
 manager = mp.Manager()
 
@@ -70,9 +69,10 @@ ROC_TYPE_DICT=config_dicts['ROC_TYPE_DICT']
 PF_EXTRA_FTS=config_dicts['PF_EXTRA_FTS']
 AXIS_INF=config_dicts['AXIS_INF']
 AXIS_LIMITS=config_dicts['AXIS_LIMITS']
-SPECIAL_DICT=config_dicts['SPECIAL_DICT']
 WEIGHTS_DICT=config_dicts['WEIGHTS_DICT']
 CMSSW_ROC_TYPE_DICT=config_dicts['CMSSW_ROC_TYPE_DICT']
+SPECIAL_DICT=config_dicts['SPECIAL_DICT']
+
 
 CMSSW_NETS=defaultdict(list)
 
@@ -293,10 +293,10 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
     if epoch not in EPOCHS_DICT[net_type].keys():
         EPOCHS_DICT[net_type][epoch] = manager.dict()
     for label_type, labels_info in ROC_TYPE_DICT.items():
-        #print(label_type)
+        #_logger.info(label_type)
         if (args.primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
-        #print(infile)
+        #_logger.info(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True, mmap_mode='r')
@@ -341,7 +341,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
     for label_type, labels_info in ROC_TYPE_DICT.items():
         if (args.primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
-        print(infile)
+        _logger.info(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True, mmap_mode='r')
@@ -417,7 +417,7 @@ def plotting_history_function(epoch_list, info,  roc_type, out_dir, net_type):
     :param    out_dir : string with the name of the output directory
     :param    net_type : string with the type of the network
     """
-    fig_handle = plt.figure(figsize=(15, 12))
+    fig_handle = plt.figure(figsize=(13, 10))
     # loop over epochs
     for epoch in epoch_list:
         fpr, tpr, roc_auc = info[0][roc_type][epoch]
@@ -438,14 +438,14 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
     """
 
     if SPECIAL_DICT['Scatter_True-Reco'] not in roc_type:
-        fig_handle = plt.figure(figsize=(15, 12))
+        fig_handle = plt.figure(figsize=(13, 10))
         # loop over networks
         if isinstance(networks_1, mp.managers.DictProxy):
             for network, rates in networks_1.items():
                 plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network} (AUC=%0.4f)'% rates[2], linewidth=1)
         elif isinstance(networks_1, tuple):
             rates=networks_1
-            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name} {name1} (AUC=%0.4f)'% rates[2], linewidth=1)
+            plt.plot(rates[1],rates[0],color=rates[3], linestyle=rates[4],label=f'{network_name}{name1} (AUC=%0.4f)'% rates[2], linewidth=1)
 
         if isinstance(networks_2, mp.managers.DictProxy) or isinstance(networks_2, dict):
             for network, rates in networks_2.items():
@@ -456,7 +456,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
             rates=networks_2
             plt.plot(rates[1],rates[0],color=rates[3] if line_color is None else line_color,
                     linestyle=rates[4] if line_style is None else line_style,
-                    label=f'{network_name} {name2} (AUC=%0.4f)'% rates[2], linewidth=1)
+                    label=f'{network_name}{name2} (AUC=%0.4f)'% rates[2], linewidth=1)
 
         plt_fts(out_dir, f"ROC_{roc_type}_{args.in_dict}_{net_type}_{network_name}{epoch}", fig_handle, AXIS_INF[roc_type.replace('_mask', '').replace('_weights', '').split('_')[-1]])
 
@@ -477,7 +477,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(15, 12))
+                    fig_handle = plt.figure(figsize=(13, 10))
                     ax = plt.gca()
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
@@ -501,7 +501,7 @@ def plotting_function(out_dir, epoch, roc_type, networks_1, name1, net_type, net
                 y_r=rates[0][:, i]
 
                 for mask_name, mask in {'_notZero': x_t != 0, '': np.ones_like(x_t, dtype=bool)}.items():
-                    fig_handle = plt.figure(figsize=(15, 12))
+                    fig_handle = plt.figure(figsize=(13, 10))
                     x_t_mask, y_r_mask = x_t[mask], y_r[mask]
 
                     # plot true-reco histogram
@@ -567,7 +567,7 @@ def _main(net_type, out_dir, label_dict):
     os.makedirs(out_dir, exist_ok=True)
 
     build_epochs_dict(label_dict, net_type)
-    print('\n Finished building epochs dict \n')
+    _logger.info('Finished building epochs dict')
 
     parallel_list=[]
     for input_name, info in label_dict.items():
@@ -594,7 +594,7 @@ def _main(net_type, out_dir, label_dict):
     for parallel_elem in parallel_list:
         parallel_elem.join()
 
-    print('\n start plotting \n')
+    _logger.info('Start plotting')
     parallel_list = []
     for input_name, info in label_dict.items():
         # compute roc curve for each epoch
@@ -644,13 +644,12 @@ if __name__ == '__main__':
 
     date_time = time.strftime('%Y%m%d-%H%M%S')
     main_out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_{args.in_dict}_{args.type}_roc')
-    print(f'Output directory: {main_out_dir}')
+    _logger.info('Output directory: %s', main_out_dir)
 
     fill_cmssw_net()
 
     parallel_list=[]
     for net_type in NET_TYPES:
-        #label_dict=load_dict(f'{args.in_dict}_{net_type}.yaml')
         label_dict=load_dict(f'config/{args.complete_dict}.yaml', f'config/{args.in_dict}_{net_type}.yaml')
         p=mp.Process(target=_main,
                         args=(net_type, main_out_dir, label_dict))
@@ -660,11 +659,10 @@ if __name__ == '__main__':
     for parallel_elem in parallel_list:
         parallel_elem.join()
 
-    print('starting comparison')
-    parallel_list=[]
 
-    if len(NET_TYPES) > 1:
-        #label_dict=load_dict(f'{args.in_dict}_{NET_TYPES[0]}.yaml')
+    if len(NET_TYPES) == 2:
+        _logger.info('Starting comparison')
+        parallel_list=[]
         label_dict=load_dict(f'config/{args.complete_dict}.yaml',f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
         _, _, epoch_list, _ = create_lists(input_name)
@@ -673,7 +671,9 @@ if __name__ == '__main__':
 
 
         for info in label_dict.values():
-            network=info[1].split('_')[0]
+            network=info[1]\
+                .replace(SPECIAL_DICT['LabesTypes'][NET_TYPES[0]], '')\
+                .replace(SPECIAL_DICT['LabesTypes'][NET_TYPES[1]], '')
             for label_type, labels_info in ROC_TYPE_DICT.items():
                 for roc_type in labels_info.keys():
                     if SPECIAL_DICT['Scatter_True-Reco'] == roc_type:
@@ -681,20 +681,21 @@ if __name__ == '__main__':
                     for epoch in epoch_list:
                         for mask in ['', '_mask']:
                             for weight in ['', '_weights']:
-                                #print(roc_type)
                                 try:
                                     for net_type in NET_TYPES:
                                         for key in EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'].keys():
-                                            EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'][key.split('_')[0]] = \
+                                            EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'][key.replace(SPECIAL_DICT['LabesTypes'][net_type], '')] = \
                                             EPOCHS_DICT[net_type][epoch][f'{roc_type}{mask}{weight}'].pop(key)
+
 
                                     p=mp.Process(target=plotting_function,
                                                         args=(f'{main_out_dir}/{args.name}_{args.in_dict}_{args.type}_roc',
                                                         epoch, f'{roc_type}{mask}{weight}',
                                                         EPOCHS_DICT[NET_TYPES[0]][epoch][f'{roc_type}{mask}{weight}'][network],
-                                                        NET_TYPES[0],
+                                                        SPECIAL_DICT['LabesTypes'][NET_TYPES[0]],
                                                         args.type, EPOCHS_DICT[NET_TYPES[1]][epoch][f'{roc_type}{mask}{weight}'][network],
-                                                        NET_TYPES[1], network))
+                                                        SPECIAL_DICT['LabesTypes'][NET_TYPES[1]],
+                                                        ''.join([network.replace(k, v) for k, v in SPECIAL_DICT['ReplaceString'].items()])))
                                     p.start()
                                     parallel_list.append(p)
                                 except KeyError:
@@ -703,5 +704,5 @@ if __name__ == '__main__':
         for parallel_elem in parallel_list:
             parallel_elem.join()
 
-    print(f'Output directory: {main_out_dir}')
-    print('Total time:   ', time.time()-start)
+    _logger.info('Output directory: %s', main_out_dir)
+    _logger.info('Total time:  %f ', time.time()-start)
