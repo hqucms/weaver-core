@@ -18,7 +18,7 @@ parser.add_argument('--save', action='store_true', default=False,
                     help='save plots')
 parser.add_argument('--not-partial', action='store_true', default=False,
                     help='ignore partial epochs in the plots')
-parser.add_argument('--last-epoch', type=int, default=14,
+parser.add_argument('--last-epoch', type=int, default=24,
                     help='save plots')
 parser.add_argument('--in-path', type=str, default='',
                     help='input path')
@@ -47,7 +47,7 @@ else:
 with open(f'{args.history_config}.yaml', 'r') as stream:
     history_dict=yaml.safe_load(stream)['history_dict']
 
-def plot(out_dir, name, fig_handle):
+def plot(out_dir, name, fig_handle, history):
     """Plot the history of the given figure handle
     and save it in the given output directory
 
@@ -56,6 +56,7 @@ def plot(out_dir, name, fig_handle):
     :param fig_handle: figure handle
     """
     plt.xlabel('Epoch', fontsize=20, loc='right')
+    plt.ylabel(history, fontsize=20, loc='top')
     hep.style.use("CMS")
     hep.cms.label('Preliminary')
     hep.cms.label(year='UL18')
@@ -92,7 +93,7 @@ def load_dict(complete_dict, in_dict):
         info_dict[k].append(v[2])
     return info_dict
 
-def draw_plot(value, num_tot, name, info, save):
+def draw_plot(value, num_tot, info, save):
     if len(value[:num_tot]) == num_tot:
         x_part = np.linspace(-(args.num_partial-1)/args.num_partial, 0, args.num_partial)
         x = np.concatenate([x_part + i for i in range(args.last_epoch+1)])
@@ -101,7 +102,7 @@ def draw_plot(value, num_tot, name, info, save):
     else:
         x = np.linspace(0, len(value[:args.last_epoch]), len(value[:args.last_epoch+1]))
         y=value[:args.last_epoch+1]
-    plt.plot(x, y, color=info[2], linestyle=info[3], label=f'{name} {info[1]}')
+    plt.plot(x, y, color=info[2], linestyle=info[3], label=f'{info[1]}')
     save=True
 
     return save
@@ -157,10 +158,10 @@ if __name__ == "__main__":
             for _, info in infile_dict.items():
                 for name, value in info[0].items():
                     if name == history and any(val != 0 for val in value):
-                        save=draw_plot(value, num_tot, name, info, save)
+                        save=draw_plot(value, num_tot, info, save)
             # call function plot only if figure is not empty
             if save:
-                plot(out_dir, f'{history}_{args.in_dict}_{net_type}', fig_handle)
+                plot(out_dir, f'{history}_{args.in_dict}_{net_type}', fig_handle, history)
             else:
                 plt.close()
 
@@ -178,10 +179,10 @@ if __name__ == "__main__":
                 for _, info in tot_dict[net_type].items():
                     for name, value in info[0].items():
                         if name == history and any(val != 0 for val in value):
-                            save=draw_plot(value, num_tot, name, info, save)
+                            save=draw_plot(value, num_tot, info, save)
             # call function plot only if figure is not empty
             if save:
-                plot(out_dir, f'{history}_{args.in_dict}_{args.type}', fig_handle)
+                plot(out_dir, f'{history}_{args.in_dict}_{args.type}', fig_handle, history)
             else:
                 plt.close()
 
