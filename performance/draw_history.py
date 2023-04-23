@@ -57,7 +57,7 @@ def plot(out_dir, name, fig_handle, history):
     """
     plt.xlabel('Epoch', fontsize=20, loc='right')
     plt.ylabel(history, fontsize=20, loc='top')
-    hep.style.use("CMS")
+    hep.style.use('CMS')
     hep.cms.label('Preliminary')
     hep.cms.label(year='UL18')
     #plt.suptitle(name, horizontalalignment='center', verticalalignment='top', fontsize=25)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
                 infiles.sort()#key=lambda s: int(re.findall(r'\d+', s)[-1]))
             # get specific log files and sort them in alphabetical order
             elif isinstance(input_name, list):
-                infiles=[os.path.join(args.in_path+"input", "logs", f"{k}.log") for k in input_name]
+                infiles=[os.path.join(args.in_path+'input', 'logs', f'{k}.log') for k in input_name]
                 infiles.sort()# key=lambda s: int(re.findall(r'\d+', s)[-1]))
             #print(infiles)
             # read the log files and extract the information
@@ -161,7 +161,7 @@ if __name__ == "__main__":
                         save=draw_plot(value, num_tot, info, save)
             # call function plot only if figure is not empty
             if save:
-                plot(out_dir, f'{history}_{args.in_dict}_{net_type}', fig_handle, history)
+                plot(out_dir, f'{history.replace(" ", "_")}_{args.in_dict}_{net_type}', fig_handle, history)
             else:
                 plt.close()
 
@@ -182,7 +182,7 @@ if __name__ == "__main__":
                             save=draw_plot(value, num_tot, info, save)
             # call function plot only if figure is not empty
             if save:
-                plot(out_dir, f'{history}_{args.in_dict}_{args.type}', fig_handle, history)
+                plot(out_dir, f'{history.replace(" ", "_")}_{args.in_dict}_{args.type}', fig_handle, history)
             else:
                 plt.close()
 

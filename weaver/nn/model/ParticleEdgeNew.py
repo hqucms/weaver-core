@@ -387,8 +387,8 @@ class MultiScaleEdgeConv(nn.Module):
         if reduction_dilation is None:
             reduction_dilation = [(1, 1)]
         for reduction, dilation in reduction_dilation:
-            self.slices.append(slice(None, num_neighbors // reduction, dilation))
-            self.slice_dims.append(num_neighbors // reduction // dilation)
+            self.slices.append(slice(None, num_neighbors*2 // reduction, dilation))
+            self.slice_dims.append(num_neighbors*2 // reduction // dilation)
 
         if message_dim is None:
             message_dim = out_dim
