@@ -365,6 +365,7 @@ class MultiScaleEdgeConv(nn.Module):
                  use_edge_se=True,
                  init_scale=1e-5,
                  cpu_mode=False,
+                 scale_aggregation=2,
                  ):
         super(MultiScaleEdgeConv, self).__init__()
 
@@ -387,8 +388,8 @@ class MultiScaleEdgeConv(nn.Module):
         if reduction_dilation is None:
             reduction_dilation = [(1, 1)]
         for reduction, dilation in reduction_dilation:
-            self.slices.append(slice(None, num_neighbors // reduction, dilation))
-            self.slice_dims.append(num_neighbors // reduction // dilation)
+            self.slices.append(slice(None, num_neighbors*scale_aggregation // reduction, dilation))
+            self.slice_dims.append(num_neighbors*scale_aggregation // reduction // dilation)
 
         if message_dim is None:
             message_dim = out_dim
@@ -544,9 +545,9 @@ class MultiScaleEdgeConv(nn.Module):
             message = [message[:, :, :, s] for s in self.slices]
             null_edge_pos = [null_edge_pos[:, :, :, s] for s in self.slices]
 
-        #print('message0:\n', message[0].size())
-        #print('message1:\n', message[1].size())
-        #print('message2:\n', message[2].size(), message[2])
+        # print('message0:\n', message[0].size())
+        # print('message1:\n', message[1].size())
+        # print('message2:\n', message[2].size())
 
 
         pts_out = points
@@ -660,6 +661,7 @@ class ParticleEdge(nn.Module):
                  trim=True,
                  for_inference=False,
                  for_segmentation=False,
+                 scale_aggregation=2,
                  **kwargs):
         super(ParticleEdge, self).__init__(**kwargs)
 
@@ -732,6 +734,7 @@ class ParticleEdge(nn.Module):
                     use_edge_se=use_edge_se,
                     init_scale=init_scale,
                     cpu_mode=for_inference,
+                    scale_aggregation=scale_aggregation,
                 )
             )
             num_neighbors.append(k)
@@ -1010,6 +1013,7 @@ class ParticleEdgeTagger(nn.Module):
                  # misc
                  trim=True,
                  for_inference=False,
+                 scale_aggregation=2,
                  **kwargs):
         super(ParticleEdgeTagger, self).__init__(**kwargs)
         self.pf_input_dropout = nn.Dropout(pf_input_dropout) if pf_input_dropout else None
@@ -1050,6 +1054,7 @@ class ParticleEdgeTagger(nn.Module):
                                # misc
                                trim=trim,
                                for_inference=for_inference,
+                               scale_aggregation=scale_aggregation,
                                )
 
     def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx=None, track_ef=None, track_ef_mask=None, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):

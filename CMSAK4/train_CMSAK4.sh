@@ -52,17 +52,17 @@ elif [[ "$model" == "PNXT" ]] || [[ "$model" == "PNXT_noSV" ]]; then
 elif [[ "$model" == "PNXT_lite" ]] || [[ "$model" == "PNXT_noSV_lite" ]]; then
     modelopts="networks/CMSAK4_PNXT_lite.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" != *"lite"* && "$model" != *"new"* ]]; then
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" != *"lite"* && "$model" != *"old"* ]]; then
     modelopts="networks/CMSAK4_PNXT_ef.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" == *"lite"* && "$model" != *"new"* ]]; then
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" == *"lite"* && "$model" != *"old"* ]]; then
     modelopts="networks/CMSAK4_PNXT_ef_lite.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" != *"lite"* && "$model" == *"new"* ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_new.py"
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" != *"lite"* && "$model" == *"old"* ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef_old.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
-elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" == *"lite"* && "$model" == *"new"* ]]; then
-    modelopts="networks/CMSAK4_PNXT_ef_lite_new.py"
+elif [[ "$model" == *"ef"* ||  "$model" == *"aux"* ]] && [[ "$model" == *"PNXT"* && "$model" == *"lite"* && "$model" == *"old"* ]]; then
+    modelopts="networks/CMSAK4_PNXT_ef_lite_old.py"
     batchopts="--batch-size 512 --start-lr 1e-2"
 else
     echo "Invalid model $model!"
@@ -73,9 +73,9 @@ fi
 if [[ "$model" == *"_lite"* ]]; then
     model=${model%"_lite"}
 fi
-#remove _new from model name
-if [[ "$model" == *"_new"* ]]; then
-    model=${model%"_new"}
+#remove _old from model name
+if [[ "$model" == *"_old"* ]]; then
+    model=${model%"_old"}
 fi
 
 

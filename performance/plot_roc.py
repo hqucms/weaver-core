@@ -11,7 +11,7 @@ import mplhep as hep
 import yaml
 import time
 import multiprocessing as mp
-from weaver.utils.logger import _logger
+
 
 manager = mp.Manager()
 
@@ -21,7 +21,7 @@ plt.rcParams['agg.path.chunksize'] = 10000
 
 # parse arguments
 parser = argparse.ArgumentParser()
-parser.add_argument('--epochs', type=str, default='-1',
+parser.add_argument('--epochs', type=str, default='',
                     help='roc for various epochs')
 parser.add_argument('--not-show', action='store_true', default=False,
                     help='do not show plots')
@@ -256,9 +256,7 @@ def create_lists(input_name):
                 if (SPECIAL_DICT['LabelsBest'] in filename)]
 
     # epochs to load
-    if args.epochs == '-1':
-            epoch_list=[len([k for k in files if SPECIAL_DICT['Primary'] in k])-1]
-    elif args.epochs:
+    if args.epochs:
         epoch_list=[int(i) for i in args.epochs.split(',')]
     else:
         epoch_list = []
@@ -293,10 +291,10 @@ def create_dict(info, infile, dir_name, history, epoch, net_type):
     if epoch not in EPOCHS_DICT[net_type].keys():
         EPOCHS_DICT[net_type][epoch] = manager.dict()
     for label_type, labels_info in ROC_TYPE_DICT.items():
-        #_logger.info(label_type)
+        #print(label_type)
         if (args.primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
-        #_logger.info(infile)
+        #print(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True, mmap_mode='r')
@@ -341,7 +339,7 @@ def compute_roc(info, infile, dir_name, history, epoch, net_type):
     for label_type, labels_info in ROC_TYPE_DICT.items():
         if (args.primary and SPECIAL_DICT['Primary'] not in label_type) or label_type not in infile:
             continue
-        _logger.info(infile)
+        #print(infile)
         # load labels for each epoch and label type
         with open(os.path.join(dir_name,infile), 'rb') as f:
             file = np.load(f, allow_pickle=True, mmap_mode='r')
@@ -567,7 +565,7 @@ def _main(net_type, out_dir, label_dict):
     os.makedirs(out_dir, exist_ok=True)
 
     build_epochs_dict(label_dict, net_type)
-    _logger.info('Finished building epochs dict')
+    print('Finished building epochs dict')
 
     parallel_list=[]
     for input_name, info in label_dict.items():
@@ -594,7 +592,7 @@ def _main(net_type, out_dir, label_dict):
     for parallel_elem in parallel_list:
         parallel_elem.join()
 
-    _logger.info('Start plotting')
+    print('Start plotting')
     parallel_list = []
     for input_name, info in label_dict.items():
         # compute roc curve for each epoch
@@ -642,9 +640,10 @@ def _main(net_type, out_dir, label_dict):
 if __name__ == '__main__':
     start=time.time()
 
+
     date_time = time.strftime('%Y%m%d-%H%M%S')
     main_out_dir = os.path.join(f'{args.out_path}roc_curve', f'{date_time}_{args.name}_{args.in_dict}_{args.type}_roc')
-    _logger.info('Output directory: %s', main_out_dir)
+    print('Output directory: ', main_out_dir)
 
     fill_cmssw_net()
 
@@ -661,7 +660,7 @@ if __name__ == '__main__':
 
 
     if len(NET_TYPES) == 2:
-        _logger.info('Starting comparison')
+        print('Starting comparison')
         parallel_list=[]
         label_dict=load_dict(f'config/{args.complete_dict}.yaml',f'config/{args.in_dict}_{NET_TYPES[0]}.yaml')
         input_name = list(label_dict.keys())[0]
@@ -704,5 +703,5 @@ if __name__ == '__main__':
         for parallel_elem in parallel_list:
             parallel_elem.join()
 
-    _logger.info('Output directory: %s', main_out_dir)
-    _logger.info('Total time:  %f ', time.time()-start)
+    print('Output directory:', main_out_dir)
+    print('Total time: ', time.time()-start)
