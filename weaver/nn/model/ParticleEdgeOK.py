@@ -8,7 +8,7 @@ from functools import partial
 import sys
 
 '''orig_stdout = sys.stdout
-f = open('out_log1.txt', 'w')
+f = open('out_log2.txt', 'w')
 sys.stdout = f'''
 
 torch.set_printoptions(profile="full")
@@ -232,7 +232,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
             num_fts= outputs.size(1)
             dummy_ef= torch.zeros(batch_size, num_fts, num_points, k, device=ef_outputs.device)
             outputs=torch.cat((outputs, dummy_outputs), dim=1)
-            ef_outputs=torch.cat((ef_outputs, dummy_ef), dim=1)
+            ef_outputs=torch.cat((dummy_ef,ef_outputs), dim=1)
             #print("outputs1\n", outputs.size() , outputs)
             #print("ef_outputs1\n", ef_outputs.size() , ef_outputs)
         else:
@@ -548,9 +548,9 @@ class MultiScaleEdgeConv(nn.Module):
             message = [message[:, :, :, s] for s in self.slices]
             null_edge_pos = [null_edge_pos[:, :, :, s] for s in self.slices]
 
-        # print('message0:\n', message[0].size())
-        # print('message1:\n', message[1].size())
-        # print('message2:\n', message[2].size())
+        #print('message0:\n', message[0].size())
+        #print('message1:\n', message[1].size())
+        #print('message2:\n', message[2].size())
 
 
         pts_out = points
@@ -1061,6 +1061,7 @@ class ParticleEdgeTagger(nn.Module):
                                )
 
     def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx=None, track_ef=None, track_ef_mask=None, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):
+        #print("\n ok \n")
         if self.pf_input_dropout:
             pf_mask = self.pf_input_dropout(pf_mask)
         num_pf=pf_points.size(2)

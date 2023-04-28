@@ -14,10 +14,10 @@ def get_model(data_config, **kwargs):
         num_aux_classes_pair=len([k for k in data_config.aux_label_value_pair if 'bin' in k]),
         # network configurations
         node_dim=32,
-        edge_dim=24,
+        edge_dim=24, #8
         use_edge_bn=True,
-        layer_params=[(16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64), (16, 256, [(4, 1), (2, 1), (1, 1)], 64)],  # noqa
-        fc_params=[(256, 0.1)],
+        layer_params=[(16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48), (16, 160, [(4, 1), (2, 1), (1, 1)], 48)],  # noqa
+        fc_params=[(200, 0.1)],
         global_aggregation='attn4',
         # MultiScaleEdgeConv options
         edge_aggregation='attn8',
@@ -30,7 +30,7 @@ def get_model(data_config, **kwargs):
         use_node_se=True,
         use_edge_se=True,
         init_scale=1e-5,
-        scale_aggregation=1,
+        scale_aggregation=2,
     )
     cfg.update(**kwargs)
     _logger.info('Model config: %s' % str(cfg))

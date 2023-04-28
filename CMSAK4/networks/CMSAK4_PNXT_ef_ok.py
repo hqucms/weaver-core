@@ -1,6 +1,6 @@
 import torch
 from weaver.utils.logger import _logger
-from weaver.nn.model.ParticleEdge import ParticleEdgeTagger
+from weaver.nn.model.ParticleEdgeOK import ParticleEdgeTagger
 
 
 def get_model(data_config, **kwargs):
@@ -30,7 +30,7 @@ def get_model(data_config, **kwargs):
         use_node_se=True,
         use_edge_se=True,
         init_scale=1e-5,
-        scale_aggregation=1,
+        scale_aggregation=2,
     )
     cfg.update(**kwargs)
     _logger.info('Model config: %s' % str(cfg))
