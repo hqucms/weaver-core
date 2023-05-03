@@ -176,7 +176,7 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
                       use_rel_dist=False,
                       use_rel_lv_fts=True,
                       use_polarization_angle=False,
-                      cpu_mode=False, eps=1e-8):
+                      cpu_mode=False, eps=1e-8, co=True):
     if null_edge_pos is None and mask is not None:
         mask_ngbs = gather(mask, k, idx, cpu_mode=cpu_mode)
         mask_ngbs = mask_ngbs & mask.unsqueeze(-1)
@@ -232,7 +232,8 @@ def get_graph_feature(pts=None, fts=None, lvs=None, mask=None, ef_tensor=None,
             num_fts= outputs.size(1)
             dummy_ef= torch.zeros(batch_size, num_fts, num_points, k, device=ef_outputs.device)
             outputs=torch.cat((outputs, dummy_outputs), dim=1)
-            ef_outputs=torch.cat((ef_outputs, dummy_ef), dim=1)
+            print("co:", co)
+            ef_outputs= torch.cat((dummy_ef,ef_outputs), dim=1) if co else torch.cat((ef_outputs, dummy_ef), dim=1)
             #print("outputs1\n", outputs.size() , outputs)
             #print("ef_outputs1\n", ef_outputs.size() , ef_outputs)
         else:
@@ -368,6 +369,7 @@ class MultiScaleEdgeConv(nn.Module):
                  init_scale=1e-5,
                  cpu_mode=False,
                  scale_aggregation=2,
+                 co=True
                  ):
         super(MultiScaleEdgeConv, self).__init__()
 
@@ -383,7 +385,7 @@ class MultiScaleEdgeConv(nn.Module):
                                          use_rel_dist=use_rel_dist,
                                          use_rel_lv_fts=use_rel_lv_fts,
                                          use_polarization_angle=use_polarization_angle,
-                                         cpu_mode=cpu_mode)
+                                         cpu_mode=cpu_mode, co=co)
 
         self.slices = []
         self.slice_dims = []
@@ -665,6 +667,7 @@ class ParticleEdge(nn.Module):
                  for_inference=False,
                  for_segmentation=False,
                  scale_aggregation=2,
+                 co=True,
                  **kwargs):
         super(ParticleEdge, self).__init__(**kwargs)
 
@@ -738,6 +741,7 @@ class ParticleEdge(nn.Module):
                     init_scale=init_scale,
                     cpu_mode=for_inference,
                     scale_aggregation=scale_aggregation,
+                    co=co
                 )
             )
             num_neighbors.append(k)
@@ -752,7 +756,7 @@ class ParticleEdge(nn.Module):
                                              use_rel_dist=use_rel_dist,
                                              use_rel_lv_fts=use_rel_lv_fts,
                                              use_polarization_angle=use_polarization_angle,
-                                             cpu_mode=for_inference)
+                                             cpu_mode=for_inference, co=co)
             for i in range(len(self.layers)):
                 self.layers[i].num_neighbors_in = self.num_neighbors
 
@@ -1017,6 +1021,7 @@ class ParticleEdgeTagger(nn.Module):
                  trim=True,
                  for_inference=False,
                  scale_aggregation=2,
+                 co=True,
                  **kwargs):
         super(ParticleEdgeTagger, self).__init__(**kwargs)
         self.pf_input_dropout = nn.Dropout(pf_input_dropout) if pf_input_dropout else None
@@ -1058,6 +1063,7 @@ class ParticleEdgeTagger(nn.Module):
                                trim=trim,
                                for_inference=for_inference,
                                scale_aggregation=scale_aggregation,
+                               co=co
                                )
 
     def forward(self, pf_points, pf_features, pf_vectors, pf_mask, track_ef_idx=None, track_ef=None, track_ef_mask=None, sv_points=None, sv_features=None, sv_vectors=None, sv_mask=None):
