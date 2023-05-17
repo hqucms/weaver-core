@@ -281,7 +281,7 @@ class PairEmbed(nn.Module):
                     nn.GELU() if activation == 'gelu' else nn.ReLU(),
                 ])
                 input_dim = dim
-            if use_pre_activation_pair:
+            if dims and use_pre_activation_pair:
                 module_list = module_list[:-1]
             self.embed = nn.Sequential(*module_list)
         elif self.mode == 'sum':
@@ -295,7 +295,7 @@ class PairEmbed(nn.Module):
                         nn.GELU() if activation == 'gelu' else nn.ReLU(),
                     ])
                     input_dim = dim
-                if use_pre_activation_pair:
+                if dims and use_pre_activation_pair:
                     module_list = module_list[:-1]
                 self.embed = nn.Sequential(*module_list)
 
@@ -309,7 +309,7 @@ class PairEmbed(nn.Module):
                         nn.GELU() if activation == 'gelu' else nn.ReLU(),
                     ])
                     input_dim = dim
-                if use_pre_activation_pair:
+                if dims and use_pre_activation_pair:
                     module_list = module_list[:-1]
                 self.fts_embed = nn.Sequential(*module_list)
         else:
