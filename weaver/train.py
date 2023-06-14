@@ -77,6 +77,8 @@ parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/net
                          'based on the timestamp and network configuration')
 parser.add_argument('--load-model-weights', type=str, default=None,
                     help='initialize model with pre-trained weights')
+parser.add_argument('--exclude-model-weights', type=str, default=None,
+                    help='comma-separated regex to exclude matched weights from being loaded, e.g., `a.fc..+,b.fc..+`')
 parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
 parser.add_argument('--steps-per-epoch', type=int, default=None,
@@ -121,6 +123,8 @@ parser.add_argument('--predict-output', type=str,
 parser.add_argument('--export-onnx', type=str, default=None,
                     help='export the PyTorch model to ONNX model and save it at the given path (path must ends w/ .onnx); '
                          'needs to set `--data-config`, `--network-config`, and `--model-prefix` (requires the full model path)')
+parser.add_argument('--onnx-opset', type=int, default=15,
+                    help='ONNX opset version.')
 parser.add_argument('--io-test', action='store_true', default=False,
                     help='test throughput of the dataloader')
 parser.add_argument('--copy-inputs', action='store_true', default=False,
@@ -336,7 +340,7 @@ def onnx(args):
                       input_names=model_info['input_names'],
                       output_names=model_info['output_names'],
                       dynamic_axes=model_info.get('dynamic_axes', None),
-                      opset_version=13)
+                      opset_version=args.onnx_opset)
     _logger.info('ONNX model saved to %s', args.export_onnx)
 
     preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), 'preprocess.json')
@@ -559,6 +563,18 @@ def model_setup(args, data_config):
     model, model_info = network_module.get_model(data_config, **network_options)
     if args.load_model_weights:
         model_state = torch.load(args.load_model_weights, map_location='cpu')
+        if args.exclude_model_weights:
+            import re
+            exclude_patterns = args.exclude_model_weights.split(',')
+            _logger.info('The following weights will not be loaded: %s' % str(exclude_patterns))
+            key_state = {}
+            for k in model_state.keys():
+                key_state[k] = True
+                for pattern in exclude_patterns:
+                    if re.match(pattern, k):
+                        key_state[k] = False
+                        break
+            model_state = {k: v for k, v in model_state.items() if key_state[k]}
         missing_keys, unexpected_keys = model.load_state_dict(model_state, strict=False)
         _logger.info('Model initialized with weights from %s\n ... Missing: %s\n ... Unexpected: %s' %
                      (args.load_model_weights, missing_keys, unexpected_keys))
@@ -892,6 +908,7 @@ def main():
 
     if args.cross_validation:
         model_dir, model_fn = os.path.split(args.model_prefix)
+        load_model = args.load_model_weights or None
         var_name, kfold = args.cross_validation.split('%')
         kfold = int(kfold)
         for i in range(kfold):
@@ -899,6 +916,9 @@ def main():
             args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
             args.extra_selection = f'{var_name}%{kfold}!={i}'
             args.extra_test_selection = f'{var_name}%{kfold}=={i}'
+            if load_model and '{fold}' in load_model:
+                args.load_model_weights = load_model.replace('{fold}', f'fold{i}')
+
             _main(args)
     else:
         _main(args)
