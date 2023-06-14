@@ -104,8 +104,8 @@ class AutoStandardizer(object):
             self.load_branches.update(_get_variable_names(self._data_config.selection))
         _logger.debug('[AutoStandardizer] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, self.load_range,
-                            show_progressbar=True, treename=self._data_config.treename)
+        table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True,
+                            treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
         table = _apply_selection(table, self._data_config.selection)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
@@ -178,7 +178,8 @@ class WeightMaker(object):
             self.load_branches.update(_get_variable_names(self._data_config.selection))
         _logger.debug('[WeightMaker] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, show_progressbar=True, treename=self._data_config.treename)
+        table = _read_files(filelist, self.load_branches, show_progressbar=True,
+                            treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
         table = _apply_selection(table, self._data_config.selection)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})

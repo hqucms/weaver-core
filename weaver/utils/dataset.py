@@ -106,7 +106,8 @@ def _preprocess(table, data_config, options):
 
 
 def _load_next(data_config, filelist, load_range, options):
-    table = _read_files(filelist, data_config.load_branches, load_range, treename=data_config.treename)
+    table = _read_files(filelist, data_config.load_branches, load_range,
+                        treename=data_config.treename, branch_magic=data_config.branch_magic)
     table, indices = _preprocess(table, data_config, options)
     return table, indices
 
@@ -142,7 +143,7 @@ class _SimpleIter(object):
             new_file_dict = {}
             for name, files in file_dict.items():
                 new_files = files[worker_info.id::worker_info.num_workers]
-                assert(len(new_files) > 0)
+                assert (len(new_files) > 0)
                 new_file_dict[name] = new_files
             file_dict = new_file_dict
         self.worker_file_dict = file_dict

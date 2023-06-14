@@ -33,6 +33,7 @@ class DataConfig(object):
 
         opts = {
             'treename': None,
+            'branch_magic': None,
             'selection': None,
             'test_time_selection': None,
             'preprocess': {'method': 'manual', 'data_fraction': 0.1, 'params': None},
