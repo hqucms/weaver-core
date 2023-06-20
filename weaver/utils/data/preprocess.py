@@ -4,7 +4,7 @@ import copy
 import numpy as np
 import awkward as ak
 
-from ..logger import _logger
+from ..logger import _logger, warn_n_times
 from .tools import _get_variable_names, _eval_expr
 from .fileio import _read_files
 
@@ -33,7 +33,7 @@ def _clean_up(table, drop_branches):
     return table[columns]
 
 
-def _build_weights(table, data_config, reweight_hists=None, warn=_logger.warning):
+def _build_weights(table, data_config, reweight_hists=None):
     if data_config.weight_name is None:
         raise RuntimeError('Error when building weights: `weight_name` is None!')
     if data_config.use_precomputed_weights:
@@ -63,7 +63,7 @@ def _build_weights(table, data_config, reweight_hists=None, warn=_logger.warning
             wgt[pos] = hist[x_indices, y_indices]
             sum_evts += np.sum(pos)
         if sum_evts != len(table):
-            warn(
+            warn_n_times(
                 'Not all selected events used in the reweighting. '
                 'Check consistency between `selection` and `reweight_classes` definition, or with the `reweight_vars` binnings '
                 '(under- and overflow bins are discarded by default, unless `reweight_discard_under_overflow` is set to `False` in the `weights` section).',
@@ -107,7 +107,8 @@ class AutoStandardizer(object):
         _logger.debug('[AutoStandardizer] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True,
-                            treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
+                            treename=self._data_config.treename,
+                            branch_magic=self._data_config.branch_magic, file_magic=self._data_config.file_magic)
         table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
@@ -181,7 +182,8 @@ class WeightMaker(object):
         _logger.debug('[WeightMaker] keep_branches:\n  %s', ','.join(self.keep_branches))
         _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, show_progressbar=True,
-                            treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
+                            treename=self._data_config.treename,
+                            branch_magic=self._data_config.branch_magic, file_magic=self._data_config.file_magic)
         table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})

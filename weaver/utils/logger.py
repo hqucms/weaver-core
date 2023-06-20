@@ -1,7 +1,6 @@
 import logging
 import sys
 import os
-from functools import lru_cache
 
 
 def _configLogger(name, stdout=sys.stdout, filename=None, loglevel=logging.INFO):
@@ -76,8 +75,12 @@ class ColoredLogger():
 
 _logger = ColoredLogger('weaver')
 
+_warning_counter = {}
 
-@lru_cache(10)
-def warn_once(msg, logger=_logger):
-    # Keep track of 10 different messages and then warn again
-    logger.warning(msg)
+
+def warn_n_times(msg, n=10, logger=_logger):
+    if msg not in _warning_counter:
+        _warning_counter[msg] = 0
+    if _warning_counter[msg] < n:
+        logger.warning(msg)
+    _warning_counter[msg] += 1

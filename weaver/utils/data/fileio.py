@@ -3,7 +3,7 @@ import awkward as ak
 import tqdm
 import traceback
 from .tools import _concat
-from ..logger import _logger
+from ..logger import _logger, warn_n_times
 
 
 def _read_hdf5(filepath, branches, load_range=None):
@@ -76,7 +76,7 @@ def _read_parquet(filepath, branches, load_range=None):
     return outputs
 
 
-def _read_files(filelist, branches, load_range=None, show_progressbar=False, **kwargs):
+def _read_files(filelist, branches, load_range=None, show_progressbar=False, file_magic=None, **kwargs):
     import os
     branches = list(branches)
     table = []
@@ -102,6 +102,17 @@ def _read_files(filelist, branches, load_range=None, show_progressbar=False, **k
             _logger.error('When reading file %s:', filepath)
             _logger.error(traceback.format_exc())
         if a is not None:
+            if file_magic is not None:
+                import re
+                for var, value_dict in file_magic.items():
+                    if var in a.fields:
+                        warn_n_times(f'Var `{var}` already defined in the arrays '
+                                     f'but will be OVERWRITTEN by file_magic {value_dict}.')
+                    a[var] = 0
+                    for fn_pattern, value in value_dict.items():
+                        if re.search(fn_pattern, filepath):
+                            a[var] = value
+                            break
             table.append(a)
     table = _concat(table)  # ak.Array
     if len(table) == 0:

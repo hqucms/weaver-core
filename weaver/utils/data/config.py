@@ -34,6 +34,7 @@ class DataConfig(object):
         opts = {
             'treename': None,
             'branch_magic': None,
+            'file_magic': None,
             'selection': None,
             'test_time_selection': None,
             'preprocess': {'method': 'manual', 'data_fraction': 0.1, 'params': None},
@@ -209,17 +210,19 @@ class DataConfig(object):
     @classmethod
     def load(cls, fp, load_observers=True, load_reweight_info=True, extra_selection=None, extra_test_selection=None):
         with open(fp) as f:
-            options = yaml.safe_load(f)
+            _opts = yaml.safe_load(f)
+            options = copy.deepcopy(_opts)
         if not load_observers:
             options['observers'] = None
         if not load_reweight_info:
             options['weights'] = None
         if extra_selection:
-            options['selection'] = '(%s) & (%s)' % (options['selection'], extra_selection)
+            options['selection'] = '(%s) & (%s)' % (_opts['selection'], extra_selection)
         if extra_test_selection:
-            if 'test_time_selection' not in options:
-                raise RuntimeError('`test_time_selection` is not defined in the yaml file!')
-            options['test_time_selection'] = '(%s) & (%s)' % (options['test_time_selection'], extra_test_selection)
+            if 'test_time_selection' not in options or options['test_time_selection'] is None:
+                options['test_time_selection'] = '(%s) & (%s)' % (_opts['selection'], extra_test_selection)
+            else:
+                options['test_time_selection'] = '(%s) & (%s)' % (_opts['test_time_selection'], extra_test_selection)
         return cls(**options)
 
     def copy(self):

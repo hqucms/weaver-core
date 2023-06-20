@@ -4,6 +4,10 @@ import math
 import awkward as ak
 
 
+def _hash(*args):
+    return np.array([x.__hash__() for x in zip(*args)])
+
+
 def _concat(arrays, axis=0):
     if len(arrays) == 0:
         return np.array([])
@@ -128,7 +132,7 @@ def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math', '
 
 def _eval_expr(expr, table):
     tmp = {k: table[k] for k in _get_variable_names(expr)}
-    tmp.update({'math': math, 'np': np, 'numpy': np, 'ak': ak, 'awkward': ak, 'len': len,
+    tmp.update({'math': math, 'np': np, 'numpy': np, 'ak': ak, 'awkward': ak, 'len': len, '_hash': _hash,
                 '_concat': _concat, '_stack': _stack, '_pad': _pad, '_repeat_pad': _repeat_pad, '_clip': _clip,
                 '_batch_knn': _batch_knn, '_batch_permute_indices': _batch_permute_indices,
                 '_batch_argsort': _batch_argsort, '_batch_gather': _batch_gather, '_p4_from_pxpypze': _p4_from_pxpypze,

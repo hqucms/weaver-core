@@ -7,7 +7,7 @@ import torch.utils.data
 
 from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
-from .logger import _logger, warn_once
+from .logger import _logger
 from .data.tools import _pad, _repeat_pad, _clip
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
@@ -94,7 +94,7 @@ def _preprocess(table, data_config, options):
         _check_labels(table)
     # compute reweight indices
     if options['reweight'] and data_config.weight_name is not None:
-        wgts = _build_weights(table, data_config, warn=warn_once)
+        wgts = _build_weights(table, data_config)
         indices = _get_reweight_indices(wgts, up_sample=options['up_sample'],
                                         weight_scale=options['weight_scale'], max_resample=options['max_resample'])
     else:
@@ -108,8 +108,8 @@ def _preprocess(table, data_config, options):
 
 
 def _load_next(data_config, filelist, load_range, options):
-    table = _read_files(filelist, data_config.load_branches, load_range,
-                        treename=data_config.treename, branch_magic=data_config.branch_magic)
+    table = _read_files(filelist, data_config.load_branches, load_range, treename=data_config.treename,
+                        branch_magic=data_config.branch_magic, file_magic=data_config.file_magic)
     table, indices = _preprocess(table, data_config, options)
     return table, indices
 
