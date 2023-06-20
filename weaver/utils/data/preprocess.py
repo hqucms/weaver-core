@@ -9,9 +9,11 @@ from .tools import _get_variable_names, _eval_expr
 from .fileio import _read_files
 
 
-def _apply_selection(table, selection):
+def _apply_selection(table, selection, funcs={}):
     if selection is None:
         return table
+    new_vars = {k: funcs[k] for k in _get_variable_names(selection) if k not in table.fields and k in funcs}
+    _build_new_variables(table, new_vars)
     selected = ak.values_astype(_eval_expr(selection, table), 'bool')
     return table[selected]
 
@@ -106,7 +108,7 @@ class AutoStandardizer(object):
         _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True,
                             treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
-        table = _apply_selection(table, self._data_config.selection)
+        table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
         table = _clean_up(table, self.load_branches - self.keep_branches)
@@ -180,7 +182,7 @@ class WeightMaker(object):
         _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(self.load_branches))
         table = _read_files(filelist, self.load_branches, show_progressbar=True,
                             treename=self._data_config.treename, branch_magic=self._data_config.branch_magic)
-        table = _apply_selection(table, self._data_config.selection)
+        table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
         table = _build_new_variables(
             table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
         table = _clean_up(table, self.load_branches - self.keep_branches)

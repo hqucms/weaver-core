@@ -82,7 +82,9 @@ def _check_labels(table):
 
 def _preprocess(table, data_config, options):
     # apply selection
-    table = _apply_selection(table, data_config.selection if options['training'] else data_config.test_time_selection)
+    table = _apply_selection(
+        table, data_config.selection if options['training'] else data_config.test_time_selection,
+        funcs=data_config.var_funcs)
     if len(table) == 0:
         return []
     # define new variables
