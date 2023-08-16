@@ -9,6 +9,7 @@ import argparse
 import functools
 import numpy as np
 import math
+import copy
 import torch
 
 from torch.utils.data import DataLoader
@@ -824,6 +825,11 @@ def _main(args):
             else:
                 gpus = None
                 dev = torch.device('cpu')
+                try:
+                    if torch.backends.mps.is_available():
+                        dev = torch.device('mps')
+                except AttributeError:
+                    pass
             model = orig_model.to(dev)
             model_path = args.model_prefix if args.model_prefix.endswith(
                 '.pt') else args.model_prefix + '_best_epoch_state.pt'
@@ -913,20 +919,23 @@ def main():
 
     if args.cross_validation:
         model_dir, model_fn = os.path.split(args.model_prefix)
-        predict_output_base, predict_output_ext = os.path.splitext(args.predict_output)
+        if args.predict_output:
+            predict_output_base, predict_output_ext = os.path.splitext(args.predict_output)
         load_model = args.load_model_weights or None
         var_name, kfold = args.cross_validation.split('%')
         kfold = int(kfold)
         for i in range(kfold):
             _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
-            args.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
-            args.predict_output = f'{predict_output_base}_fold{i}' + predict_output_ext
-            args.extra_selection = f'{var_name}%{kfold}!={i}'
-            args.extra_test_selection = f'{var_name}%{kfold}=={i}'
+            opts = copy.deepcopy(args)
+            opts.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
+            if args.predict_output:
+                opts.predict_output = f'{predict_output_base}_fold{i}' + predict_output_ext
+            opts.extra_selection = f'{var_name}%{kfold}!={i}'
+            opts.extra_test_selection = f'{var_name}%{kfold}=={i}'
             if load_model and '{fold}' in load_model:
-                args.load_model_weights = load_model.replace('{fold}', f'fold{i}')
+                opts.load_model_weights = load_model.replace('{fold}', f'fold{i}')
 
-            _main(args)
+            _main(opts)
     else:
         _main(args)
 
