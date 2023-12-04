@@ -39,7 +39,7 @@ parser.add_argument('-t', '--data-test', nargs='*', default=[],
                     help='testing files; supported syntax:'
                          ' (a) plain list, `--data-test /path/to/a/* /path/to/b/*`;'
                          ' (b) keyword-based, `--data-test a:/path/to/a/* b:/path/to/b/*`, will produce output_a, output_b;'
-                         ' (c) split output per N input files, `--data-test a%10:/path/to/a/*`, will split per 10 input files')
+                         ' (c) split output per N input files, `--data-test a%%10:/path/to/a/*`, will split per 10 input files')
 parser.add_argument('--data-fraction', type=float, default=1,
                     help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
 parser.add_argument('--file-fraction', type=float, default=1,
@@ -71,7 +71,7 @@ parser.add_argument('-o', '--network-option', nargs=2, action='append', default=
                     help='options to pass to the model class constructor, e.g., `--network-option use_counts False`')
 parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/network',
                     help='path to save or load the model; for training, this will be used as a prefix, so model snapshots '
-                         'will saved to `{model_prefix}_epoch-%d_state.pt` after each epoch, and the one with the best '
+                         'will saved to `{model_prefix}_epoch-%%d_state.pt` after each epoch, and the one with the best '
                          'validation metric to `{model_prefix}_best_epoch_state.pt`; for testing, this should be the full path '
                          'including the suffix, otherwise the one with the best validation metric will be used; '
                          'for training, `{auto}` can be used as part of the path to auto-generate a name, '
@@ -104,7 +104,7 @@ parser.add_argument('--lr-scheduler', type=str, default='flat+decay',
 parser.add_argument('--warmup-steps', type=int, default=0,
                     help='number of warm-up steps, only valid for `flat+linear` and `flat+cos` lr schedulers')
 parser.add_argument('--load-epoch', type=int, default=None,
-                    help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%d_state.pt` and `epoch-%d_optimizer.pt` files')
+                    help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%%d_state.pt` and `epoch-%%d_optimizer.pt` files')
 parser.add_argument('--start-lr', type=float, default=5e-3,
                     help='start learning rate')
 parser.add_argument('--batch-size', type=int, default=128,
@@ -139,7 +139,7 @@ parser.add_argument('--profile', action='store_true', default=False,
 parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], default=None,
                     help='backend for distributed training')
 parser.add_argument('--cross-validation', type=str, default=None,
-                    help='enable k-fold cross validation; input format: `variable_name%k`')
+                    help='enable k-fold cross validation; input format: `variable_name%%k`')
 
 
 def to_filelist(args, mode='train'):
