@@ -626,28 +626,48 @@ def save_root(args, output_path, data_config, scores, labels, observers):
     :param observers
     :return:
     """
+    import awkward as ak
     from weaver.utils.data.fileio import _write_root
     output = {}
-    if args.regression_mode:
-        output[data_config.label_names[0]] = labels[data_config.label_names[0]]
-        output['output'] = scores
-    else:
+    if data_config.label_type == 'simple':
         for idx, label_name in enumerate(data_config.label_value):
             output[label_name] = (labels[data_config.label_names[0]] == idx)
             output['score_' + label_name] = scores[:, idx]
-    for k, v in labels.items():
-        if k == data_config.label_names[0]:
-            continue
-        if v.ndim > 1:
-            _logger.warning('Ignoring %s, not a 1d array.', k)
-            continue
-        output[k] = v
-    for k, v in observers.items():
-        if v.ndim > 1:
-            _logger.warning('Ignoring %s, not a 1d array.', k)
-            continue
-        output[k] = v
-    _write_root(output_path, output)
+    else:
+        if scores.ndim <= 2:
+            output['output'] = scores
+        elif scores.ndim == 3:
+            num_classes = len(scores[0, 0, :])
+            try:
+                names = data_config.labels['names']
+                assert (len(names) == num_classes)
+            except KeyError:
+                names = [f'class_{idx}' for idx in range(num_classes)]
+            for idx, label_name in enumerate(names):
+                output[label_name] = (labels[data_config.label_names[0]] == idx)
+                output['score_' + label_name] = scores[:, :, idx]
+        else:
+            output['output'] = scores
+    output.update(labels)
+    output.update(observers)
+
+    try:
+        _write_root(output_path, ak.Array(output))
+        _logger.info('Written output to %s' % output_path, color='bold')
+    except Exception as e:
+        _logger.error('Error when writing output ROOT file: \n' + str(e))
+
+    save_as_parquet = any(v.ndim > 2 for v in output.values())
+    if save_as_parquet:
+        try:
+            ak.to_parquet(
+                ak.Array(output),
+                output_path.replace('.root', '.parquet'),
+                compression='LZ4', compression_level=4)
+            _logger.info('Written alternative output file to %s' %
+                         output_path.replace('.root', '.parquet'), color='bold')
+        except Exception as e:
+            _logger.error('Error when writing output parquet file: \n' + str(e))
 
 
 def save_parquet(args, output_path, scores, labels, observers):
@@ -662,7 +682,11 @@ def save_parquet(args, output_path, scores, labels, observers):
     output = {'scores': scores}
     output.update(labels)
     output.update(observers)
-    ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
+    try:
+        ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
+        _logger.info('Written output to %s' % output_path, color='bold')
+    except Exception as e:
+        _logger.error('Error when writing output parquet file: \n' + str(e))
 
 
 def _main(args):
@@ -869,7 +893,6 @@ def _main(args):
                     save_root(args, output_path, data_config, scores, labels, observers)
                 else:
                     save_parquet(args, output_path, scores, labels, observers)
-                _logger.info('Written output to %s' % output_path, color='bold')
 
 
 def main():
