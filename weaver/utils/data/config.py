@@ -134,6 +134,8 @@ class DataConfig(object):
         self.observer_names = tuple(opts['observers'])
         # monitor variables
         self.monitor_variables = tuple(opts['monitor_variables'])
+        if self.observer_names and self.monitor_variables:
+            raise RuntimeError('Cannot set `observers` and `monitor_variables` at the same time.')
         # Z variables: returned as `Z` in the dataloader (use monitor_variables for training, observers for eval)
         self.z_variables = self.observer_names if len(self.observer_names) > 0 else self.monitor_variables
 

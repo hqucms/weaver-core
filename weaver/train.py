@@ -607,14 +607,16 @@ def iotest(args, data_loader):
 
     for X, y, Z in tqdm(data_loader):
         for k, v in Z.items():
-            monitor_info[k].append(v.cpu().numpy())
+            monitor_info[k].append(v)
     monitor_info = {k: _concat(v) for k, v in monitor_info.items()}
     if monitor_info:
-        monitor_output_path = 'weaver_monitor_info.pkl'
-        import pickle
-        with open(monitor_output_path, 'wb') as f:
-            pickle.dump(monitor_info, f)
-        _logger.info('Monitor info written to %s' % monitor_output_path)
+        monitor_output_path = 'weaver_monitor_info.parquet'
+        try:
+            import awkward as ak
+            ak.to_parquet(ak.Array(monitor_info), monitor_output_path, compression='LZ4', compression_level=4)
+            _logger.info('Monitor info written to %s' % monitor_output_path, color='bold')
+        except Exception as e:
+            _logger.error('Error when writing output parquet file: \n' + str(e))
 
 
 def save_root(args, output_path, data_config, scores, labels, observers):

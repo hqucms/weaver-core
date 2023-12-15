@@ -59,12 +59,14 @@ def train_classification(
     total_loss = 0
     num_batches = 0
     total_correct = 0
+    entry_count = 0
     count = 0
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
             inputs = [X[k].to(dev) for k in data_config.input_names]
             label = y[data_config.label_names[0]].long().to(dev)
+            entry_count += label.shape[0]
             try:
                 mask = y[data_config.label_names[0] + '_mask'].bool().to(dev)
             except KeyError:
@@ -117,7 +119,7 @@ def train_classification(
                 break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (entry_count, entry_count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
 
@@ -157,6 +159,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
+                # X, y: torch.Tensor; Z: ak.Array
                 inputs = [X[k].to(dev) for k in data_config.input_names]
                 label = y[data_config.label_names[0]].long().to(dev)
                 entry_count += label.shape[0]
@@ -174,7 +177,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     labels[k].append(_flatten_label(v, mask).numpy(force=True))
                 if not for_training:
                     for k, v in Z.items():
-                        observers[k].append(v.numpy(force=True))
+                        observers[k].append(v)
 
                 num_examples = label.shape[0]
                 label_counter.update(label.numpy(force=True))
@@ -206,7 +209,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     break
 
     time_diff = time.time() - start_time
-    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
+    _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (entry_count, entry_count / time_diff))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     if tb_helper:
@@ -259,8 +262,9 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
     start_time = time.time()
     with tqdm.tqdm(test_loader) as tq:
         for X, y, Z in tq:
-            inputs = {k: v.cpu().numpy() for k, v in X.items()}
-            label = y[data_config.label_names[0]].cpu().numpy()
+            # X, y: torch.Tensor; Z: ak.Array
+            inputs = {k: v.numpy(force=True) for k, v in X.items()}
+            label = y[data_config.label_names[0]].numpy(force=True)
             num_examples = label.shape[0]
             label_counter.update(label)
             score = sess.run([], inputs)[0]
@@ -268,9 +272,9 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
 
             scores.append(score)
             for k, v in y.items():
-                labels[k].append(v.cpu().numpy())
+                labels[k].append(v.numpy(force=True))
             for k, v in Z.items():
-                observers[k].append(v.cpu().numpy())
+                observers[k].append(v)
 
             correct = (preds == label).sum()
             total_correct += correct
@@ -404,6 +408,7 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
+                # X, y: torch.Tensor; Z: ak.Array
                 inputs = [X[k].to(dev) for k in data_config.input_names]
                 label = y[data_config.label_names[0]].float()
                 num_examples = label.shape[0]
@@ -411,12 +416,12 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
                 model_output = model(*inputs)
                 preds = model_output.squeeze().float()
 
-                scores.append(preds.detach().cpu().numpy())
+                scores.append(preds.numpy(force=True))
                 for k, v in y.items():
-                    labels[k].append(v.cpu().numpy())
+                    labels[k].append(v.numpy(force=True))
                 if not for_training:
                     for k, v in Z.items():
-                        observers[k].append(v.cpu().numpy())
+                        observers[k].append(v)
 
                 loss = 0 if loss_func is None else loss_func(preds, label).item()
 
