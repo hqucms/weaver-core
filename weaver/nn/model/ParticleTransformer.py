@@ -76,7 +76,27 @@ def p3_norm(p, eps=1e-8):
     return p[:, :3] / p[:, :3].norm(dim=1, keepdim=True).clamp(min=eps)
 
 
-def pairwise_lv_fts(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
+def to_energy_momentum(x, return_unit_vector=True):
+    energy = x[:, 3:4]
+    p2 = x[:, :3].square().sum(dim=1, keepdim=True)
+    mom = torch.sqrt(p2)
+    if return_unit_vector:
+        return energy, mom, x[:, :3] / mom.clamp(min=1e-8)
+    else:
+        return energy, mom
+
+
+def to_cos_sin_angles(xi, xj, normed_inputs=False, eps=1e-8):
+    if normed_inputs:
+        ni, nj = xi, xj
+    else:
+        ni, nj = p3_norm(xi, eps), p3_norm(xj, eps)
+    cos = (ni * nj).sum(dim=1, keepdim=True).clamp(min=-1, max=1)
+    sin = torch.linalg.cross(ni, nj, dim=1).norm(dim=1, keepdim=True).clamp(min=0, max=1)
+    return cos, sin
+
+
+def pairwise_lv_fts_pp(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
     pti, rapi, phii = to_ptrapphim(xi, False, eps=None, for_onnx=for_onnx).split((1, 1, 1), dim=1)
     ptj, rapj, phij = to_ptrapphim(xj, False, eps=None, for_onnx=for_onnx).split((1, 1, 1), dim=1)
 
@@ -110,6 +130,31 @@ def pairwise_lv_fts(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
         deltarap = rapi - rapj
         deltaphi = delta_phi(phii, phij)
         outputs += [deltarap, deltaphi]
+
+    assert (len(outputs) == num_outputs)
+    return torch.cat(outputs, dim=1)
+
+
+def pairwise_lv_fts_ee(xi, xj, num_outputs=6, eps=1e-8, for_onnx=False):
+    # outputs: [lnm2, cos_angle, sin_angle, lnkt, lnz, lnjade]
+    lnm2 = torch.log(to_m2(xi + xj, eps=eps))
+    outputs = [lnm2]
+
+    if num_outputs > 1:
+        ei, pi, ni = to_energy_momentum(xi)
+        ej, pj, nj = to_energy_momentum(xj)
+        cos_angle, sin_angle = to_cos_sin_angles(ni, nj, normed_inputs=True)
+        outputs += [cos_angle, sin_angle]
+
+    if num_outputs > 3:
+        pmin = ((pi <= pj) * pi + (pi > pj) * pj) if for_onnx else torch.minimum(pi, pj)
+        lnkt = torch.log((pmin * sin_angle).clamp(min=eps))
+        lnz = torch.log((pmin / (pi + pj).clamp(min=eps)).clamp(min=eps))
+        outputs += [lnkt, lnz]
+
+    if num_outputs > 5:
+        lnjade = torch.log((ei * ej * (1 - cos_angle)).clamp(min=eps))
+        outputs.append(lnjade)
 
     assert (len(outputs) == num_outputs)
     return torch.cat(outputs, dim=1)
@@ -258,6 +303,7 @@ class Embed(nn.Module):
 class PairEmbed(nn.Module):
     def __init__(
             self, pairwise_lv_dim, pairwise_input_dim, dims,
+            pairwise_lv_type='pp',
             remove_self_pair=False, use_pre_activation_pair=True, mode='sum',
             normalize_input=True, activation='gelu', eps=1e-8,
             for_onnx=False):
@@ -265,12 +311,19 @@ class PairEmbed(nn.Module):
 
         self.pairwise_lv_dim = pairwise_lv_dim
         self.pairwise_input_dim = pairwise_input_dim
-        self.is_symmetric = (pairwise_lv_dim <= 5) and (pairwise_input_dim == 0)
         self.remove_self_pair = remove_self_pair
         self.mode = mode
         self.for_onnx = for_onnx
-        self.pairwise_lv_fts = partial(pairwise_lv_fts, num_outputs=pairwise_lv_dim, eps=eps, for_onnx=for_onnx)
         self.out_dim = dims[-1]
+
+        if pairwise_lv_type == 'pp':
+            self.is_symmetric = (pairwise_lv_dim <= 5) and (pairwise_input_dim == 0)
+            self.pairwise_lv_fts = partial(pairwise_lv_fts_pp, num_outputs=pairwise_lv_dim, eps=eps, for_onnx=for_onnx)
+        elif pairwise_lv_type == 'ee':
+            self.is_symmetric = (pairwise_lv_dim <= 6) and (pairwise_input_dim == 0)
+            self.pairwise_lv_fts = partial(pairwise_lv_fts_ee, num_outputs=pairwise_lv_dim, eps=eps, for_onnx=for_onnx)
+        else:
+            raise RuntimeError('Invalid value for `pairwise_lv_type`: ' + pairwise_lv_type)
 
         if self.mode == 'concat':
             input_dim = pairwise_lv_dim + pairwise_input_dim
@@ -463,7 +516,8 @@ class ParticleTransformer(nn.Module):
                  input_dim,
                  num_classes=None,
                  # network configurations
-                 pair_input_dim=4,
+                 pair_input_type='pp',
+                 pair_input_dim=None,
                  pair_extra_dim=0,
                  remove_self_pair=False,
                  use_pre_activation_pair=True,
@@ -474,17 +528,19 @@ class ParticleTransformer(nn.Module):
                  num_cls_layers=2,
                  block_params=None,
                  cls_block_params={'dropout': 0, 'attn_dropout': 0, 'activation_dropout': 0},
-                 fc_params=[],
+                 fc_params=None,
                  activation='gelu',
                  # misc
                  trim=True,
                  for_inference=False,
+                 for_segmentation=False,
                  use_amp=False,
                  **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.trimmer = SequenceTrimmer(enabled=trim and not for_inference)
         self.for_inference = for_inference
+        self.for_segmentation = for_segmentation
         self.use_amp = use_amp
 
         embed_dim = embed_dims[-1] if len(embed_dims) > 0 else input_dim
@@ -503,10 +559,14 @@ class ParticleTransformer(nn.Module):
             cfg_cls_block.update(cls_block_params)
         _logger.info('cfg_cls_block: %s' % str(cfg_cls_block))
 
-        self.pair_extra_dim = pair_extra_dim
         self.embed = Embed(input_dim, embed_dims, activation=activation) if len(embed_dims) > 0 else nn.Identity()
+
+        if pair_input_dim is None:
+            pair_input_dim = 4 if pair_input_type == 'pp' else 6
+        self.pair_extra_dim = pair_extra_dim
         self.pair_embed = PairEmbed(
             pair_input_dim, pair_extra_dim, pair_embed_dims + [cfg_block['num_heads']],
+            pairwise_lv_type=pair_input_type,
             remove_self_pair=remove_self_pair, use_pre_activation_pair=use_pre_activation_pair,
             for_onnx=for_inference) if pair_embed_dims is not None and pair_input_dim + pair_extra_dim > 0 else None
         self.blocks = nn.ModuleList([Block(**cfg_block) for _ in range(num_layers)])
@@ -525,8 +585,9 @@ class ParticleTransformer(nn.Module):
             self.fc = None
 
         # init
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
-        trunc_normal_(self.cls_token, std=.02)
+        if not self.for_segmentation:
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)
+            trunc_normal_(self.cls_token, std=.02)
 
     @torch.jit.ignore
     def no_weight_decay(self):
@@ -557,7 +618,18 @@ class ParticleTransformer(nn.Module):
             for block in self.blocks:
                 x = block(x, x_cls=None, padding_mask=padding_mask, attn_mask=attn_mask)
 
-            # extract class token
+            # for segmentation
+            if self.for_segmentation:
+                if self.fc is not None:
+                    x = self.fc(x)
+                # x: (P, N, C) -> output: (N, C, P)
+                output = x.permute(1, 2, 0).contiguous()
+                if self.for_inference:
+                    output = torch.softmax(output, dim=1)
+                # print('output:\n', output)
+                return output
+
+            # for classification: extract using class token
             cls_tokens = self.cls_token.expand(1, x.size(1), -1)  # (1, N, C)
             for block in self.cls_blocks:
                 cls_tokens = block(x, x_cls=cls_tokens, padding_mask=padding_mask)
@@ -581,7 +653,8 @@ class ParticleTransformerTagger(nn.Module):
                  sv_input_dim,
                  num_classes=None,
                  # network configurations
-                 pair_input_dim=4,
+                 pair_input_type='pp',
+                 pair_input_dim=None,
                  pair_extra_dim=0,
                  remove_self_pair=False,
                  use_pre_activation_pair=True,
@@ -592,7 +665,7 @@ class ParticleTransformerTagger(nn.Module):
                  num_cls_layers=2,
                  block_params=None,
                  cls_block_params={'dropout': 0, 'attn_dropout': 0, 'activation_dropout': 0},
-                 fc_params=[],
+                 fc_params=None,
                  activation='gelu',
                  # misc
                  trim=True,
@@ -612,6 +685,7 @@ class ParticleTransformerTagger(nn.Module):
         self.part = ParticleTransformer(input_dim=embed_dims[-1],
                                         num_classes=num_classes,
                                         # network configurations
+                                        pair_input_type=pair_input_type,
                                         pair_input_dim=pair_input_dim,
                                         pair_extra_dim=pair_extra_dim,
                                         remove_self_pair=remove_self_pair,
@@ -660,7 +734,8 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
                  sv_input_dim,
                  num_classes=None,
                  # network configurations
-                 pair_input_dim=4,
+                 pair_input_type='pp',
+                 pair_input_dim=None,
                  pair_extra_dim=0,
                  remove_self_pair=False,
                  use_pre_activation_pair=True,
@@ -671,7 +746,7 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
                  num_cls_layers=2,
                  block_params=None,
                  cls_block_params={'dropout': 0, 'attn_dropout': 0, 'activation_dropout': 0},
-                 fc_params=[],
+                 fc_params=None,
                  activation='gelu',
                  # misc
                  trim=True,
@@ -692,6 +767,7 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
         self.part = ParticleTransformer(input_dim=embed_dims[-1],
                                         num_classes=num_classes,
                                         # network configurations
+                                        pair_input_type=pair_input_type,
                                         pair_input_dim=pair_input_dim,
                                         pair_extra_dim=pair_extra_dim,
                                         remove_self_pair=remove_self_pair,
