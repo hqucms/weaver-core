@@ -9,11 +9,12 @@ from .tools import _get_variable_names, _eval_expr
 from .fileio import _read_files
 
 
-def _apply_selection(table, selection, funcs={}):
+def _apply_selection(table, selection, funcs=None):
     if selection is None:
         return table
-    new_vars = {k: funcs[k] for k in _get_variable_names(selection) if k not in table.fields and k in funcs}
-    _build_new_variables(table, new_vars)
+    if funcs:
+        new_vars = {k: funcs[k] for k in _get_variable_names(selection) if k not in table.fields and k in funcs}
+        _build_new_variables(table, new_vars)
     selected = ak.values_astype(_eval_expr(selection, table), 'bool')
     return table[selected]
 
@@ -26,11 +27,6 @@ def _build_new_variables(table, funcs):
             continue
         table[k] = _eval_expr(expr, table)
     return table
-
-
-def _clean_up(table, drop_branches):
-    columns = [k for k in table.fields if k not in drop_branches]
-    return table[columns]
 
 
 def _build_weights(table, data_config, reweight_hists=None):
@@ -92,27 +88,33 @@ class AutoStandardizer(object):
         self.load_range = (0, data_config.preprocess.get('data_fraction', 0.1))
 
     def read_file(self, filelist):
-        self.keep_branches = set()
-        self.load_branches = set()
+        keep_branches = set()
+        aux_branches = set()
+        load_branches = set()
         for k, params in self._data_config.preprocess_params.items():
             if params['center'] == 'auto':
-                self.keep_branches.add(k)
-                if k in self._data_config.var_funcs:
-                    expr = self._data_config.var_funcs[k]
-                    self.load_branches.update(_get_variable_names(expr))
-                else:
-                    self.load_branches.add(k)
+                keep_branches.add(k)
+                load_branches.add(k)
         if self._data_config.selection:
-            self.load_branches.update(_get_variable_names(self._data_config.selection))
-        _logger.debug('[AutoStandardizer] keep_branches:\n  %s', ','.join(self.keep_branches))
-        _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, self.load_range, show_progressbar=True,
+            load_branches.update(_get_variable_names(self._data_config.selection))
+
+        func_vars = set(self._data_config.var_funcs.keys())
+        while (load_branches & func_vars):
+            for k in (load_branches & func_vars):
+                aux_branches.add(k)
+                load_branches.remove(k)
+                load_branches.update(_get_variable_names(self._data_config.var_funcs[k]))
+
+        _logger.debug('[AutoStandardizer] keep_branches:\n  %s', ','.join(keep_branches))
+        _logger.debug('[AutoStandardizer] aux_branches:\n  %s', ','.join(aux_branches))
+        _logger.debug('[AutoStandardizer] load_branches:\n  %s', ','.join(load_branches))
+
+        table = _read_files(filelist, load_branches, self.load_range, show_progressbar=True,
                             treename=self._data_config.treename,
                             branch_magic=self._data_config.branch_magic, file_magic=self._data_config.file_magic)
         table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
-        table = _build_new_variables(
-            table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
-        table = _clean_up(table, self.load_branches - self.keep_branches)
+        table = _build_new_variables(table, {k: v for k, v in self._data_config.var_funcs.items() if k in aux_branches})
+        table = table[keep_branches]
         return table
 
     def make_preprocess_params(self, table):
@@ -142,7 +144,7 @@ class AutoStandardizer(object):
         table = self.read_file(self._filelist)
         preprocess_params = self.make_preprocess_params(table)
         self._data_config.preprocess_params = preprocess_params
-        # must also propogate the changes to `data_config.options` so it can be persisted
+        # must also propagate the changes to `data_config.options` so it can be persisted
         self._data_config.options['preprocess']['params'] = preprocess_params
         if output:
             _logger.info(
@@ -168,26 +170,31 @@ class WeightMaker(object):
         self._data_config = data_config.copy()
 
     def read_file(self, filelist):
-        self.keep_branches = set(self._data_config.reweight_branches + self._data_config.reweight_classes +
-                                 (self._data_config.basewgt_name,))
-        self.load_branches = set()
-        for k in self.keep_branches:
-            if k in self._data_config.var_funcs:
-                expr = self._data_config.var_funcs[k]
-                self.load_branches.update(_get_variable_names(expr))
-            else:
-                self.load_branches.add(k)
+        keep_branches = set(self._data_config.reweight_branches + self._data_config.reweight_classes)
+        if self._data_config.reweight_basewgt:
+            keep_branches.add(self._data_config.basewgt_name)
+        aux_branches = set()
+        load_branches = keep_branches.copy()
         if self._data_config.selection:
-            self.load_branches.update(_get_variable_names(self._data_config.selection))
-        _logger.debug('[WeightMaker] keep_branches:\n  %s', ','.join(self.keep_branches))
-        _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(self.load_branches))
-        table = _read_files(filelist, self.load_branches, show_progressbar=True,
+            load_branches.update(_get_variable_names(self._data_config.selection))
+
+        func_vars = set(self._data_config.var_funcs.keys())
+        while (load_branches & func_vars):
+            for k in (load_branches & func_vars):
+                aux_branches.add(k)
+                load_branches.remove(k)
+                load_branches.update(_get_variable_names(self._data_config.var_funcs[k]))
+
+        _logger.debug('[WeightMaker] keep_branches:\n  %s', ','.join(keep_branches))
+        _logger.debug('[WeightMaker] aux_branches:\n  %s', ','.join(aux_branches))
+        _logger.debug('[WeightMaker] load_branches:\n  %s', ','.join(load_branches))
+
+        table = _read_files(filelist, load_branches, show_progressbar=True,
                             treename=self._data_config.treename,
                             branch_magic=self._data_config.branch_magic, file_magic=self._data_config.file_magic)
         table = _apply_selection(table, self._data_config.selection, funcs=self._data_config.var_funcs)
-        table = _build_new_variables(
-            table, {k: v for k, v in self._data_config.var_funcs.items() if k in self.keep_branches})
-        table = _clean_up(table, self.load_branches - self.keep_branches)
+        table = _build_new_variables(table, {k: v for k, v in self._data_config.var_funcs.items() if k in aux_branches})
+        table = table[keep_branches]
         return table
 
     def make_weights(self, table):
@@ -284,7 +291,7 @@ class WeightMaker(object):
         table = self.read_file(self._filelist)
         wgts = self.make_weights(table)
         self._data_config.reweight_hists = wgts
-        # must also propogate the changes to `data_config.options` so it can be persisted
+        # must also propagate the changes to `data_config.options` so it can be persisted
         self._data_config.options['weights']['reweight_hists'] = {k: v.tolist() for k, v in wgts.items()}
         if output:
             _logger.info('Writing YAML file w/ reweighting info to %s' % output)
