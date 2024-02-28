@@ -334,6 +334,8 @@ def onnx(args):
     model = model.cpu()
     model.eval()
 
+    if not os.path.dirname(args.export_onnx):
+        args.export_onnx = os.path.join(os.path.dirname(model_path), args.export_onnx)
     os.makedirs(os.path.dirname(args.export_onnx), exist_ok=True)
     inputs = tuple(
         torch.ones(model_info['input_shapes'][k], dtype=torch.float32) for k in model_info['input_names'])
@@ -879,7 +881,7 @@ def _main(args):
             del test_loader
 
             if args.predict_output:
-                if '/' not in args.predict_output:
+                if not os.path.dirname(predict_output):
                     predict_output = os.path.join(
                         os.path.dirname(args.model_prefix),
                         'predict_output', args.predict_output)
