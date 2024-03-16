@@ -881,7 +881,7 @@ def _main(args):
             del test_loader
 
             if args.predict_output:
-                if not os.path.dirname(predict_output):
+                if not os.path.dirname(args.predict_output):
                     predict_output = os.path.join(
                         os.path.dirname(args.model_prefix),
                         'predict_output', args.predict_output)
