@@ -271,6 +271,7 @@ class WeightMaker(object):
 
         if self._data_config.reweight_basewgt:
             wgts = _build_weights(table, self._data_config, reweight_hists=result)
+            _logger.info('Sample weight percentiles: %s', str(np.percentile(wgts, np.arange(101))))
             wgt_ref = np.percentile(wgts, 100 - self._data_config.reweight_threshold)
             _logger.info('Set overall reweighting scale factor (%d threshold) to %s (max %s)' %
                          (100 - self._data_config.reweight_threshold, wgt_ref, np.max(wgts)))
