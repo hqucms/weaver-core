@@ -80,6 +80,8 @@ parser.add_argument('--load-model-weights', type=str, default=None,
                     help='initialize model with pre-trained weights')
 parser.add_argument('--exclude-model-weights', type=str, default=None,
                     help='comma-separated regex to exclude matched weights from being loaded, e.g., `a.fc..+,b.fc..+`')
+parser.add_argument('--freeze-model-weights', type=str, default=None,
+                    help='comma-separated regex to freeze matched weights from being updated in the training, e.g., `a.fc..+,b.fc..+`')
 parser.add_argument('--num-epochs', type=int, default=20,
                     help='number of epochs')
 parser.add_argument('--steps-per-epoch', type=int, default=None,
@@ -581,6 +583,19 @@ def model_setup(args, data_config, device='cpu'):
         missing_keys, unexpected_keys = model.load_state_dict(model_state, strict=False)
         _logger.info('Model initialized with weights from %s\n ... Missing: %s\n ... Unexpected: %s' %
                      (args.load_model_weights, missing_keys, unexpected_keys))
+        if args.freeze_model_weights:
+            import re
+            freeze_patterns = args.freeze_model_weights.split(',')
+            for name, param in model.named_parameters():
+                freeze = False
+                for pattern in freeze_patterns:
+                    if re.match(pattern, name):
+                        freeze = True
+                        break
+                if freeze:
+                    param.requires_grad = False
+            _logger.info('The following weights has been frozen:\n - %s',
+                         '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
     # _logger.info(model)
     flops(model, model_info, device=device)
     # loss function
