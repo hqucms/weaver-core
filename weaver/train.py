@@ -232,10 +232,17 @@ def train_load(args):
         args.data_fraction = 0.1
         args.fetch_step = 0.002
 
-    if args.in_memory and (args.steps_per_epoch is None or args.steps_per_epoch_val is None):
-        raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+    if args.in_memory:
+        if args.steps_per_epoch is None or args.steps_per_epoch_val is None:
+            raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+        if args.fetch_by_files or args.fetch_step < 1:
+            _logger.warning(
+                'Running with --in-memory, but --fetch-step is set to a value below 1 (or --fetch-by-files is set). '
+                'This means only a fraction of data will be loaded throughout the training.', color='bold')
 
-    train_data = SimpleIterDataset(train_file_dict, args.data_config, for_training=True,
+    train_data = SimpleIterDataset(train_file_dict, args.data_config,
+                                   batch_size=args.batch_size,
+                                   for_training=True,
                                    extra_selection=args.extra_selection,
                                    remake_weights=not args.no_remake_weights,
                                    load_range_and_fraction=(train_range, args.data_fraction),
@@ -245,7 +252,9 @@ def train_load(args):
                                    infinity_mode=args.steps_per_epoch is not None,
                                    in_memory=args.in_memory,
                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    val_data = SimpleIterDataset(val_file_dict, args.data_config, for_training=True,
+    val_data = SimpleIterDataset(val_file_dict, args.data_config,
+                                 batch_size=args.batch_size,
+                                 for_training=True,
                                  extra_selection=args.extra_selection,
                                  load_range_and_fraction=(val_range, args.data_fraction),
                                  file_fraction=args.file_fraction,
@@ -567,7 +576,14 @@ def model_setup(args, data_config, device='cpu'):
         network_options['use_amp'] = True
     model, model_info = network_module.get_model(data_config, **network_options)
     if args.load_model_weights:
-        model_state = torch.load(args.load_model_weights, map_location='cpu')
+        if ':' in args.load_model_weights:
+            state_file, prefix = args.load_model_weights.split(':')
+            model_state = torch.load(state_file, map_location='cpu')
+            model_state = {k.replace(prefix + '.', '', 1): v for k,
+                           v in model_state.items() if k.startswith(prefix + '.')}
+
+        else:
+            model_state = torch.load(args.load_model_weights, map_location='cpu')
         if args.exclude_model_weights:
             import re
             exclude_patterns = args.exclude_model_weights.split(',')
@@ -606,7 +622,21 @@ def model_setup(args, data_config, device='cpu'):
         loss_func = torch.nn.CrossEntropyLoss()
         _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.',
                         args.network_config)
-    return model, model_info, loss_func
+    # train / evaluate loop implementation
+    try:
+        train = network_module.get_train_fn(data_config, **network_options)
+        evaluate = network_module.get_evaluate_fn(data_config, **network_options)
+        _logger.info('Using custom train/evaluate functions with options %s' % network_options)
+    except AttributeError:
+        if args.regression_mode:
+            _logger.info('Running in regression mode')
+            from weaver.utils.nn.tools import train_regression as train
+            from weaver.utils.nn.tools import evaluate_regression as evaluate
+        else:
+            _logger.info('Running in classification mode')
+            from weaver.utils.nn.tools import train_classification as train
+            from weaver.utils.nn.tools import evaluate_classification as evaluate
+    return model, model_info, loss_func, train, evaluate
 
 
 def iotest(args, data_loader):
@@ -719,16 +749,6 @@ def _main(args):
     if args.file_fraction < 1:
         _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
 
-    # classification/regression mode
-    if args.regression_mode:
-        _logger.info('Running in regression mode')
-        from weaver.utils.nn.tools import train_regression as train
-        from weaver.utils.nn.tools import evaluate_regression as evaluate
-    else:
-        _logger.info('Running in classification mode')
-        from weaver.utils.nn.tools import train_classification as train
-        from weaver.utils.nn.tools import evaluate_classification as evaluate
-
     # training/testing mode
     training_mode = not args.predict
 
@@ -765,7 +785,7 @@ def _main(args):
         iotest(args, data_loader)
         return
 
-    model, model_info, loss_func = model_setup(args, data_config, device=dev)
+    model, model_info, loss_func, train, evaluate = model_setup(args, data_config, device=dev)
 
     # TODO: load checkpoint
     # if args.backend is not None:
@@ -826,7 +846,7 @@ def _main(args):
             _logger.info('-' * 50)
             _logger.info('Epoch #%d training' % epoch)
             train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb)
+                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
             if args.model_prefix and (args.backend is None or local_rank == 0):
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
@@ -841,7 +861,7 @@ def _main(args):
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
-                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb)
+                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
             is_best_epoch = (
                 valid_metric < best_valid_metric) if args.regression_mode else(
                 valid_metric > best_valid_metric)
@@ -891,7 +911,7 @@ def _main(args):
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
             else:
                 test_metric, scores, labels, observers = evaluate(
-                    model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb)
+                    model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb, extra_args=locals())
             _logger.info('Test metric %.5f' % test_metric, color='bold')
             del test_loader
 

@@ -49,7 +49,7 @@ _metric_dict = {
     'roc_auc_score': partial(_m.roc_auc_score, multi_class='ovo'),
     'roc_auc_score_matrix': roc_auc_score_ovo,
     'confusion_matrix': confusion_matrix,
-    }
+}
 
 
 def _get_metric(metric):
@@ -62,11 +62,14 @@ def _get_metric(metric):
 def evaluate_metrics(y_true, y_score, eval_metrics=[]):
     results = {}
     for metric in eval_metrics:
-        func = _get_metric(metric)
+        if callable(metric):
+            metric, func = metric.__name__, metric
+        else:
+            func = _get_metric(metric)
         try:
             results[metric] = func(y_true, y_score)
         except Exception as e:
             results[metric] = None
-            _logger.error(str(e))
+            _logger.warning(f'Cannot compute metric {metric}: {str(e)}')
             _logger.debug(traceback.format_exc())
     return results

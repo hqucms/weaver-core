@@ -44,6 +44,7 @@ class DataConfig(object):
             'observers': [],
             'monitor_variables': [],
             'weights': None,
+            'bucketing': None,
         }
         for k, v in kwargs.items():
             if v is not None:
@@ -136,6 +137,13 @@ class DataConfig(object):
                 if self.reweight_hists is not None:
                     for k, v in self.reweight_hists.items():
                         self.reweight_hists[k] = np.array(v, dtype='float32')
+        # sequence bucketing
+        self.bucketing = False
+        if opts['bucketing'] is not None:
+            self.bucketing = True
+            self.bucketing_var = opts['bucketing']['var']
+            self.register(self.bucketing_var, to='train')
+            self.bucketing_bins = opts['bucketing']['bins']
         # observers
         self.observer_names = tuple(opts['observers'])
         # monitor variables
@@ -172,6 +180,9 @@ class DataConfig(object):
                               'reweight_classes', 'class_weights', 'reweight_threshold',
                               'reweight_discard_under_overflow']:
                         _log('%s: %s' % (k, getattr(self, k)))
+            if opts['bucketing'] is not None:
+                for k in ['bucketing_var', 'bucketing_bins']:
+                    _log('%s: %s' % (k, getattr(self, k)))
 
         # selection
         if self.selection:
