@@ -50,7 +50,7 @@ def _flatten_preds(model_output, label=None, mask=None, label_axis=1):
 
 def train_classification(
         model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None,
-        tb_helper=None):
+        tb_helper=None, extra_args=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -140,7 +140,7 @@ def train_classification(
 
 def evaluate_classification(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
                             eval_metrics=['roc_auc_score', 'roc_auc_score_matrix', 'confusion_matrix'],
-                            tb_helper=None):
+                            tb_helper=None, extra_args=None):
     model.eval()
 
     data_config = test_loader.dataset.config
@@ -299,7 +299,7 @@ def evaluate_onnx(model_path, test_loader, eval_metrics=['roc_auc_score', 'roc_a
 
 def train_regression(
         model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None,
-        tb_helper=None):
+        tb_helper=None, extra_args=None):
     model.train()
 
     data_config = train_loader.dataset.config
@@ -391,7 +391,7 @@ def train_regression(
 def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_func=None, steps_per_epoch=None,
                         eval_metrics=['mean_squared_error', 'mean_absolute_error', 'median_absolute_error',
                                       'mean_gamma_deviance'],
-                        tb_helper=None):
+                        tb_helper=None, extra_args=None):
     model.eval()
 
     data_config = test_loader.dataset.config
