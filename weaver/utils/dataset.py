@@ -102,7 +102,28 @@ def _preprocess(table, data_config, options):
         indices = np.arange(len(table[data_config.label_names[0]]))
     # shuffle
     if options['shuffle']:
-        np.random.shuffle(indices)
+        # sequence bucketing
+        if data_config.bucketing:
+            rng = np.random.default_rng()
+            bucket_indices = []
+            remainder_indices = []
+            counts = ak.to_numpy(table[data_config.bucketing_var][indices])
+            if np.iterable(data_config.bucketing_bins):
+                bins = data_config.bucketing_bins
+            else:
+                bins = np.percentile(counts, np.linspace(0, 100, data_config.bucketing_bins + 1))
+            bins[0] = -np.inf
+            bins[-1] = np.inf
+            for lower, upper in zip(bins[:-1], bins[1:]):
+                inds = rng.permutation(indices[(counts >= lower) & (counts < upper)])
+                num_batches, remainder = divmod(len(inds), options['batch_size'])
+                bucket_indices.append(inds[remainder:].reshape((num_batches, options['batch_size'])))
+                remainder_indices.append(inds[:remainder])
+            # shuffle the batches (i.e., along axis=0)
+            bucket_indices = rng.permutation(np.concatenate(bucket_indices), axis=0).reshape(-1)
+            indices = np.concatenate([bucket_indices, *remainder_indices])
+        else:
+            np.random.shuffle(indices)
     # perform input variable standardization, clipping, padding and stacking
     table = _finalize_inputs(table, data_config)
     return table, indices
@@ -294,7 +315,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         file_fraction (float): fraction of files to load.
     """
 
-    def __init__(self, file_dict, data_config_file,
+    def __init__(self, file_dict, data_config_file, batch_size=None,
                  for_training=True, load_range_and_fraction=None, extra_selection=None,
                  fetch_by_files=False, fetch_step=0.01, file_fraction=1, remake_weights=False, up_sample=True,
                  weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name=''):
@@ -315,6 +336,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             'up_sample': up_sample,
             'weight_scale': weight_scale,
             'max_resample': max_resample,
+            'batch_size': batch_size,
         }
 
         # ==== torch collate_fn map ====
