@@ -733,7 +733,7 @@ def _main(args):
     training_mode = not args.predict
 
     # device
-    if args.gpus:
+    if int(args.gpus):
         # distributed training
         if args.backend is not None:
             local_rank = args.local_rank
