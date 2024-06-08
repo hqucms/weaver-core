@@ -340,7 +340,7 @@ def onnx(args):
 
     from weaver.utils.dataset import DataConfig
     data_config = DataConfig.load(args.data_config, load_observers=False, load_reweight_info=False)
-    model, model_info, _ = model_setup(args, data_config)
+    model, model_info, *_ = model_setup(args, data_config)
     model.load_state_dict(torch.load(model_path, map_location='cpu'))
     model = model.cpu()
     model.eval()
@@ -599,19 +599,19 @@ def model_setup(args, data_config, device='cpu'):
         missing_keys, unexpected_keys = model.load_state_dict(model_state, strict=False)
         _logger.info('Model initialized with weights from %s\n ... Missing: %s\n ... Unexpected: %s' %
                      (args.load_model_weights, missing_keys, unexpected_keys))
-        if args.freeze_model_weights:
-            import re
-            freeze_patterns = args.freeze_model_weights.split(',')
-            for name, param in model.named_parameters():
-                freeze = False
-                for pattern in freeze_patterns:
-                    if re.match(pattern, name):
-                        freeze = True
-                        break
-                if freeze:
-                    param.requires_grad = False
-            _logger.info('The following weights has been frozen:\n - %s',
-                         '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
+    if args.freeze_model_weights:
+        import re
+        freeze_patterns = args.freeze_model_weights.split(',')
+        for name, param in model.named_parameters():
+            freeze = False
+            for pattern in freeze_patterns:
+                if re.match(pattern, name):
+                    freeze = True
+                    break
+            if freeze:
+                param.requires_grad = False
+        _logger.info('The following weights has been frozen:\n - %s',
+                        '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
     # _logger.info(model)
     flops(model, model_info, device=device)
     # loss function
