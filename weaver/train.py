@@ -22,6 +22,10 @@ parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
 parser.add_argument('-c', '--data-config', type=str,
                     help='data config YAML file')
+parser.add_argument('--data-config-val', type=str, default=None,
+                    help='data config YAML file for validation set')
+parser.add_argument('--data-config-test', type=str, default=None,
+                    help='data config YAML file for test set')
 parser.add_argument('--extra-selection', type=str, default=None,
                     help='Additional selection requirement, will modify `selection` to `(selection) & (extra)` on-the-fly')
 parser.add_argument('--extra-test-selection', type=str, default=None,
@@ -175,7 +179,7 @@ def to_filelist(args, mode='train'):
             new_file_dict = {}
             for name, files in file_dict.items():
                 new_files = files[args.local_rank::local_world_size]
-                assert(len(new_files) > 0)
+                assert (len(new_files) > 0)
                 np.random.shuffle(new_files)
                 new_file_dict[name] = new_files
             file_dict = new_file_dict
@@ -200,7 +204,7 @@ def to_filelist(args, mode='train'):
         file_dict = new_file_dict
 
     filelist = sum(file_dict.values(), [])
-    assert(len(filelist) == len(set(filelist)))
+    assert (len(filelist) == len(set(filelist)))
     return file_dict, filelist
 
 
@@ -208,7 +212,7 @@ def train_load(args):
     """
     Loads the training data.
     :param args:
-    :return: train_loader, val_loader, data_config, train_inputs
+    :return: train_loader, train_data_config, val_loader, val_data_config
     """
 
     train_file_dict, train_files = to_filelist(args, 'train')
@@ -252,7 +256,7 @@ def train_load(args):
                                    infinity_mode=args.steps_per_epoch is not None,
                                    in_memory=args.in_memory,
                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    val_data = SimpleIterDataset(val_file_dict, args.data_config,
+    val_data = SimpleIterDataset(val_file_dict, args.data_config_val,
                                  batch_size=args.batch_size,
                                  for_training=True,
                                  extra_selection=args.extra_selection,
@@ -269,18 +273,17 @@ def train_load(args):
     val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                             num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
                             persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
-    data_config = train_data.config
-    train_input_names = train_data.config.input_names
-    train_label_names = train_data.config.label_names
+    train_data_config = train_data.config
+    val_data_config = val_data.config
 
-    return train_loader, val_loader, data_config, train_input_names, train_label_names
+    return train_loader, train_data_config, val_loader, val_data_config
 
 
 def test_load(args):
     """
     Loads the test data.
     :param args:
-    :return: test_loaders, data_config
+    :return: test_loaders, test_data_config
     """
     # keyword-based --data-test: 'a:/path/to/a b:/path/to/b'
     # split --data-test: 'a%10:/path/to/a/*'
@@ -314,7 +317,7 @@ def test_load(args):
         filelist = file_dict[name]
         _logger.info('Running on test file group %s with %d files:\n...%s', name, len(filelist), '\n...'.join(filelist))
         num_workers = min(args.num_workers, len(filelist))
-        test_data = SimpleIterDataset({name: filelist}, args.data_config, for_training=False,
+        test_data = SimpleIterDataset({name: filelist}, args.data_config_test, for_training=False,
                                       extra_selection=args.extra_test_selection,
                                       load_range_and_fraction=((0, 1), args.data_fraction),
                                       fetch_by_files=True, fetch_step=1,
@@ -324,8 +327,8 @@ def test_load(args):
         return test_loader
 
     test_loaders = {name: functools.partial(get_test_loader, name) for name in file_dict}
-    data_config = SimpleIterDataset({}, args.data_config, for_training=False).config
-    return test_loaders, data_config
+    test_data_config = SimpleIterDataset({}, args.data_config_test, for_training=False).config
+    return test_loaders, test_data_config
 
 
 def onnx(args):
@@ -376,8 +379,8 @@ def flops(model, model_info, device='cpu'):
     model = copy.deepcopy(model).to(device)
     model.eval()
 
-    inputs = tuple(
-        torch.ones(model_info['input_shapes'][k], dtype=torch.float32, device=device) for k in model_info['input_names'])
+    inputs = tuple(torch.ones(model_info['input_shapes'][k], dtype=torch.float32,
+                              device=device) for k in model_info['input_names'])
 
     macs, params = get_model_complexity_info(model, inputs, as_strings=True, print_per_layer_stat=True, verbose=True)
     _logger.info('{:<30}  {:<8}'.format('Computational complexity: ', macs))
@@ -466,8 +469,8 @@ def optim(args, model, device):
                     names_lr_mult.append(name)
                 else:
                     no_decay_1x.append(param)
-            assert(len(decay_1x) + len(decay_mult) == len(decay))
-            assert(len(no_decay_1x) + len(no_decay_mult) == len(no_decay))
+            assert (len(decay_1x) + len(decay_mult) == len(decay))
+            assert (len(no_decay_1x) + len(no_decay_mult) == len(no_decay))
         else:
             decay_1x, no_decay_1x = list(decay.values()), list(no_decay.values())
         wd = optimizer_options.pop('weight_decay', 0.)
@@ -611,7 +614,7 @@ def model_setup(args, data_config, device='cpu'):
             if freeze:
                 param.requires_grad = False
         _logger.info('The following weights has been frozen:\n - %s',
-                        '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
+                     '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
     # _logger.info(model)
     flops(model, model_info, device=device)
     # loss function
@@ -776,7 +779,7 @@ def _main(args):
 
     # load data
     if training_mode:
-        train_loader, val_loader, data_config, train_input_names, train_label_names = train_load(args)
+        train_loader, data_config, val_loader, _ = train_load(args)
     else:
         test_loaders, data_config = test_load(args)
 
@@ -814,7 +817,8 @@ def _main(args):
         # DistributedDataParallel
         if args.backend is not None:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=gpus, output_device=local_rank, find_unused_parameters=True)
+            model = torch.nn.parallel.DistributedDataParallel(
+                model, device_ids=gpus, output_device=local_rank, find_unused_parameters=True)
 
         # optimizer & learning rate
         opt, scheduler = optim(args, model, dev)
@@ -830,8 +834,8 @@ def _main(args):
         if args.lr_finder is not None:
             start_lr, end_lr, num_iter = args.lr_finder.replace(' ', '').split(',')
             from weaver.utils.lr_finder import LRFinder
-            lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=train_input_names,
-                                 label_names=train_label_names)
+            lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=data_config.input_names,
+                                 label_names=data_config.label_names)
             lr_finder.range_test(train_loader, start_lr=float(start_lr), end_lr=float(end_lr), num_iter=int(num_iter))
             lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
             return
@@ -863,7 +867,7 @@ def _main(args):
             valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                     steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
             is_best_epoch = (
-                valid_metric < best_valid_metric) if args.regression_mode else(
+                valid_metric < best_valid_metric) if args.regression_mode else (
                 valid_metric > best_valid_metric)
             if is_best_epoch:
                 best_valid_metric = valid_metric
@@ -953,6 +957,11 @@ def main():
         args.steps_per_epoch_val = round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split)
     if args.steps_per_epoch_val is not None and args.steps_per_epoch_val < 0:
         args.steps_per_epoch_val = None
+
+    if args.data_config_val is None:
+        args.data_config_val = args.data_config
+    if args.data_config_test is None:
+        args.data_config_test = args.data_config
 
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
