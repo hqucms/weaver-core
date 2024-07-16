@@ -26,9 +26,11 @@ parser.add_argument('--data-config-val', type=str, default=None,
                     help='data config YAML file for validation set')
 parser.add_argument('--data-config-test', type=str, default=None,
                     help='data config YAML file for test set')
-parser.add_argument('--extra-selection', type=str, default=None,
-                    help='Additional selection requirement, will modify `selection` to `(selection) & (extra)` on-the-fly')
-parser.add_argument('--extra-test-selection', type=str, default=None,
+parser.add_argument('--extra-selection-train', type=str, default=None,
+                    help='Additional selection requirement for training, will modify `selection` to `(selection) & (extra)` on-the-fly')
+parser.add_argument('--extra-selection-val', type=str, default=None,
+                    help='Additional selection requirement for validation, will modify `selection` to `(selection) & (extra)` on-the-fly')
+parser.add_argument('--extra-selection-test', type=str, default=None,
                     help='Additional test-time selection requirement, will modify `test_time_selection` to `(test_time_selection) & (extra)` on-the-fly')
 parser.add_argument('-i', '--data-train', nargs='*', default=[],
                     help='training files; supported syntax:'
@@ -247,7 +249,7 @@ def train_load(args):
     train_data = SimpleIterDataset(train_file_dict, args.data_config,
                                    batch_size=args.batch_size,
                                    for_training=True,
-                                   extra_selection=args.extra_selection,
+                                   extra_selection=args.extra_selection_train,
                                    remake_weights=not args.no_remake_weights,
                                    load_range_and_fraction=(train_range, args.data_fraction),
                                    file_fraction=args.file_fraction,
@@ -259,7 +261,7 @@ def train_load(args):
     val_data = SimpleIterDataset(val_file_dict, args.data_config_val,
                                  batch_size=args.batch_size,
                                  for_training=True,
-                                 extra_selection=args.extra_selection,
+                                 extra_selection=args.extra_selection_val,
                                  load_range_and_fraction=(val_range, args.data_fraction),
                                  file_fraction=args.file_fraction,
                                  fetch_by_files=args.fetch_by_files,
@@ -318,7 +320,7 @@ def test_load(args):
         _logger.info('Running on test file group %s with %d files:\n...%s', name, len(filelist), '\n...'.join(filelist))
         num_workers = min(args.num_workers, len(filelist))
         test_data = SimpleIterDataset({name: filelist}, args.data_config_test, for_training=False,
-                                      extra_selection=args.extra_test_selection,
+                                      extra_selection=args.extra_selection_test,
                                       load_range_and_fraction=((0, 1), args.data_fraction),
                                       fetch_by_files=True, fetch_step=1,
                                       name='test_' + name)
@@ -1001,8 +1003,9 @@ def main():
             opts.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
             if args.predict_output:
                 opts.predict_output = f'{predict_output_base}_fold{i}' + predict_output_ext
-            opts.extra_selection = f'{var_name}%{kfold}!={i}'
-            opts.extra_test_selection = f'{var_name}%{kfold}=={i}'
+            opts.extra_selection_train = f'{var_name}%{kfold}!={i}'
+            opts.extra_selection_val = opts.extra_selection_train
+            opts.extra_selection_test = f'{var_name}%{kfold}=={i}'
             if load_model and '{fold}' in load_model:
                 opts.load_model_weights = load_model.replace('{fold}', f'fold{i}')
 
