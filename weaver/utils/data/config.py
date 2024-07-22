@@ -3,7 +3,7 @@ import yaml
 import copy
 
 from ..logger import _logger
-from .tools import _get_variable_names
+from .eval_utils import _get_variable_names
 
 
 def _as_list(x):

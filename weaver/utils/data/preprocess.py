@@ -5,7 +5,7 @@ import numpy as np
 import awkward as ak
 
 from ..logger import _logger, warn_n_times
-from .tools import _get_variable_names, _eval_expr
+from .eval_utils import _get_variable_names, _eval_expr
 from .fileio import _read_files
 
 
