@@ -1,6 +1,4 @@
 import numpy as np
-import math
-
 import awkward as ak
 
 
@@ -112,20 +110,3 @@ def _p4_from_ptetaphim(pt, eta, phi, mass):
     import vector
     vector.register_awkward()
     return vector.zip({'pt': pt, 'eta': eta, 'phi': phi, 'mass': mass})
-
-
-def _get_variable_names(expr, exclude=['awkward', 'ak', 'np', 'numpy', 'math', 'len']):
-    import ast
-    root = ast.parse(expr)
-    return sorted({node.id for node in ast.walk(root) if isinstance(
-        node, ast.Name) and not node.id.startswith('_')} - set(exclude))
-
-
-def _eval_expr(expr, table):
-    tmp = {k: table[k] for k in _get_variable_names(expr)}
-    tmp.update({'math': math, 'np': np, 'numpy': np, 'ak': ak, 'awkward': ak, 'len': len, '_hash': _hash,
-                '_concat': _concat, '_stack': _stack, '_pad': _pad, '_repeat_pad': _repeat_pad, '_clip': _clip,
-                '_batch_knn': _batch_knn, '_batch_permute_indices': _batch_permute_indices,
-                '_batch_argsort': _batch_argsort, '_batch_gather': _batch_gather, '_p4_from_pxpypze': _p4_from_pxpypze,
-                '_p4_from_ptetaphie': _p4_from_ptetaphie, '_p4_from_ptetaphim': _p4_from_ptetaphim})
-    return eval(expr, tmp)

@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
+from weaver.utils.data.eval_utils import _register_funcs
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--regression-mode', action='store_true', default=False,
@@ -71,8 +72,10 @@ parser.add_argument('--tensorboard', type=str, default=None,
 parser.add_argument('--tensorboard-custom-fn', type=str, default=None,
                     help='the path of the python script containing a user-specified function `get_tensorboard_custom_fn`, '
                          'to display custom information per mini-batch or per epoch, during the training, validation or test.')
+parser.add_argument('--custom-functions', type=str,
+                    help='python file implementing extra functions for data loading and pre-processing')
 parser.add_argument('-n', '--network-config', type=str,
-                    help='network architecture configuration file; the path must be relative to the current dir')
+                    help='network architecture configuration file')
 parser.add_argument('-o', '--network-option', nargs=2, action='append', default=[],
                     help='options to pass to the model class constructor, e.g., `--network-option use_counts False`')
 parser.add_argument('-m', '--model-prefix', type=str, default='models/{auto}/network',
@@ -964,6 +967,10 @@ def main():
         args.data_config_val = args.data_config
     if args.data_config_test is None:
         args.data_config_test = args.data_config
+
+    if args.custom_functions is not None:
+        func_module = import_module(args.custom_functions, '_func_module')
+        _register_funcs(func_module)
 
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
