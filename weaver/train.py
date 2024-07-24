@@ -120,6 +120,10 @@ parser.add_argument('--start-lr', type=float, default=5e-3,
                     help='start learning rate')
 parser.add_argument('--batch-size', type=int, default=128,
                     help='batch size')
+parser.add_argument('--batch-size-val', type=int, default=None,
+                    help='batch size for validation dataset')
+parser.add_argument('--batch-size-test', type=int, default=None,
+                    help='batch size for test dataset')
 parser.add_argument('--use-amp', action='store_true', default=False,
                     help='use mixed precision training (fp16)')
 parser.add_argument('--gpus', type=str, default='0',
@@ -262,7 +266,7 @@ def train_load(args):
                                    in_memory=args.in_memory,
                                    name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
     val_data = SimpleIterDataset(val_file_dict, args.data_config_val,
-                                 batch_size=args.batch_size,
+                                 batch_size=args.batch_size_val,
                                  for_training=True,
                                  extra_selection=args.extra_selection_val,
                                  load_range_and_fraction=(val_range, args.data_fraction),
@@ -275,7 +279,7 @@ def train_load(args):
     train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                               num_workers=min(args.num_workers, int(len(train_files) * args.file_fraction)),
                               persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
+    val_loader = DataLoader(val_data, batch_size=args.batch_size_val, drop_last=True, pin_memory=True,
                             num_workers=min(args.num_workers, int(len(val_files) * args.file_fraction)),
                             persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
     train_data_config = train_data.config
@@ -327,7 +331,7 @@ def test_load(args):
                                       load_range_and_fraction=((0, 1), args.data_fraction),
                                       fetch_by_files=True, fetch_step=1,
                                       name='test_' + name)
-        test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size, drop_last=False,
+        test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size_test, drop_last=False,
                                  pin_memory=True)
         return test_loader
 
@@ -946,6 +950,11 @@ def _main(args):
 def main():
     args = parser.parse_args()
 
+    if args.batch_size_val is None:
+        args.batch_size_val = args.batch_size
+    if args.batch_size_test is None:
+        args.batch_size_test = args.batch_size
+
     if args.samples_per_epoch is not None:
         if args.steps_per_epoch is None:
             args.steps_per_epoch = args.samples_per_epoch // args.batch_size
@@ -954,12 +963,13 @@ def main():
 
     if args.samples_per_epoch_val is not None:
         if args.steps_per_epoch_val is None:
-            args.steps_per_epoch_val = args.samples_per_epoch_val // args.batch_size
+            args.steps_per_epoch_val = args.samples_per_epoch_val // args.batch_size_val
         else:
             raise RuntimeError('Please use either `--steps-per-epoch-val` or `--samples-per-epoch-val`, but not both!')
 
     if args.steps_per_epoch_val is None and args.steps_per_epoch is not None:
-        args.steps_per_epoch_val = round(args.steps_per_epoch * (1 - args.train_val_split) / args.train_val_split)
+        args.steps_per_epoch_val = round(
+            args.steps_per_epoch * args.batch_size * (1 - args.train_val_split) / args.train_val_split / args.batch_size_val)
     if args.steps_per_epoch_val is not None and args.steps_per_epoch_val < 0:
         args.steps_per_epoch_val = None
 
