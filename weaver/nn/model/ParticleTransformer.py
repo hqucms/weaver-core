@@ -583,7 +583,12 @@ class Block(nn.Module):
 
         self.pre_fc_norm = nn.LayerNorm(embed_dim)
         self.fc1 = nn.Linear(embed_dim, self.ffn_dim)
-        self.act = nn.GELU() if activation == 'gelu' else nn.ReLU()
+        if activation == 'swiglu':
+            self.fc1_g = nn.Linear(embed_dim, self.ffn_dim)
+            self.act = nn.SiLU()
+        else:
+            self.fc1_g = None
+            self.act = nn.GELU() if activation == 'gelu' else nn.ReLU()
         self.act_dropout = nn.Dropout(activation_dropout)
         self.post_fc_norm = nn.LayerNorm(self.ffn_dim) if scale_fc else nn.Identity()
         self.fc2 = nn.Linear(self.ffn_dim, embed_dim)
@@ -636,7 +641,12 @@ class Block(nn.Module):
 
         residual = x
         x = self.pre_fc_norm(x)
-        x = self.act(self.fc1(x))
+        if self.fc1_g is None:
+            x = self.act(self.fc1(x))
+        else:
+            x_gate = self.fc1_g(x)
+            x = self.fc1(x)
+            x = self.act(x_gate) * x
         x = self.act_dropout(x)
         x = self.post_fc_norm(x)
         x = self.fc2(x)
