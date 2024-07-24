@@ -764,13 +764,7 @@ class ParticleTransformer(nn.Module):
     def no_weight_decay(self):
         return {'cls_token', }
 
-    def forward(self, x, v=None, mask=None, uu=None, uu_idx=None):
-        # x: (batch_size, num_fts, seq_len)
-        # v: (batch_size, 4, seq_len) [px,py,pz,energy]
-        # mask: (batch_size, 1, seq_len) -- real particle = 1, padded = 0
-        # for pytorch: uu (batch_size, C', num_pairs), uu_idx (batch_size, 2, num_pairs)
-        # for onnx: uu (batch_size, C', seq_len, seq_len), uu_idx=None
-
+    def _forward_encoder(self, x, v=None, mask=None, uu=None, uu_idx=None):
         with torch.no_grad():
             if not self.for_inference:
                 if uu_idx is not None:
@@ -789,7 +783,45 @@ class ParticleTransformer(nn.Module):
             for block in self.blocks:
                 x = block(x, x_cls=None, padding_mask=padding_mask, attn_mask=attn_mask)
 
-            # for segmentation
+        # x: (batch, seq_len, embed_dim)
+        # padding_mask: (batch, seq_len)
+        return x, padding_mask
+
+    def _forward_aggregator(self, x, padding_mask):
+        with torch.cuda.amp.autocast(enabled=self.use_amp):
+            if self.cls_blocks is not None:
+                # for classification: extract using class token
+                cls_tokens = self.cls_token.expand(x.size(0), 1, -1)  # (batch, 1, embed_dim)
+                for block in self.cls_blocks:
+                    cls_tokens = block(x, x_cls=cls_tokens, padding_mask=padding_mask)  # (batch, 1, embed_dim)
+                cls_tokens = cls_tokens.squeeze(1)  # (batch, embed_dim)
+            else:
+                # for classification: simple average pooling
+                mask = ~padding_mask.unsqueeze(1)  # (batch, 1, seq_len)
+                x = x.transpose(1, 2).contiguous()  # (batch, embed_dim, seq_len)
+                counts = mask.float().sum(-1)  # (batch, 1)
+                counts = torch.max(counts, torch.ones_like(counts))  # >=1
+                cls_tokens = (x * mask).sum(-1) / counts  # (batch, embed_dim)
+
+            x_cls = self.norm(cls_tokens)  # (batch, embed_dim)
+        return x_cls
+
+    def forward(self, x, v=None, mask=None, uu=None, uu_idx=None):
+        # x: (batch_size, num_fts, seq_len)
+        # v: (batch_size, 4, seq_len) [px,py,pz,energy]
+        # mask: (batch_size, 1, seq_len) -- real particle = 1, padded = 0
+        # for pytorch: uu (batch_size, C', num_pairs), uu_idx (batch_size, 2, num_pairs)
+        # for onnx: uu (batch_size, C', seq_len, seq_len), uu_idx=None
+
+        x, padding_mask = self._forward_encoder(x, v=v, mask=mask, uu=uu, uu_idx=uu_idx)
+
+        if self.cls_blocks is None and self.fc is None:
+            # x: (batch, seq_len, embed_dim)
+            # padding_mask: (batch, seq_len)
+            return x, padding_mask
+
+        with torch.cuda.amp.autocast(enabled=self.use_amp):
+            # === for segmentation ===
             if self.for_segmentation:
                 if self.fc is not None:
                     x = self.fc(x)
@@ -800,29 +832,11 @@ class ParticleTransformer(nn.Module):
                 # print('output:\n', output)
                 return output
 
-            if self.cls_blocks is None and self.fc is None:
-                # x: (batch, seq_len, embed_dim)
-                # padding_mask: (batch, seq_len)
-                return x, padding_mask
-
-            if self.cls_blocks is not None:
-                # for classification: extract using class token
-                cls_tokens = self.cls_token.expand(x.size(0), 1, -1)  # (batch, 1, embed_dim)
-                for block in self.cls_blocks:
-                    cls_tokens = block(x, x_cls=cls_tokens, padding_mask=padding_mask)  # (batch, 1, embed_dim)
-                cls_tokens = cls_tokens.squeeze(1)  # (batch, embed_dim)
-            else:
-                # for classification: simple average pooling
-                x = x.transpose(1, 2).contiguous()  # (batch, embed_dim, seq_len)
-                counts = mask.float().sum(-1)  # (batch, 1)
-                counts = torch.max(counts, torch.ones_like(counts))  # >=1
-                cls_tokens = (x * mask).sum(-1) / counts  # (batch, embed_dim)
-
-            x_cls = self.norm(cls_tokens)  # (batch, embed_dim)
-
-            # fc
+            x_cls = self._forward_aggregator(x, padding_mask)
             if self.fc is None:
                 return x_cls
+
+            # fc
             output = self.fc(x_cls)
             if self.for_inference:
                 output = torch.softmax(output, dim=1)
