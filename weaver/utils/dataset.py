@@ -278,7 +278,7 @@ class _SimpleIter(object):
             load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
         split_num_info = (self.isplit, self.split_num)
 
-        _logger.info('Start fetching next batch, len(filelist)=%d (split by %d), split_num_info=%s, load_range=%s'%(len(filelist), self.split_num, split_num_info, load_range))
+        # _logger.info('Start fetching next batch, len(filelist)=%d (split by %d), split_num_info=%s, load_range=%s'%(len(filelist), self.split_num, split_num_info, load_range))
         if self._async_load:
             self.prefetch = self.executor.submit(_load_next, self._data_config,
                                                  filelist, split_num_info, load_range, self._sampler_options)
