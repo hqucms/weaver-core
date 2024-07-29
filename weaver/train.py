@@ -57,6 +57,8 @@ parser.add_argument('--fetch-by-files', action='store_true', default=False,
 parser.add_argument('--fetch-step', type=float, default=0.01,
                     help='fraction of events to load each time from every file (when ``--fetch-by-files`` is disabled); '
                          'Or: number of files to load each time (when ``--fetch-by-files`` is enabled). Shuffling & sampling is done within these events, so set a large enough value.')
+parser.add_argument('--data-split-num', type=int, default=1,
+                    help='for each dataloader worker, split its dataset further into N parts when loading a certain fraction of each file. Setting N > 1 can reduce the workers\' memory usage.')
 parser.add_argument('--in-memory', action='store_true', default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
 parser.add_argument('--train-val-split', type=float, default=0.8,
@@ -147,6 +149,8 @@ parser.add_argument('--copy-inputs', action='store_true', default=False,
                     help='copy input files to the current dir (can help to speed up dataloading when running over remote files, e.g., from EOS)')
 parser.add_argument('--log', type=str, default='',
                     help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
+parser.add_argument('--log-file', type=str, default='',
+                    help='same with --log; avoid conflict with the torchrun argument')
 parser.add_argument('--print', action='store_true', default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
 parser.add_argument('--profile', action='store_true', default=False,
@@ -243,6 +247,7 @@ def train_load(args):
         _logger.info(train_files)
         _logger.info(val_files)
         args.data_fraction = 0.1
+        args.data_split_num = 1
         args.fetch_step = 0.002
 
     if args.in_memory:
@@ -258,7 +263,7 @@ def train_load(args):
                                    for_training=True,
                                    extra_selection=args.extra_selection_train,
                                    remake_weights=not args.no_remake_weights,
-                                   load_range_and_fraction=(train_range, args.data_fraction),
+                                   load_range_and_fraction=(train_range, args.data_fraction, args.data_split_num),
                                    file_fraction=args.file_fraction,
                                    fetch_by_files=args.fetch_by_files,
                                    fetch_step=args.fetch_step,
@@ -269,7 +274,7 @@ def train_load(args):
                                  batch_size=args.batch_size_val,
                                  for_training=True,
                                  extra_selection=args.extra_selection_val,
-                                 load_range_and_fraction=(val_range, args.data_fraction),
+                                 load_range_and_fraction=(val_range, args.data_fraction, args.data_split_num),
                                  file_fraction=args.file_fraction,
                                  fetch_by_files=args.fetch_by_files,
                                  fetch_step=args.fetch_step,
@@ -328,7 +333,7 @@ def test_load(args):
         num_workers = min(args.num_workers, len(filelist))
         test_data = SimpleIterDataset({name: filelist}, args.data_config_test, for_training=False,
                                       extra_selection=args.extra_selection_test,
-                                      load_range_and_fraction=((0, 1), args.data_fraction),
+                                      load_range_and_fraction=((0, 1), args.data_fraction, args.data_split_num),
                                       fetch_by_files=True, fetch_step=1,
                                       name='test_' + name)
         test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size_test, drop_last=False,
@@ -981,6 +986,11 @@ def main():
     if args.custom_functions is not None:
         func_module = import_module(args.custom_functions, '_func_module')
         _register_funcs(func_module)
+
+    if args.log_file:
+        if args.log:
+            raise RuntimeError('Please use either `--log-file` or `--log`, but not both')
+        args.log = args.log_file
 
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
