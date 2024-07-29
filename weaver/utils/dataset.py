@@ -129,8 +129,10 @@ def _preprocess(table, data_config, options):
     return table, indices
 
 
-def _load_next(data_config, filelist, load_range, options):
+def _load_next(data_config, filelist, split_num_info, load_range, options):
     load_branches = data_config.train_load_branches if options['training'] else data_config.test_load_branches
+    split_num, split_tot_num = split_num_info
+    filelist = filelist[split_num::split_tot_num]
     table = _read_files(filelist, load_branches, load_range, treename=data_config.treename,
                         branch_magic=data_config.branch_magic, file_magic=data_config.file_magic)
     table, indices = _preprocess(table, data_config, options)
@@ -189,8 +191,9 @@ class _SimpleIter(object):
 
         if self._init_load_range_and_fraction is None:
             self.load_range = (0, 1)
+            self.split_num = 1
         else:
-            (start_pos, end_pos), load_frac = self._init_load_range_and_fraction
+            (start_pos, end_pos), load_frac, self.split_num = self._init_load_range_and_fraction
             interval = (end_pos - start_pos) * load_frac
             if self._sampler_options['shuffle']:
                 offset = np.random.uniform(start_pos, end_pos - interval)
@@ -211,6 +214,7 @@ class _SimpleIter(object):
 
         # reset file fetching cursor
         self.ipos = 0 if self._fetch_by_files else self.load_range[0]
+        self.isplit = 0
         # prefetch the first entry asynchronously
         self._try_get_next(init=True)
 
@@ -272,14 +276,20 @@ class _SimpleIter(object):
         else:
             filelist = self.filelist
             load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
+        split_num_info = (self.isplit, self.split_num)
 
-        # _logger.info('Start fetching next batch, len(filelist)=%d, load_range=%s'%(len(filelist), load_range))
+        _logger.info('Start fetching next batch, len(filelist)=%d (split by %d), split_num_info=%s, load_range=%s'%(len(filelist), self.split_num, split_num_info, load_range))
         if self._async_load:
             self.prefetch = self.executor.submit(_load_next, self._data_config,
-                                                 filelist, load_range, self._sampler_options)
+                                                 filelist, split_num_info, load_range, self._sampler_options)
         else:
-            self.prefetch = _load_next(self._data_config, filelist, load_range, self._sampler_options)
-        self.ipos += self._fetch_step
+            self.prefetch = _load_next(self._data_config, filelist, split_num_info, load_range, self._sampler_options)
+        # update cursor
+        if self.isplit + 1 < self.split_num:
+            self.isplit += 1
+        else:
+            self.ipos += self._fetch_step
+            self.isplit = 0
 
     def get_data(self, i):
         # inputs
@@ -302,8 +312,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         for_training (bool): flag indicating whether the dataset is used for training or testing.
             When set to ``True``, will enable shuffling and sampling-based reweighting.
             When set to ``False``, will disable shuffling and reweighting, but will load the observer variables.
-        load_range_and_fraction (tuple of tuples, ``((start_pos, end_pos), load_frac)``): fractional range of events to load from each file.
-            E.g., setting load_range_and_fraction=((0, 0.8), 0.5) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file).
+        load_range_and_fraction (tuple of tuples, ``((start_pos, end_pos), load_frac, split_num)``): fractional range of events to load from each file and the split number.
+            E.g., setting load_range_and_fraction=((0, 0.8), 0.5, 1) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file). If split_num > 1, each dataloader worker will further split the dataset into multiple parts when loading a certain fraction of each file.
         fetch_by_files (bool): flag to control how events are retrieved each time we fetch data from disk.
             When set to ``True``, will read only a small number (set by ``fetch_step``) of files each time, but load all the events in these files.
             When set to ``False``, will read from all input files, but load only a small fraction (set by ``fetch_step``) of events each time.
