@@ -131,8 +131,8 @@ def _preprocess(table, data_config, options):
 
 def _load_next(data_config, filelist, split_num_info, load_range, options):
     load_branches = data_config.train_load_branches if options['training'] else data_config.test_load_branches
-    split_num, split_tot_num = split_num_info
-    filelist = filelist[split_num::split_tot_num]
+    i_split, split_num = split_num_info
+    filelist = filelist[i_split::split_num]
     table = _read_files(filelist, load_branches, load_range, treename=data_config.treename,
                         branch_magic=data_config.branch_magic, file_magic=data_config.file_magic)
     table, indices = _preprocess(table, data_config, options)
