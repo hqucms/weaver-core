@@ -147,10 +147,8 @@ parser.add_argument('--io-test', action='store_true', default=False,
                     help='test throughput of the dataloader')
 parser.add_argument('--copy-inputs', action='store_true', default=False,
                     help='copy input files to the current dir (can help to speed up dataloading when running over remote files, e.g., from EOS)')
-parser.add_argument('--log', type=str, default='',
+parser.add_argument('--log-f', type=str, dest='log', default='',
                     help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
-parser.add_argument('--log-file', type=str, default='',
-                    help='same with --log; avoid conflict with the torchrun argument')
 parser.add_argument('--print', action='store_true', default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
 parser.add_argument('--profile', action='store_true', default=False,
@@ -986,11 +984,6 @@ def main():
     if args.custom_functions is not None:
         func_module = import_module(args.custom_functions, '_func_module')
         _register_funcs(func_module)
-
-    if args.log_file:
-        if args.log:
-            raise RuntimeError('Please use either `--log-file` or `--log`, but not both')
-        args.log = args.log_file
 
     if '{auto}' in args.model_prefix or '{auto}' in args.log:
         import hashlib
