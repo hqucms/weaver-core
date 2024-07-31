@@ -107,9 +107,9 @@ parser.add_argument('--samples-per-epoch', type=int, default=None,
 parser.add_argument('--samples-per-epoch-val', type=int, default=None,
                     help='number of samples per epochs for validation; '
                          'if neither of `--steps-per-epoch-val` or `--samples-per-epoch-val` is set, each epoch will run over all loaded samples')
-parser.add_argument('--optimizer', type=str, default='ranger', choices=['adam', 'adamW', 'radam', 'ranger'],  # TODO: add more
-                    help='optimizer for the training')
-parser.add_argument('--optimizer-option', nargs=2, action='append', default=[],
+parser.add_argument('--optimizer', type=str, default='ranger',
+                    help='optimizer for the training; For any PyTorch built-in optimizer in torch.optim, use the case-sensitive class name, e.g., AdamW')
+parser.add_argument('-p', '--optimizer-option', nargs=2, action='append', default=[],
                     help='options to pass to the optimizer class constructor, e.g., `--optimizer-option weight_decay 1e-4`')
 parser.add_argument('--lr-scheduler', type=str, default='flat+decay',
                     choices=['none', 'steps', 'flat+decay', 'flat+linear', 'flat+cos', 'one-cycle'],
@@ -147,7 +147,7 @@ parser.add_argument('--io-test', action='store_true', default=False,
                     help='test throughput of the dataloader')
 parser.add_argument('--copy-inputs', action='store_true', default=False,
                     help='copy input files to the current dir (can help to speed up dataloading when running over remote files, e.g., from EOS)')
-parser.add_argument('--log-f', type=str, dest='log', default='',
+parser.add_argument('--log-file', type=str, dest='log', default='',
                     help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
 parser.add_argument('--print', action='store_true', default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
@@ -157,6 +157,8 @@ parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], defa
                     help='backend for distributed training')
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%%k`')
+parser.add_argument('--auto-clean', action='store_true', default=False,
+                    help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
 
 
 def to_filelist(args, mode='train'):
@@ -185,7 +187,7 @@ def to_filelist(args, mode='train'):
         file_dict[name] = sorted(files)
 
     if args.local_rank is not None:
-        if mode == 'train':
+        if mode == 'train' or mode == 'val':
             local_world_size = int(os.environ['LOCAL_WORLD_SIZE'])
             new_file_dict = {}
             for name, files in file_dict.items():
@@ -438,16 +440,7 @@ def profile(args, model, model_info, device):
             p.step()
 
 
-def optim(args, model, device):
-    """
-    Optimizer and scheduler.
-    :param args:
-    :param model:
-    :return:
-    """
-    optimizer_options = {k: ast.literal_eval(v) for k, v in args.optimizer_option}
-    _logger.info('Optimizer options: %s' % str(optimizer_options))
-
+def init_opt(args, model, **optimizer_options):
     names_lr_mult = []
     if 'weight_decay' in optimizer_options or 'lr_mult' in optimizer_options:
         # https://github.com/rwightman/pytorch-image-models/blob/master/timm/optim/optim_factory.py#L31
@@ -498,7 +491,7 @@ def optim(args, model, device):
     else:
         parameters = model.parameters()
 
-    if args.optimizer == 'ranger':
+    if args.optimizer.lower() == 'ranger':
         from weaver.utils.nn.optimizer.ranger import Ranger
         opt = Ranger(parameters, lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'adam':
@@ -507,21 +500,8 @@ def optim(args, model, device):
         opt = torch.optim.AdamW(parameters, lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'radam':
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
-
-    # load previous training and resume if `--load-epoch` is set
-    if args.load_epoch is not None:
-        _logger.info('Resume training from epoch %d' % args.load_epoch)
-        model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location=device)
-        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-            model.module.load_state_dict(model_state)
-        else:
-            model.load_state_dict(model_state)
-        opt_state_file = args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch
-        if os.path.exists(opt_state_file):
-            opt_state = torch.load(opt_state_file, map_location=device)
-            opt.load_state_dict(opt_state)
-        else:
-            _logger.warning('Optimizer state file %s NOT found!' % opt_state_file)
+    else:
+        opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
 
     scheduler = None
     if args.lr_finder is None:
@@ -573,6 +553,22 @@ def optim(args, model, device):
                 anneal_strategy='cos', div_factor=25.0, last_epoch=-1 if args.load_epoch is None else args.load_epoch)
             scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
     return opt, scheduler
+
+
+def load_checkpoint(args, model, opt):
+    # load previous training and resume if `--load-epoch` is set
+    _logger.info('Resume training from epoch %d' % args.load_epoch)
+    model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location='cpu')
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        model.module.load_state_dict(model_state)
+    else:
+        model.load_state_dict(model_state)
+    opt_state_file = args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch
+    if os.path.exists(opt_state_file):
+        opt_state = torch.load(opt_state_file, map_location='cpu')
+        opt.load_state_dict(opt_state)
+    else:
+        _logger.warning('Optimizer state file %s NOT found!' % opt_state_file)
 
 
 def model_setup(args, data_config, device='cpu'):
@@ -652,6 +648,23 @@ def model_setup(args, data_config, device='cpu'):
             from weaver.utils.nn.tools import train_classification as train
             from weaver.utils.nn.tools import evaluate_classification as evaluate
     return model, model_info, loss_func, train, evaluate
+
+
+def optimizer_setup(args, model):
+    """
+    Optimizer and scheduler.
+    :param args:
+    :param model:
+    :return:
+    """
+    optimizer_options = {k: ast.literal_eval(v) for k, v in args.optimizer_option}
+    _logger.info('Optimizer options: %s' % str(optimizer_options))
+
+    network_module = import_module(args.network_config, name='_network_module')
+    try:
+        return network_module.init_opt(args, model, **optimizer_options)
+    except AttributeError:
+        return init_opt(args, model, **optimizer_options)
 
 
 def iotest(args, data_loader):
@@ -802,10 +815,6 @@ def _main(args):
 
     model, model_info, loss_func, train, evaluate = model_setup(args, data_config, device=dev)
 
-    # TODO: load checkpoint
-    # if args.backend is not None:
-    #     load_checkpoint()
-
     if args.print:
         return
 
@@ -830,10 +839,13 @@ def _main(args):
         if args.backend is not None:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=gpus, output_device=local_rank, find_unused_parameters=True)
+                model, device_ids=gpus, output_device=local_rank, find_unused_parameters=False)
 
         # optimizer & learning rate
-        opt, scheduler = optim(args, model, dev)
+        opt, scheduler = optimizer_setup(args, model)
+
+        if args.load_epoch is not None:
+            load_checkpoint(args, model, opt)
 
         # DataParallel
         if args.backend is None:
@@ -854,7 +866,7 @@ def _main(args):
 
         # training loop
         best_valid_metric = np.inf if args.regression_mode else 0
-        grad_scaler = torch.cuda.amp.GradScaler() if args.use_amp else None
+        grad_scaler = torch.GradScaler('cuda') if args.use_amp else None
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
@@ -867,13 +879,13 @@ def _main(args):
                 dirname = os.path.dirname(args.model_prefix)
                 if dirname and not os.path.exists(dirname):
                     os.makedirs(dirname)
+                prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
                 state_dict = model.module.state_dict() if isinstance(
                     model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
                 torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
                 torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
-            # if args.backend is not None and local_rank == 0:
-            # TODO: save checkpoint
-            #     save_checkpoint()
+                for f in prev_ckpts:
+                    os.remove(f)
 
             _logger.info('Epoch #%d validating' % epoch)
             valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
