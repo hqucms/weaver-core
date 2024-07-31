@@ -3,6 +3,7 @@ import awkward as ak
 import tqdm
 import time
 import torch
+import torch.distributed as dist
 
 from collections import defaultdict, Counter
 from .metrics import evaluate_metrics
@@ -48,6 +49,36 @@ def _flatten_preds(model_output, label=None, mask=None, label_axis=1):
     return preds, label, mask
 
 
+class AllGather(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, x):
+        if (
+            dist.is_available()
+            and dist.is_initialized()
+            and (dist.get_world_size() > 1)
+        ):
+            x = x.contiguous()
+            outputs = [torch.zeros_like(x) for _ in range(dist.get_world_size())]
+            dist.all_gather(outputs, x)
+            return torch.cat(outputs, 0)
+        return x
+
+    @staticmethod
+    def backward(ctx, grads):
+        if (
+            dist.is_available()
+            and dist.is_initialized()
+            and (dist.get_world_size() > 1)
+        ):
+            s = (grads.shape[0] // dist.get_world_size()) * dist.get_rank()
+            e = (grads.shape[0] // dist.get_world_size()) * (dist.get_rank() + 1)
+            grads = grads.contiguous()
+            dist.all_reduce(grads)
+            return grads[s:e]
+        return grads
+
+
 def train_classification(
         model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None,
         tb_helper=None, extra_args=None):
@@ -72,7 +103,7 @@ def train_classification(
             except KeyError:
                 mask = None
             opt.zero_grad()
-            with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+            with torch.autocast('cuda', enabled=grad_scaler is not None):
                 model_output = model(*inputs)
                 logits, label, _ = _flatten_preds(model_output, label=label, mask=mask)
                 loss = loss_func(logits, label)
@@ -162,13 +193,14 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
             for X, y, Z in tq:
                 # X, y: torch.Tensor; Z: ak.Array
                 inputs = [X[k].to(dev) for k in data_config.input_names]
+                y = {k: AllGather.apply(v.to(dev)) for k, v in y.items()}
                 label = y[data_config.label_names[0]].long().to(dev)
                 entry_count += label.shape[0]
                 try:
                     mask = y[data_config.label_names[0] + '_mask'].bool().to(dev)
                 except KeyError:
                     mask = None
-                model_output = model(*inputs)
+                model_output = AllGather.apply(model(*inputs))
                 logits, label, mask = _flatten_preds(model_output, label=label, mask=mask)
                 scores.append(torch.softmax(logits.float(), dim=1).numpy(force=True))
 
@@ -318,7 +350,7 @@ def train_regression(
             num_examples = label.shape[0]
             label = label.to(dev)
             opt.zero_grad()
-            with torch.cuda.amp.autocast(enabled=grad_scaler is not None):
+            with torch.autocast('cuda', enabled=grad_scaler is not None):
                 model_output = model(*inputs)
                 preds = model_output.squeeze()
                 loss = loss_func(preds, label)
@@ -412,10 +444,10 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
             for X, y, Z in tq:
                 # X, y: torch.Tensor; Z: ak.Array
                 inputs = [X[k].to(dev) for k in data_config.input_names]
+                y = {k: AllGather.apply(v.to(dev)) for k, v in y.items()}
                 label = y[data_config.label_names[0]].float()
                 num_examples = label.shape[0]
-                label = label.to(dev)
-                model_output = model(*inputs)
+                model_output = AllGather.apply(model(*inputs))
                 preds = model_output.squeeze().float()
 
                 scores.append(preds.numpy(force=True))
