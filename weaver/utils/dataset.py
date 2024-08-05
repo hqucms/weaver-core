@@ -256,7 +256,7 @@ class _SimpleIter(object):
         return self.get_data(i)
 
     def _try_get_next(self, init=False):
-        end_of_list = self.ipos >= len(self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1]
+        end_of_list = self.ipos >= len(self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1] - 1e-6
         if end_of_list:
             if init:
                 raise RuntimeError('Nothing to load for worker %d' %
