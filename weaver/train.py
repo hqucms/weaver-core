@@ -19,6 +19,9 @@ from weaver.utils.import_tools import import_module
 from weaver.utils.data.eval_utils import _register_funcs
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--run-mode', type=str, default='default',
+                    choices=['default', 'train-only', 'val-only', 'test-only'],
+                    help='run mode')
 parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
 parser.add_argument('-c', '--data-config', type=str,
@@ -872,37 +875,42 @@ def _main(args):
                 if epoch <= args.load_epoch:
                     continue
             _logger.info('-' * 50)
-            _logger.info('Epoch #%d training' % epoch)
-            train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
-                  steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
-            if args.model_prefix and (args.backend is None or local_rank == 0):
-                dirname = os.path.dirname(args.model_prefix)
-                if dirname and not os.path.exists(dirname):
-                    os.makedirs(dirname)
-                prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
-                state_dict = model.module.state_dict() if isinstance(
-                    model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
-                torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
-                torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
-                for f in prev_ckpts:
-                    os.remove(f)
 
-            _logger.info('Epoch #%d validating' % epoch)
-            valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
-                                    steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
-            is_best_epoch = (
-                valid_metric < best_valid_metric) if args.regression_mode else (
-                valid_metric > best_valid_metric)
-            if is_best_epoch:
-                best_valid_metric = valid_metric
+            if args.run_mode in ['default', 'train-only']:
+                _logger.info('Epoch #%d training' % epoch)
+                train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
+                    steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
                 if args.model_prefix and (args.backend is None or local_rank == 0):
-                    shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
-                                 epoch, args.model_prefix + '_best_epoch_state.pt')
-                    # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
-            _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
-                         (epoch, valid_metric, best_valid_metric), color='bold')
+                    dirname = os.path.dirname(args.model_prefix)
+                    if dirname and not os.path.exists(dirname):
+                        os.makedirs(dirname)
+                    prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
+                    state_dict = model.module.state_dict() if isinstance(
+                        model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
+                    torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
+                    torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
+                    for f in prev_ckpts:
+                        os.remove(f)
 
-    if args.data_test:
+            if args.run_mode in ['default', 'val-only']:
+                _logger.info('Epoch #%d validating' % epoch)
+                if args.run_mode == 'val-only':
+                    model.load_state_dict(torch.load(args.model_prefix + '_epoch-%d_state.pt' % epoch, map_location=dev))
+                valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
+                                        steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
+                is_best_epoch = (
+                    valid_metric < best_valid_metric) if args.regression_mode else (
+                    valid_metric > best_valid_metric)
+                if is_best_epoch:
+                    best_valid_metric = valid_metric
+                    if args.model_prefix and (args.backend is None or local_rank == 0):
+                        shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
+                                    epoch, args.model_prefix + '_best_epoch_state.pt')
+                        # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
+                _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
+                            (epoch, valid_metric, best_valid_metric), color='bold')
+
+    if args.run_mode in ['default', 'test-only'] and args.data_test:
         if args.backend is not None and local_rank != 0:
             return
         if training_mode:
