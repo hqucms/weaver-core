@@ -39,21 +39,13 @@ def to_m2(x, eps=1e-8):
     return m2
 
 
-def atan2(y, x):
-    sx = torch.sign(x)
-    sy = torch.sign(y)
-    pi_part = (sy + sx * (sy ** 2 - 1)) * (sx - 1) * (-math.pi / 2)
-    atan_part = torch.arctan(y / (x + (1 - sx ** 2))) * sx ** 2
-    return atan_part + pi_part
-
-
-def to_ptrapphim(x, return_mass=True, eps=1e-8, for_onnx=False):
+def to_ptrapphim(x, return_mass=True, eps=1e-8):
     # x: (N, 4, ...), dim1 : (px, py, pz, E)
     px, py, pz, energy = x.split((1, 1, 1, 1), dim=1)
     pt = torch.sqrt(to_pt2(x, eps=eps))
     # rapidity = 0.5 * torch.log((energy + pz) / (energy - pz))
     rapidity = 0.5 * torch.log(1 + (2 * pz) / (energy - pz).clamp(min=1e-20))
-    phi = (atan2 if for_onnx else torch.atan2)(py, px)
+    phi = torch.atan2(py, px)
     if not return_mass:
         return torch.cat((pt, rapidity, phi), dim=1)
     else:
@@ -98,9 +90,9 @@ def to_cos_sin_angles(xi, xj, normed_inputs=False, eps=1e-8):
     return cos, sin
 
 
-def pairwise_lv_fts_pp(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
-    pti, rapi, phii = to_ptrapphim(xi, False, eps=None, for_onnx=for_onnx).split((1, 1, 1), dim=1)
-    ptj, rapj, phij = to_ptrapphim(xj, False, eps=None, for_onnx=for_onnx).split((1, 1, 1), dim=1)
+def pairwise_lv_fts_pp(xi, xj, num_outputs=4, eps=1e-8):
+    pti, rapi, phii = to_ptrapphim(xi, False, eps=None).split((1, 1, 1), dim=1)
+    ptj, rapj, phij = to_ptrapphim(xj, False, eps=None).split((1, 1, 1), dim=1)
 
     delta = delta_r2(rapi, phii, rapj, phij).sqrt()
     lndelta = torch.log(delta.clamp(min=eps))
@@ -108,7 +100,7 @@ def pairwise_lv_fts_pp(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
         return lndelta
 
     if num_outputs > 1:
-        ptmin = ((pti <= ptj) * pti + (pti > ptj) * ptj) if for_onnx else torch.minimum(pti, ptj)
+        ptmin = torch.minimum(pti, ptj)
         lnkt = torch.log((ptmin * delta).clamp(min=eps))
         lnz = torch.log((ptmin / (pti + ptj).clamp(min=eps)).clamp(min=eps))
         outputs = [lnkt, lnz, lndelta]
@@ -137,7 +129,7 @@ def pairwise_lv_fts_pp(xi, xj, num_outputs=4, eps=1e-8, for_onnx=False):
     return torch.cat(outputs, dim=1)
 
 
-def pairwise_lv_fts_ee(xi, xj, num_outputs=6, eps=1e-8, for_onnx=False):
+def pairwise_lv_fts_ee(xi, xj, num_outputs=6, eps=1e-8):
     # outputs: [lnm2, cos_angle, sin_angle, lnkt, lnz, lnjade]
     lnm2 = torch.log(to_m2(xi + xj, eps=eps))
     outputs = [lnm2]
@@ -149,7 +141,7 @@ def pairwise_lv_fts_ee(xi, xj, num_outputs=6, eps=1e-8, for_onnx=False):
         outputs += [cos_angle, sin_angle]
 
     if num_outputs > 3:
-        pmin = ((pi <= pj) * pi + (pi > pj) * pj) if for_onnx else torch.minimum(pi, pj)
+        pmin = torch.minimum(pi, pj)
         lnkt = torch.log((pmin * sin_angle).clamp(min=eps))
         lnz = torch.log((pmin / (pi + pj).clamp(min=eps)).clamp(min=eps))
         outputs += [lnkt, lnz]
@@ -177,6 +169,10 @@ def build_sparse_tensor(uu, idx, seq_len):
         i, uu.flatten(),
         size=(batch_size, num_fts, seq_len + 1, seq_len + 1),
         device=uu.device).to_dense()[:, :, :seq_len, :seq_len]
+
+
+def tril_indices(row, col, offset=0, *, dtype=torch.long, device='cpu'):
+    return torch.ones(row, col, dtype=dtype, device=device).tril(offset).nonzero().T
 
 
 class SequenceTrimmer(nn.Module):
@@ -276,10 +272,10 @@ class PairEmbed(nn.Module):
 
         if pairwise_lv_type == 'pp':
             self.is_symmetric = (pairwise_lv_dim <= 5) and (pairwise_input_dim == 0)
-            self.pairwise_lv_fts = partial(pairwise_lv_fts_pp, num_outputs=pairwise_lv_dim, eps=eps, for_onnx=for_onnx)
+            self.pairwise_lv_fts = partial(pairwise_lv_fts_pp, num_outputs=pairwise_lv_dim, eps=eps)
         elif pairwise_lv_type == 'ee':
             self.is_symmetric = (pairwise_lv_dim <= 6) and (pairwise_input_dim == 0)
-            self.pairwise_lv_fts = partial(pairwise_lv_fts_ee, num_outputs=pairwise_lv_dim, eps=eps, for_onnx=for_onnx)
+            self.pairwise_lv_fts = partial(pairwise_lv_fts_ee, num_outputs=pairwise_lv_dim, eps=eps)
         else:
             raise RuntimeError('Invalid value for `pairwise_lv_type`: ' + pairwise_lv_type)
 
@@ -336,9 +332,11 @@ class PairEmbed(nn.Module):
                 batch_size, _, seq_len = x.size()
             else:
                 batch_size, _, seq_len, _ = uu.size()
-            if self.is_symmetric and not self.for_onnx:
-                i, j = torch.tril_indices(seq_len, seq_len, offset=-1 if self.remove_self_pair else 0,
-                                          device=(x if x is not None else uu).device)
+            if self.is_symmetric:
+                tril_indices_fn = tril_indices if self.for_onnx else torch.tril_indices
+                i, j = tril_indices_fn(
+                    seq_len, seq_len, offset=-1 if self.remove_self_pair else 0,
+                    device=(x if x is not None else uu).device)
                 if x is not None:
                     x = x.unsqueeze(-1).repeat(1, 1, 1, seq_len)
                     xi = x[:, :, i, j]  # (batch, dim, seq_len*(seq_len+1)/2)
@@ -374,7 +372,7 @@ class PairEmbed(nn.Module):
             else:
                 elements = self.embed(x) + self.fts_embed(uu)
 
-        if self.is_symmetric and not self.for_onnx:
+        if self.is_symmetric:
             y = torch.zeros(batch_size, self.out_dim, seq_len, seq_len, dtype=elements.dtype, device=elements.device)
             y[:, :, i, j] = elements
             y[:, :, j, i] = elements
