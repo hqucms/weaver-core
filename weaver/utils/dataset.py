@@ -256,7 +256,8 @@ class _SimpleIter(object):
         return self.get_data(i)
 
     def _try_get_next(self, init=False):
-        end_of_list = self.ipos >= len(self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1] - 1e-6
+        end_of_list = self.ipos >= len(
+            self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1] - 1e-6
         if end_of_list:
             if init:
                 raise RuntimeError('Nothing to load for worker %d' %
@@ -375,13 +376,15 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         if for_training:
             # produce variable standardization info if needed
             if self._data_config._missing_standardization_info:
+                # not using `extra_selection` here to get more stats
                 s = AutoStandardizer(file_dict, self._data_config)
                 self._data_config = s.produce(data_config_autogen_file)
 
             # produce reweight info if needed
             if self._sampler_options['reweight'] and self._data_config.weight_name and not self._data_config.use_precomputed_weights:
                 if remake_weights or self._data_config.reweight_hists is None:
-                    w = WeightMaker(file_dict, self._data_config)
+                    # use `extra_selection` here as it may change the distributions
+                    w = WeightMaker(file_dict, self._data_config, extra_selection=extra_selection)
                     self._data_config = w.produce(data_config_autogen_file)
 
             # reload data_config w/o observers for training
