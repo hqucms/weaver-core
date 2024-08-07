@@ -25,6 +25,11 @@ def _md5(fname):
     return hash_md5.hexdigest()
 
 
+def _strcat(*args, sep=' & ', func=lambda s: f'({s})', fallback=None):
+    pieces = [func(s) for s in args if s]
+    return sep.join(pieces) if len(pieces) else fallback
+
+
 class DataConfig(object):
     r"""Data loading configuration.
     """
@@ -248,12 +253,12 @@ class DataConfig(object):
         if not load_reweight_info:
             options['weights'] = None
         if extra_selection:
-            options['selection'] = '(%s) & (%s)' % (_opts['selection'], extra_selection)
+            options['selection'] = _strcat(_opts['selection'], extra_selection)
         if extra_test_selection:
             if 'test_time_selection' not in options or options['test_time_selection'] is None:
-                options['test_time_selection'] = '(%s) & (%s)' % (_opts['selection'], extra_test_selection)
+                options['test_time_selection'] = _strcat(_opts['selection'], extra_test_selection)
             else:
-                options['test_time_selection'] = '(%s) & (%s)' % (_opts['test_time_selection'], extra_test_selection)
+                options['test_time_selection'] = _strcat(_opts['test_time_selection'], extra_test_selection)
         return cls(**options)
 
     def copy(self):
