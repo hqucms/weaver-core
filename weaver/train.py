@@ -19,9 +19,8 @@ from weaver.utils.import_tools import import_module
 from weaver.utils.data.eval_utils import _register_funcs
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--run-mode', type=str, default='default',
-                    choices=['default', 'train-only', 'val-only', 'test-only'],
-                    help='run mode')
+parser.add_argument('--run-mode', type=functools.partial(str.split, sep=','), default='train,val,test',
+                    help='comma-separated list of the steps (train|val|test) to run, e.g., `train,test`')
 parser.add_argument('--regression-mode', action='store_true', default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
 parser.add_argument('-c', '--data-config', type=str,
@@ -876,7 +875,7 @@ def _main(args):
                     continue
             _logger.info('-' * 50)
 
-            if args.run_mode in ['default', 'train-only']:
+            if 'train' in args.run_mode:
                 _logger.info('Epoch #%d training' % epoch)
                 train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
                     steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
@@ -892,9 +891,9 @@ def _main(args):
                     for f in prev_ckpts:
                         os.remove(f)
 
-            if args.run_mode in ['default', 'val-only']:
+            if 'val' in args.run_mode:
                 _logger.info('Epoch #%d validating' % epoch)
-                if args.run_mode == 'val-only':
+                if 'train' not in args.run_mode:
                     model.load_state_dict(torch.load(args.model_prefix + '_epoch-%d_state.pt' % epoch, map_location=dev))
                 valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                         steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
@@ -910,7 +909,7 @@ def _main(args):
                 _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
                             (epoch, valid_metric, best_valid_metric), color='bold')
 
-    if args.run_mode in ['default', 'test-only'] and args.data_test:
+    if 'test' in args.run_mode and args.data_test:
         if args.backend is not None and local_rank != 0:
             return
         if training_mode:
