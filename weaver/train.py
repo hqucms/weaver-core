@@ -780,7 +780,10 @@ def _main(args):
         _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
 
     # training/testing mode
-    training_mode = not args.predict
+    if args.predict:
+        _logger.warning('The `--predict` flag is set. Overriding the `--run-mode` to `test`.')
+        args.run_mode = ['test']
+    training_mode = any(m in args.run_mode for m in ['train', 'val'])
 
     # device
     if args.gpus:
