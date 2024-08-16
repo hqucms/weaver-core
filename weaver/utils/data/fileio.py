@@ -76,14 +76,15 @@ def _read_parquet(filepath, branches, load_range=None):
     return outputs
 
 
-def _read_files(filelist, branches, load_range=None, show_progressbar=False, file_magic=None, **kwargs):
+def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, file_magic=None, **kwargs):
     import os
     branches = list(branches)
     table = []
     if show_progressbar:
         filelist = tqdm.tqdm(filelist)
-    for filepath in filelist:
+    for i_file, filepath in enumerate(filelist):
         ext = os.path.splitext(filepath)[1]
+        load_range = None if load_ranges is None else load_ranges[i_file]
         if ext not in ('.h5', '.root', '.awkd', '.parquet'):
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
         try:
