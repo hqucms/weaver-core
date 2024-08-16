@@ -1,6 +1,7 @@
 import os
 import copy
 import json
+import math
 import numpy as np
 import awkward as ak
 import torch.utils.data
@@ -129,11 +130,9 @@ def _preprocess(table, data_config, options):
     return table, indices
 
 
-def _load_next(data_config, filelist, split_num_info, load_range, options):
+def _load_next(data_config, filelist, load_ranges, options):
     load_branches = data_config.train_load_branches if options['training'] else data_config.test_load_branches
-    i_split, split_num = split_num_info
-    filelist = filelist[i_split::split_num]
-    table = _read_files(filelist, load_branches, load_range, treename=data_config.treename,
+    table = _read_files(filelist, load_branches, load_ranges, treename=data_config.treename,
                         branch_magic=data_config.branch_magic, file_magic=data_config.file_magic)
     table, indices = _preprocess(table, data_config, options)
     return table, indices
@@ -174,20 +173,21 @@ class _SimpleIter(object):
                 new_file_dict[name] = new_files
             file_dict = new_file_dict
         self.worker_file_dict = file_dict
-        self.worker_filelist = sum(file_dict.values(), [])
         self.worker_info = worker_info
         self.restart()
 
     def restart(self):
         _logger.info('=== Restarting DataIter %s, seed=%s ===' % (self._name, self._seed))
-        # re-shuffle filelist and load range if for training
-        filelist = copy.deepcopy(self.worker_filelist)
+        # re-shuffle file_dict and load range if for training
+        file_dict = copy.deepcopy(self.worker_file_dict)
+        filelist = [(k, file) for k, v in file_dict.items() for file in v]
         if self._sampler_options['shuffle']:
             np.random.shuffle(filelist)
         if self._file_fraction < 1:
             num_files = int(len(filelist) * self._file_fraction)
             filelist = filelist[:num_files]
-        self.filelist = filelist
+        self.filelist = [f for k, f in filelist]
+        self.file_dict = {k: [f for k_, f in filelist if k_ == k] for k in set(k for k, _ in filelist)}
 
         if self._init_load_range_and_fraction is None:
             self.load_range = (0, 1)
@@ -201,6 +201,30 @@ class _SimpleIter(object):
             else:
                 self.load_range = (start_pos, start_pos + interval)
 
+        # determine the load files and their ranges for each iteration
+        if self._fetch_by_files:
+            if self.split_num > 1:
+                raise ValueError('Cannot fetch by files when split_num > 1')
+            self.load_filelist_and_ranges = [
+                (self.filelist[i: i + self._fetch_step], [self.load_range] * self._fetch_step) for i in range(0, len(self.filelist), self._fetch_step)]
+        else:
+            self.load_filelist_and_ranges = []
+            # for n files with split_num=d, return the loading status for n files
+            ## e.g., n=5, d=3, the status is [[0, 0, 0, 0, 0], [1, 2/3, 0, 0, 0], [1, 1, 1, 1/3, 0], [1, 1, 1, 1, 1]]
+            n_div_d_sep = lambda n, d: np.array([[np.clip(n*di / d - ni, 0, 1) for ni in range(n)] for di in range(d + 1)])
+            for i_load in range(math.ceil((self.load_range[1] - self.load_range[0]) / self._fetch_step)):
+                start_pos = self.load_range[0] + i_load * self._fetch_step
+                delta = min(self._fetch_step, self.load_range[1] - start_pos)
+                for d in range(self.split_num):
+                    # the dth split of the ith iteration loading range (start_pos, end_pos)
+                    _files, _ranges = [], []
+                    for _, files in self.file_dict.items():
+                        n_files = len(files)
+                        n_div_d_sep_array = n_div_d_sep(n_files, self.split_num)
+                        _files.extend([files[i] for i in range(n_files) if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
+                        _ranges.extend([(start_pos + delta * n_div_d_sep_array[d, i], start_pos + delta * n_div_d_sep_array[d + 1, i]) for i in range(n_files) if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
+                    self.load_filelist_and_ranges.append((_files, _ranges))
+
         _logger.debug(
             'Init iter [%d], will load %d (out of %d*%s=%d) files with load_range=%s:\n%s', 0
             if self.worker_info is None else self.worker_info.id, len(self.filelist),
@@ -209,12 +233,14 @@ class _SimpleIter(object):
             str(self.load_range),
             '\n'.join(self.filelist[: 3]) + '\n ... ' + self.filelist[-1],)
 
+        _logger.debug('Load filelist and ranges in each iteration:\n%s' % '\n'.join(['%s with load_ranges=%s' % (str(f), str(r)) for f, r in self.load_filelist_and_ranges]))
+
         _logger.info('Restarted DataIter %s, load_range=%s, file_list:\n%s' %
                      (self._name, str(self.load_range), json.dumps(self.worker_file_dict, indent=2)))
 
         # reset file fetching cursor
-        self.ipos = 0 if self._fetch_by_files else self.load_range[0]
-        self.isplit = 0
+        self.ipos = 0
+
         # prefetch the first entry asynchronously
         self._try_get_next(init=True)
 
@@ -256,8 +282,7 @@ class _SimpleIter(object):
         return self.get_data(i)
 
     def _try_get_next(self, init=False):
-        end_of_list = self.ipos >= len(
-            self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1] - 1e-6
+        end_of_list = self.ipos >= len(self.load_filelist_and_ranges)
         if end_of_list:
             if init:
                 raise RuntimeError('Nothing to load for worker %d' %
@@ -271,26 +296,16 @@ class _SimpleIter(object):
                 self.prefetch = None
                 return
 
-        if self._fetch_by_files:
-            filelist = self.filelist[int(self.ipos): int(self.ipos + self._fetch_step)]
-            load_range = self.load_range
-        else:
-            filelist = self.filelist
-            load_range = (self.ipos, min(self.ipos + self._fetch_step, self.load_range[1]))
-        split_num_info = (self.isplit, self.split_num)
+        filelist, load_ranges = self.load_filelist_and_ranges[self.ipos]
 
-        # _logger.info('Start fetching next batch, len(filelist)=%d (split by %d), split_num_info=%s, load_range=%s'%(len(filelist), self.split_num, split_num_info, load_range))
+        # _logger.info('Start fetching next batch, len(filelist)=%d, load_ranges=%s'%(len(filelist), load_ranges))
         if self._async_load:
             self.prefetch = self.executor.submit(_load_next, self._data_config,
-                                                 filelist, split_num_info, load_range, self._sampler_options)
+                                                 filelist, load_ranges, self._sampler_options)
         else:
-            self.prefetch = _load_next(self._data_config, filelist, split_num_info, load_range, self._sampler_options)
+            self.prefetch = _load_next(self._data_config, filelist, load_ranges, self._sampler_options)
         # update cursor
-        if self.isplit + 1 < self.split_num:
-            self.isplit += 1
-        else:
-            self.ipos += self._fetch_step
-            self.isplit = 0
+        self.ipos += 1
 
     def get_data(self, i):
         # inputs
