@@ -230,6 +230,30 @@ class SequenceTrimmer(nn.Module):
         return x, v, mask, uu
 
 
+class SwiGLUFFN(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: Optional[int] = None,
+        out_features: Optional[int] = None,
+        drop: float = 0.0,
+        bias: bool = True,
+    ) -> None:
+        super().__init__()
+        hidden_features = hidden_features or in_features
+        out_features = out_features or in_features
+        self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        self.drop = nn.Dropout(drop)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x12 = self.w12(x)
+        x1, x2 = x12.chunk(2, dim=-1)
+        hidden = F.silu(x1) * x2
+        hidden = self.drop(hidden)
+        return self.w3(hidden)
+
+
 class Embed(nn.Module):
     def __init__(self, input_dim, dims, normalize_input=True, activation='gelu'):
         super().__init__()
@@ -404,6 +428,14 @@ def _canonical_mask(
     return mask
 
 
+def _none_or_dtype(input: Optional[torch.Tensor]):
+    if input is None:
+        return None
+    elif isinstance(input, torch.Tensor):
+        return input.dtype
+    raise RuntimeError("input to _none_or_dtype() must be None or torch.Tensor")
+
+
 class Attention(torch.nn.Module):
 
     def __init__(self, embed_dim, num_heads, dropout=0., bias=True,
@@ -450,7 +482,7 @@ class Attention(torch.nn.Module):
         key_padding_mask = _canonical_mask(
             mask=key_padding_mask,
             mask_name="key_padding_mask",
-            other_type=F._none_or_dtype(attn_mask),
+            other_type=_none_or_dtype(attn_mask),
             other_name="attn_mask",
             target_type=query.dtype
         )
@@ -732,8 +764,19 @@ class ParticleTransformer(nn.Module):
         if fc_params is not None:
             fcs = []
             in_dim = embed_dim
-            for out_dim, drop_rate in fc_params:
-                fcs.append(nn.Sequential(nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(drop_rate)))
+            for param in fc_params:
+                try:
+                    out_dim, drop_rate, act = param
+                except ValueError:
+                    (out_dim, drop_rate), act = param, 'relu'
+                if act == 'swiglu':
+                    layer = nn.Sequential(SwiGLUFFN(in_dim, out_dim * 4, out_dim, drop=drop_rate),
+                                          nn.LayerNorm(out_dim))
+                else:
+                    layer = nn.Sequential(nn.Linear(in_dim, out_dim),
+                                          nn.GELU() if act == 'gelu' else nn.ReLU(),
+                                          nn.Dropout(drop_rate))
+                fcs.append(layer)
                 in_dim = out_dim
             fcs.append(nn.Linear(in_dim, num_classes))
             self.fc = nn.Sequential(*fcs)
@@ -831,6 +874,7 @@ class ParticleTransformer(nn.Module):
         with torch.autocast('cuda', enabled=self.use_amp):
             # === for segmentation ===
             if self.for_segmentation:
+                x = self.norm(x)
                 if self.fc is not None:
                     x = self.fc(x)
                 # x: (P, N, C) -> output: (N, C, P)
