@@ -733,6 +733,7 @@ class ParticleTransformer(nn.Module):
                  fc_params=(),
                  activation='gelu',
                  # misc
+                 version=1,
                  weight_init='moco',
                  fix_init=True,
                  trim=True,
@@ -757,6 +758,11 @@ class ParticleTransformer(nn.Module):
                            drop_path_rate=0.,
                            scale_attn_mask=False,
                            scale_fc=True, scale_attn=True, scale_heads=True, scale_resids=True)
+        if version > 1:
+            default_cfg.update(
+                activation='swiglu',
+                scale_fc=False, scale_attn=False, scale_heads=False, scale_resids=False,
+            )
 
         cfg_block = copy.deepcopy(default_cfg)
         if block_params is not None:
@@ -941,8 +947,12 @@ class ParticleTransformerTagger(nn.Module):
                  fc_params=(),
                  activation='gelu',
                  # misc
+                 version=1,
+                 weight_init='moco',
+                 fix_init=True,
                  trim=True,
                  for_inference=False,
+                 for_segmentation=False,
                  use_amp=False,
                  **kwargs) -> None:
         super().__init__(**kwargs)
@@ -973,8 +983,12 @@ class ParticleTransformerTagger(nn.Module):
                                         fc_params=fc_params,
                                         activation=activation,
                                         # misc
+                                        version=version,
+                                        weight_init=weight_init,
+                                        fix_init=fix_init,
                                         trim=False,
                                         for_inference=for_inference,
+                                        for_segmentation=for_segmentation,
                                         use_amp=use_amp)
 
     @torch.jit.ignore
@@ -1022,8 +1036,12 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
                  fc_params=(),
                  activation='gelu',
                  # misc
+                 version=1,
+                 weight_init='moco',
+                 fix_init=True,
                  trim=True,
                  for_inference=False,
+                 for_segmentation=False,
                  use_amp=False,
                  **kwargs) -> None:
         super().__init__(**kwargs)
@@ -1055,8 +1073,12 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
                                         fc_params=fc_params,
                                         activation=activation,
                                         # misc
+                                        version=version,
+                                        weight_init=weight_init,
+                                        fix_init=fix_init,
                                         trim=False,
                                         for_inference=for_inference,
+                                        for_segmentation=for_segmentation,
                                         use_amp=use_amp)
 
     @torch.jit.ignore
