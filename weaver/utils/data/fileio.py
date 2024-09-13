@@ -82,9 +82,21 @@ def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, fi
     table = []
     if show_progressbar:
         filelist = tqdm.tqdm(filelist)
-    for i_file, filepath in enumerate(filelist):
+
+    # check `load_ranges`:
+    #  - None: load all entries for all files
+    #  - (start, end): the same range for all files
+    #  - a list/tuple of (start, end): different range for each file
+    if load_ranges is None:
+        load_ranges = (None,) * len(filelist)
+    else:
+        if any(isinstance(x, (list, tuple)) for x in load_ranges):
+            assert len(load_ranges) == len(filelist)
+        else:
+            load_ranges = (load_ranges,) * len(filelist)
+    assert all(r is None or (len(r) == 2 and 0 <= r[0] < r[1] <= 1) for r in load_ranges)
+    for filepath, load_range in zip(filelist, load_ranges):
         ext = os.path.splitext(filepath)[1]
-        load_range = None if load_ranges is None else load_ranges[i_file]
         if ext not in ('.h5', '.root', '.awkd', '.parquet'):
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
         try:
