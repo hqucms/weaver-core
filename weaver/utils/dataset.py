@@ -180,14 +180,14 @@ class _SimpleIter(object):
         _logger.info('=== Restarting DataIter %s, seed=%s ===' % (self._name, self._seed))
         # re-shuffle file_dict and load range if for training
         file_dict = copy.deepcopy(self.worker_file_dict)
-        filelist = [(k, file) for k, v in file_dict.items() for file in v]
+        filelist = [(name, f) for name, files in file_dict.items() for f in files]
         if self._sampler_options['shuffle']:
             np.random.shuffle(filelist)
         if self._file_fraction < 1:
             num_files = int(len(filelist) * self._file_fraction)
             filelist = filelist[:num_files]
-        self.filelist = [f for k, f in filelist]
-        self.file_dict = {k: [f for k_, f in filelist if k_ == k] for k in set(k for k, _ in filelist)}
+        self.filelist = [f for _, f in filelist]
+        self.file_dict = {name: [f for k, f in filelist if k == name] for name in set(k for k, _ in filelist)}
 
         if self._init_load_range_and_fraction is None:
             self.load_range = (0, 1)
@@ -204,14 +204,20 @@ class _SimpleIter(object):
         # determine the load files and their ranges for each iteration
         if self._fetch_by_files:
             if self.split_num > 1:
-                raise ValueError('Cannot fetch by files when split_num > 1')
+                _logger.warning('`split_num` is fixed to 1 when fetching by files.')
             self.load_filelist_and_ranges = [
-                (self.filelist[i: i + self._fetch_step], [self.load_range] * self._fetch_step) for i in range(0, len(self.filelist), self._fetch_step)]
+                (self.filelist[i: i + self._fetch_step], [self.load_range] * self._fetch_step)
+                for i in range(0, len(self.filelist), self._fetch_step)
+            ]
         else:
             self.load_filelist_and_ranges = []
-            # for n files with split_num=d, return the loading status for n files
-            ## e.g., n=5, d=3, the status is [[0, 0, 0, 0, 0], [1, 2/3, 0, 0, 0], [1, 1, 1, 1/3, 0], [1, 1, 1, 1, 1]]
-            n_div_d_sep = lambda n, d: np.array([[np.clip(n*di / d - ni, 0, 1) for ni in range(n)] for di in range(d + 1)])
+
+            def n_div_d_sep(n, d):
+                # for n files with split_num=d, return the loading status for n files
+                # e.g., n=5, d=3, each time it should load 5/3 files, so the status is:
+                # [[0, 0, 0, 0, 0], [1, 2/3, 0, 0, 0], [1, 1, 1, 1/3, 0], [1, 1, 1, 1, 1]]
+                return np.array([[np.clip(n * di / d - ni, 0, 1) for ni in range(n)] for di in range(d + 1)])
+
             for i_load in range(math.ceil((self.load_range[1] - self.load_range[0]) / self._fetch_step)):
                 start_pos = self.load_range[0] + i_load * self._fetch_step
                 delta = min(self._fetch_step, self.load_range[1] - start_pos)
@@ -221,8 +227,12 @@ class _SimpleIter(object):
                     for _, files in self.file_dict.items():
                         n_files = len(files)
                         n_div_d_sep_array = n_div_d_sep(n_files, self.split_num)
-                        _files.extend([files[i] for i in range(n_files) if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
-                        _ranges.extend([(start_pos + delta * n_div_d_sep_array[d, i], start_pos + delta * n_div_d_sep_array[d + 1, i]) for i in range(n_files) if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
+                        _files.extend(
+                            [files[i] for i in range(n_files)
+                             if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
+                        _ranges.extend([(start_pos + delta * n_div_d_sep_array[d, i],
+                                         start_pos + delta * n_div_d_sep_array[d + 1, i]) for i in range(n_files)
+                                        if n_div_d_sep_array[d + 1, i] - n_div_d_sep_array[d, i] > 0])
                     self.load_filelist_and_ranges.append((_files, _ranges))
 
         _logger.debug(
@@ -233,7 +243,8 @@ class _SimpleIter(object):
             str(self.load_range),
             '\n'.join(self.filelist[: 3]) + '\n ... ' + self.filelist[-1],)
 
-        _logger.debug('Load filelist and ranges in each iteration:\n%s' % '\n'.join(['%s with load_ranges=%s' % (str(f), str(r)) for f, r in self.load_filelist_and_ranges]))
+        _logger.debug('Load filelist and ranges in each iteration:\n%s' % '\n'.join(
+            ['%s with load_ranges=%s' % (str(f), str(r)) for f, r in self.load_filelist_and_ranges]))
 
         _logger.info('Restarted DataIter %s, load_range=%s, file_list:\n%s' %
                      (self._name, str(self.load_range), json.dumps(self.worker_file_dict, indent=2)))
@@ -304,7 +315,7 @@ class _SimpleIter(object):
                                                  filelist, load_ranges, self._sampler_options)
         else:
             self.prefetch = _load_next(self._data_config, filelist, load_ranges, self._sampler_options)
-        # update cursor
+        # increment cursor
         self.ipos += 1
 
     def get_data(self, i):
@@ -329,7 +340,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             When set to ``True``, will enable shuffling and sampling-based reweighting.
             When set to ``False``, will disable shuffling and reweighting, but will load the observer variables.
         load_range_and_fraction (tuple of tuples, ``((start_pos, end_pos), load_frac, split_num)``): fractional range of events to load from each file and the split number.
-            E.g., setting load_range_and_fraction=((0, 0.8), 0.5, 1) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file). If split_num > 1, each dataloader worker will further split the dataset into multiple parts when loading a certain fraction of each file.
+            E.g., setting load_range_and_fraction=((0, 0.8), 0.5, 1) will randomly load 50% out of the first 80% events from each file (so load 50%*80% = 40% of the file).
+            If split_num > 1, each dataloader worker will further split the dataset into multiple parts when loading a certain fraction of each file.
         fetch_by_files (bool): flag to control how events are retrieved each time we fetch data from disk.
             When set to ``True``, will read only a small number (set by ``fetch_step``) of files each time, but load all the events in these files.
             When set to ``False``, will read from all input files, but load only a small fraction (set by ``fetch_step``) of events each time.
