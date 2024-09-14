@@ -129,7 +129,7 @@ def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, fi
             table.append(a)
     table = _concat(table)  # ak.Array
     if len(table) == 0:
-        raise RuntimeError(f'Zero entries loaded when reading files {filelist} with `load_range`={load_range}.')
+        raise RuntimeError(f'Zero entries loaded when reading files {filelist} with `load_ranges`={load_ranges}.')
     return table
 
 
