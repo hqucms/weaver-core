@@ -59,10 +59,16 @@ parser.add_argument('--fetch-by-files', action='store_true', default=False,
 parser.add_argument('--fetch-step', type=float, default=0.01,
                     help='fraction of events to load each time from every file (when ``--fetch-by-files`` is disabled); '
                          'Or: number of files to load each time (when ``--fetch-by-files`` is enabled). Shuffling & sampling is done within these events, so set a large enough value.')
+parser.add_argument('--fetch-step-val', type=float, default=None,
+                    help='--fetch-step for the validation data loader.')
 parser.add_argument('--data-split-num', type=int, default=1,
                     help='for each dataloader worker, split its dataset further into N parts when loading a certain fraction of each file. Setting N > 1 can reduce the workers\' memory usage.')
+parser.add_argument('--data-split-val', type=int, default=None,
+                    help='--data-split-num for the validation data loader.')
 parser.add_argument('--in-memory', action='store_true', default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
+parser.add_argument('--in-memory-val', action='store_true', default=None,
+                    help='--in-memory for the validation data loader')
 parser.add_argument('--train-val-split', type=float, default=0.8,
                     help='training/validation split fraction')
 parser.add_argument('--no-remake-weights', action='store_true', default=False,
@@ -253,12 +259,20 @@ def train_load(args):
         args.fetch_step = 0.002
 
     if args.in_memory:
-        if args.steps_per_epoch is None or args.steps_per_epoch_val is None:
+        if args.steps_per_epoch is None:
             raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
         if args.fetch_by_files or args.fetch_step < 1:
             _logger.warning(
                 'Running with --in-memory, but --fetch-step is set to a value below 1 (or --fetch-by-files is set). '
                 'This means only a fraction of data will be loaded throughout the training.', color='bold')
+
+    if args.in_memory_val:
+        if args.steps_per_epoch_val is None:
+            raise RuntimeError('Must set --steps-per-epoch-val when using --in-memory-val!')
+        if args.fetch_by_files or args.fetch_step_val < 1:
+            _logger.warning(
+                'Running with --in-memory-val, but --fetch-step-val is set to a value below 1 (or --fetch-by-files is set). '
+                'This means only a fraction of data will be loaded throughout the validation.', color='bold')
 
     train_data = SimpleIterDataset(train_file_dict, args.data_config,
                                    batch_size=args.batch_size,
@@ -276,12 +290,12 @@ def train_load(args):
                                  batch_size=args.batch_size_val,
                                  for_training=True,
                                  extra_selection=args.extra_selection_val,
-                                 load_range_and_fraction=(val_range, args.data_fraction, args.data_split_num),
+                                 load_range_and_fraction=(val_range, args.data_fraction, args.data_split_val),
                                  file_fraction=args.file_fraction,
                                  fetch_by_files=args.fetch_by_files,
-                                 fetch_step=args.fetch_step,
+                                 fetch_step=args.fetch_step_val,
                                  infinity_mode=args.steps_per_epoch_val is not None,
-                                 in_memory=args.in_memory,
+                                 in_memory=args.in_memory_val,
                                  name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
     train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
                               num_workers=min(args.num_workers, max(1, int(len(train_files) * args.file_fraction))),
@@ -504,6 +518,9 @@ def init_opt(args, model, **optimizer_options):
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
     else:
         opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
+
+    if args.load_epoch is not None:
+        load_checkpoint(args, model, opt)
 
     scheduler = None
     if args.lr_finder is None:
@@ -849,9 +866,6 @@ def _main(args):
         # optimizer & learning rate
         opt, scheduler = optimizer_setup(args, model)
 
-        if args.load_epoch is not None:
-            load_checkpoint(args, model, opt)
-
         # DataParallel
         if args.backend is None:
             if gpus is not None and len(gpus) > 1:
@@ -881,7 +895,7 @@ def _main(args):
             if 'train' in args.run_mode:
                 _logger.info('Epoch #%d training' % epoch)
                 train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
-                    steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
+                      steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     dirname = os.path.dirname(args.model_prefix)
                     if dirname and not os.path.exists(dirname):
@@ -889,15 +903,21 @@ def _main(args):
                     prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
                     state_dict = model.module.state_dict() if isinstance(
                         model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
-                    torch.save(state_dict, args.model_prefix + '_epoch-%d_state.pt' % epoch)
-                    torch.save(opt.state_dict(), args.model_prefix + '_epoch-%d_optimizer.pt' % epoch)
-                    for f in prev_ckpts:
-                        os.remove(f)
+                    ckpt_base_name = f'{args.model_prefix}_epoch-{epoch}'
+                    torch.save(state_dict, f'{ckpt_base_name}_state.pt')
+                    torch.save(opt.state_dict(), f'{ckpt_base_name}_optimizer.pt')
+                    if os.path.exists(f'{ckpt_base_name}_state.pt') and os.path.exists(f'{ckpt_base_name}_optimizer.pt'):
+                        for f in prev_ckpts:
+                            try:
+                                os.remove(f)
+                            except OSError:
+                                pass
 
             if 'val' in args.run_mode:
                 _logger.info('Epoch #%d validating' % epoch)
                 if 'train' not in args.run_mode:
-                    model.load_state_dict(torch.load(args.model_prefix + '_epoch-%d_state.pt' % epoch, map_location=dev))
+                    model.load_state_dict(torch.load(args.model_prefix + '_epoch-%d_state.pt' %
+                                          epoch, map_location=dev))
                 valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
                                         steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
                 is_best_epoch = (
@@ -906,11 +926,12 @@ def _main(args):
                 if is_best_epoch:
                     best_valid_metric = valid_metric
                     if args.model_prefix and (args.backend is None or local_rank == 0):
-                        shutil.copy2(args.model_prefix + '_epoch-%d_state.pt' %
-                                    epoch, args.model_prefix + '_best_epoch_state.pt')
-                        # torch.save(model, args.model_prefix + '_best_epoch_full.pt')
+                        shutil.copy2(f'{args.model_prefix}_epoch-{epoch}_state.pt',
+                                     args.model_prefix + '_best_epoch_state.pt')
+                        shutil.copy2(f'{args.model_prefix}_epoch-{epoch}_optimizer.pt',
+                                     args.model_prefix + '_best_epoch_optimizer.pt')
                 _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
-                            (epoch, valid_metric, best_valid_metric), color='bold')
+                             (epoch, valid_metric, best_valid_metric), color='bold')
 
     if 'test' in args.run_mode and args.data_test:
         if args.backend is not None and local_rank != 0:
@@ -1002,6 +1023,13 @@ def main():
         args.data_config_val = args.data_config
     if args.data_config_test is None:
         args.data_config_test = args.data_config
+
+    if args.fetch_step_val is None:
+        args.fetch_step_val = args.fetch_step
+    if args.data_split_val is None:
+        args.data_split_val = args.data_split_num
+    if args.in_memory_val is None:
+        args.in_memory_val = args.in_memory
 
     if args.custom_functions is not None:
         func_module = import_module(args.custom_functions, '_func_module')

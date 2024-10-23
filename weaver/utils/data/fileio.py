@@ -96,6 +96,8 @@ def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, fi
             load_ranges = (load_ranges,) * len(filelist)
     assert all(r is None or (len(r) == 2 and 0 <= r[0] < r[1] <= 1) for r in load_ranges)
     for filepath, load_range in zip(filelist, load_ranges):
+        if load_range is not None and load_range[0] >= load_range[1]:
+            continue
         ext = os.path.splitext(filepath)[1]
         if ext not in ('.h5', '.root', '.awkd', '.parquet'):
             raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
