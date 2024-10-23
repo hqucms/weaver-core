@@ -529,7 +529,7 @@ class Attention(torch.nn.Module):
                 attn_mask = key_padding_mask
             else:
                 assert attn_mask.shape == (bsz, self.num_heads, tgt_len, src_len), \
-                    f"expecting key_padding_mask shape of {(bsz, self.num_heads, tgt_len, src_len)}, but got {key_padding_mask.shape}"
+                    f"expecting attn_mask shape of {(bsz, self.num_heads, tgt_len, src_len)}, but got {attn_mask.shape}"
                 attn_mask = attn_mask + key_padding_mask
 
         # (bsz, seq_len, num_heads*head_dim)
