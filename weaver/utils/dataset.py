@@ -276,6 +276,7 @@ class _SimpleIter(object):
                     # only need to re-shuffle the indices, if this is not the first entry
                     if self._sampler_options['shuffle']:
                         np.random.shuffle(self.indices)
+                        _logger.info(f'Re-shuffled DataIter {self._name}')
                     break
                 if self.prefetch is None:
                     # reaching the end as prefetch got nothing
