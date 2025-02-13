@@ -1,7 +1,7 @@
 from functools import lru_cache
+from pathlib import Path
 
 import torch
-import clifford
 
 from ..utils.einsum import cached_einsum
 
@@ -31,13 +31,8 @@ def _load_geometric_product_tensor(
     if device not in [torch.device("cpu"), "cpu"] and dtype != torch.float32:
         gmt = _load_geometric_product_tensor()
     else:
-        layout, _ = clifford.Cl(1, 3)
-        gmt = torch.tensor(layout.gmt, dtype=torch.float32)
-        gmt = torch.transpose(gmt, 1, 0)
-
-        # Convert to dense tensor
-        # The reason we do that is that einsum is not defined for sparse tensors
-        gmt = gmt.to_dense()
+        filename = Path(__file__).parent.resolve() / "geometric_product.pt"
+        gmt = torch.load(filename).to(torch.float32).to_dense()
 
     return gmt.to(device=device, dtype=dtype)
 

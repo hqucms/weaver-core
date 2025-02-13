@@ -1,8 +1,7 @@
 from functools import lru_cache
+from pathlib import Path
 
 import torch
-import clifford
-import numpy as np
 
 from ..utils.einsum import cached_einsum, custom_einsum
 
@@ -38,21 +37,8 @@ def _compute_pin_equi_linear_basis(
     if device not in [torch.device("cpu"), "cpu"] and dtype != torch.float32:
         basis = _compute_pin_equi_linear_basis(normalize=normalize)
     else:
-        # explicit construction of a pin-equilinear basis for the Lorentz group
-        layout, blades = clifford.Cl(1, 3)
-        linear_basis = []
-        mults = [1, layout.pseudoScalar] if USE_FULLY_CONNECTED_SUBGROUP else [1]
-        for mult in mults:
-            for grade in range(5):
-                w = np.stack([(x(grade) * mult).value for x in blades.values()], 1)
-                w = w.astype(np.float32)
-                if normalize:
-                    # w /= np.linalg.norm(w) # straight-forward normalization
-                    w /= np.linalg.svd(w)[1].max()  # alternative normalization
-                linear_basis.append(w)
-        linear_basis = np.stack(linear_basis)
-
-        basis = torch.tensor(linear_basis, dtype=torch.float32).to_dense()
+        filename = Path(__file__).parent.resolve() / "linear_basis.pt"
+        basis = torch.load(filename).to(torch.float32).to_dense()
     return basis.to(device=device, dtype=dtype)
 
 

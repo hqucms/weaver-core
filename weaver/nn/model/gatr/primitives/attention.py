@@ -7,6 +7,7 @@ from torch.nn.functional import scaled_dot_product_attention as torch_sdpa
 
 from .invariants import _load_inner_product_factors
 
+
 def sdp_attention(
     q_mv: Tensor,
     k_mv: Tensor,
