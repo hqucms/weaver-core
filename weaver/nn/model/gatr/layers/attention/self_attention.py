@@ -8,7 +8,6 @@ from torch import nn
 
 from gatr.layers.attention.attention import GeometricAttention
 from gatr.layers.attention.config import SelfAttentionConfig
-from gatr.layers.attention.positional_encoding import ApplyRotaryPositionalEncoding
 from gatr.layers.attention.qkv import MultiQueryQKVModule, QKVModule
 from gatr.layers.dropout import GradeDropout
 from gatr.layers.linear import EquiLinear
@@ -48,15 +47,6 @@ class SelfAttention(nn.Module):
             out_s_channels=config.out_s_channels,
             initialization=config.output_init,
         )
-
-        # Optional positional encoding
-        self.pos_encoding: nn.Module
-        if config.pos_encoding:
-            self.pos_encoding = ApplyRotaryPositionalEncoding(
-                config.hidden_s_channels, item_dim=-2, base=config.pos_encoding_base
-            )
-        else:
-            self.pos_encoding = nn.Identity()
 
         # Attention
         self.attention = GeometricAttention(config)
@@ -125,10 +115,6 @@ class SelfAttention(nn.Module):
         q_mv, k_mv, v_mv, q_s, k_s, v_s = self.qkv_module(
             multivectors, scalars, additional_qk_features_mv, additional_qk_features_s
         )
-
-        # Rotary positional encoding
-        q_s = self.pos_encoding(q_s)
-        k_s = self.pos_encoding(k_s)
 
         # Attention layer
         h_mv, h_s = self.attention(
