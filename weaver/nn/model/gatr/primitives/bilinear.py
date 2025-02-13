@@ -3,7 +3,7 @@ from functools import lru_cache
 import torch
 import clifford
 
-from gatr.utils.einsum import cached_einsum
+from ..utils.einsum import cached_einsum
 
 
 @lru_cache()

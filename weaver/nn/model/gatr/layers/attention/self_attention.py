@@ -6,11 +6,11 @@ import torch
 from einops import rearrange
 from torch import nn
 
-from gatr.layers.attention.attention import GeometricAttention
-from gatr.layers.attention.config import SelfAttentionConfig
-from gatr.layers.attention.qkv import MultiQueryQKVModule, QKVModule
-from gatr.layers.dropout import GradeDropout
-from gatr.layers.linear import EquiLinear
+from .attention import GeometricAttention
+from .config import SelfAttentionConfig
+from .qkv import MultiQueryQKVModule, QKVModule
+from ..dropout import GradeDropout
+from ..linear import EquiLinear
 
 
 class SelfAttention(nn.Module):

@@ -4,10 +4,10 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
-from gatr.layers import SelfAttention, SelfAttentionConfig
-from gatr.layers.layer_norm import EquiLayerNorm
-from gatr.layers.mlp.config import MLPConfig
-from gatr.layers.mlp.mlp import GeoMLP
+from .attention import SelfAttention, SelfAttentionConfig
+from .layer_norm import EquiLayerNorm
+from .mlp.config import MLPConfig
+from .mlp.mlp import GeoMLP
 
 
 class GATrBlock(nn.Module):

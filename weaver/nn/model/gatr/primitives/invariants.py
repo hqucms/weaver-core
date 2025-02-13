@@ -3,8 +3,8 @@ from functools import lru_cache
 import torch
 import math
 
-from gatr.primitives.linear import grade_project
-from gatr.utils.einsum import cached_einsum
+from .linear import grade_project
+from ..utils.einsum import cached_einsum
 
 
 @lru_cache()

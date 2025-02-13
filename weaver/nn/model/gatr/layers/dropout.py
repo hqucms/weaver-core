@@ -5,7 +5,7 @@ from typing import Tuple
 import torch
 from torch import nn
 
-from gatr.primitives import grade_dropout
+from ..primitives import grade_dropout
 
 
 class GradeDropout(nn.Module):

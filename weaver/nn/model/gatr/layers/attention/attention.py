@@ -2,8 +2,8 @@
 
 from torch import nn
 
-from gatr.layers.attention.config import SelfAttentionConfig
-from gatr.primitives.attention import sdp_attention
+from .config import SelfAttentionConfig
+from ...primitives.attention import sdp_attention
 
 
 class GeometricAttention(nn.Module):

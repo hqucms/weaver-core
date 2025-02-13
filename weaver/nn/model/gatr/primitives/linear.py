@@ -4,7 +4,7 @@ import torch
 import clifford
 import numpy as np
 
-from gatr.utils.einsum import cached_einsum, custom_einsum
+from ..utils.einsum import cached_einsum, custom_einsum
 
 # switch to decide whether to use the full Lorentz group ('False')
 # or the special orthochronous Lorentz group ('True')

@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from gatr.interface import embed_scalar
-from gatr.primitives.linear import equi_linear, USE_FULLY_CONNECTED_SUBGROUP
+from ..interface import embed_scalar
+from ..primitives.linear import equi_linear, USE_FULLY_CONNECTED_SUBGROUP
 
 # switch to mix pseudoscalar multivector components directly into scalar components
 # this only makes sense when working with the special orthochronous Lorentz group,
