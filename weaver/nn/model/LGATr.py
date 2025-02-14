@@ -8,6 +8,7 @@ from .gatr.interface import (
     get_num_spurions,
     embed_spurions,
 )
+from .ParticleTransformer import SequenceTrimmer
 
 
 class LGATrWrapper(nn.Module):
@@ -140,6 +141,7 @@ class LGATrTagger(nn.Module):
     def __init__(
         self,
         use_amp=False,
+        trim=True,
         for_inference=False,
         for_segmentation=False,
         **kwargs,
@@ -149,9 +151,13 @@ class LGATrTagger(nn.Module):
         self.use_amp = use_amp
         self.for_inference = for_inference
         self.for_segmentation = for_segmentation
+        self.trimmer = SequenceTrimmer(enabled=trim and not for_inference)
         self.net = LGATrWrapper(**kwargs)
 
     def forward(self, x, v=None, mask=None):
+        with torch.no_grad():
+            x, v, mask, _ = self.trimmer(x, v, mask)
+
         with torch.autocast("cuda", enabled=self.use_amp):
             output = self.net(x, v, mask)
 
