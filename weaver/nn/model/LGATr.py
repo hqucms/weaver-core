@@ -153,9 +153,13 @@ class LGATrTagger(nn.Module):
 
     def forward(self, x, v=None, mask=None):
         with torch.autocast("cuda", enabled=self.use_amp):
-            # TODO: implement for_segmentation
-
             output = self.net(x, v, mask)
+
+            if self.for_segmentation:
+                output = output.transpose(1, 2).contiguous()
+                if self.for_inference:
+                    output = torch.softmax(output, dim=1)
+                return output
 
             if self.for_inference:
                 output = torch.softmax(output, dim=-1)
