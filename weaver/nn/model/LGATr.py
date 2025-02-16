@@ -93,7 +93,9 @@ class LGATrWrapper(nn.Module):
         s = x
 
         # spurion business
-        spurions = embed_spurions(**self.spurion_kwargs)
+        spurions = embed_spurions(**self.spurion_kwargs).to(
+            device=s.device, dtype=s.dtype
+        )
         if self.spurion_token:
             # add spurions as extra tokens
             # (have to also extend mask and zero-pad scalars)
