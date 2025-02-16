@@ -5,6 +5,7 @@ import math
 
 from .linear import grade_project
 from ..utils.einsum import cached_einsum
+from ..utils.misc import minimum_autocast_precision
 
 
 @lru_cache()
@@ -150,6 +151,7 @@ def pin_invariants(x: torch.Tensor, epsilon: float = 0.01) -> torch.Tensor:
     return torch.cat((x[..., [0]], norms[..., 1:]), dim=-1)  # (..., 5)
 
 
+@minimum_autocast_precision(torch.float32)
 def abs_squared_norm(x: torch.Tensor) -> torch.Tensor:
     """Computes a modified version of the squared norm that is positive semidefinite and can
     therefore be used in layer normalization.
