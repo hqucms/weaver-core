@@ -7,13 +7,12 @@ import torch
 from torch import nn
 
 from ..interface import embed_scalar
-from ..primitives.linear import equi_linear, USE_FULLY_CONNECTED_SUBGROUP
+from ..primitives.linear import equi_linear
 
 # switch to mix pseudoscalar multivector components directly into scalar components
 # this only makes sense when working with the special orthochronous Lorentz group,
 # Note: This is an efficiency boost, the same action can be achieved with an extra linear layer
 MIX_MVPSEUDOSCALAR_INTO_SCALAR = True
-NUM_PIN_LINEAR_BASIS_ELEMENTS = 10 if USE_FULLY_CONNECTED_SUBGROUP else 5
 
 
 class EquiLinear(nn.Module):
@@ -87,6 +86,9 @@ class EquiLinear(nn.Module):
         self._in_mv_channels = in_mv_channels
 
         # MV -> MV
+        from ..primitives.linear import USE_FULLY_CONNECTED_SUBGROUP
+
+        NUM_PIN_LINEAR_BASIS_ELEMENTS = 10 if USE_FULLY_CONNECTED_SUBGROUP else 5
         self.weight = nn.Parameter(
             torch.empty(
                 (out_mv_channels, in_mv_channels, NUM_PIN_LINEAR_BASIS_ELEMENTS)
@@ -289,6 +291,9 @@ class EquiLinear(nn.Module):
             )
 
         # Individual factors for each multivector component (could be tuned for performance)
+        from ..primitives.linear import USE_FULLY_CONNECTED_SUBGROUP
+
+        NUM_PIN_LINEAR_BASIS_ELEMENTS = 10 if USE_FULLY_CONNECTED_SUBGROUP else 5
         mv_component_factors = torch.ones(NUM_PIN_LINEAR_BASIS_ELEMENTS)
         return mv_component_factors, mv_factor, mvs_bias_shift, s_factor
 

@@ -37,7 +37,12 @@ def _compute_pin_equi_linear_basis(
     if device not in [torch.device("cpu"), "cpu"] and dtype != torch.float32:
         basis = _compute_pin_equi_linear_basis(normalize=normalize)
     else:
-        filename = Path(__file__).parent.resolve() / "linear_basis.pt"
+        file = (
+            "linear_basis_subgroup.pt"
+            if USE_FULLY_CONNECTED_SUBGROUP
+            else "linear_basis_full.pt"
+        )
+        filename = Path(__file__).parent.resolve() / file
         basis = torch.load(filename).to(torch.float32).to_dense()
     return basis.to(device=device, dtype=dtype)
 
