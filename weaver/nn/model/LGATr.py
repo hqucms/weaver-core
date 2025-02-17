@@ -38,6 +38,7 @@ class LGATrWrapper(nn.Module):
         head_scale=False,
         double_layernorm=False,
         dropout_prob=None,
+        checkpoint_blocks=False,
     ):
         super().__init__()
 
@@ -79,6 +80,7 @@ class LGATrWrapper(nn.Module):
             num_blocks=num_blocks,
             double_layernorm=double_layernorm,
             dropout_prob=dropout_prob,
+            checkpoint_blocks=checkpoint_blocks,
         )
 
     def forward(self, x, v, mask):
