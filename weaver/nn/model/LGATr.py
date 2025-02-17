@@ -73,7 +73,7 @@ class LGATrWrapper(nn.Module):
             out_mv_channels=num_classes,
             hidden_mv_channels=hidden_mv_channels,
             in_s_channels=in_s_channels,
-            out_s_channels=1,
+            out_s_channels=None,
             hidden_s_channels=hidden_s_channels,
             attention=attention,
             mlp=mlp,
