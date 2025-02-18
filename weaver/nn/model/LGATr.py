@@ -99,7 +99,7 @@ class LGATrWrapper(nn.Module):
             device=s.device, dtype=s.dtype
         )
         if self.spurion_token:
-            # add spurions as extra tokens
+            # prepend spurions as extra tokens
             # (have to also extend mask and zero-pad scalars)
             mask_ones = torch.ones(
                 mask.shape[0],
@@ -108,7 +108,7 @@ class LGATrWrapper(nn.Module):
                 device=mask.device,
                 dtype=mask.dtype,
             )
-            mask = torch.cat([mask, mask_ones], dim=1)
+            mask = torch.cat([mask_ones, mask], dim=1)
 
             s_zeros = torch.zeros(
                 s.shape[0],
@@ -117,10 +117,10 @@ class LGATrWrapper(nn.Module):
                 device=s.device,
                 dtype=s.dtype,
             )
-            s = torch.cat([s, s_zeros], dim=1)
+            s = torch.cat([s_zeros, s], dim=1)
 
             spurions = spurions[None, :, None, :].repeat(mv.shape[0], 1, 1, 1)
-            mv = torch.cat([mv, spurions], dim=1)
+            mv = torch.cat([spurions, mv], dim=1)
         else:
             # add spurions as extra mv channels
             spurions = spurions[None, None, :, :].repeat(mv.shape[0], mv.shape[1], 1, 1)
