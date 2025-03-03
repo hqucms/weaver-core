@@ -17,7 +17,7 @@ class LGATrWrapper(nn.Module):
     - create dataclasses for attention and mlp
     - append spurions (symmetry-breaking)
     - interface to geometric algebra
-    - mean aggregation to extract tagging score
+    - extract tagging score with global token or mean-aggregation
     """
 
     def __init__(
@@ -92,44 +92,28 @@ class LGATrWrapper(nn.Module):
         v = v.transpose(1, 2)  # (batch_size, seq_len, 4)
         mask = mask.transpose(1, 2)  # (batchsize, seq_len, 1)
 
-        # geometric algebra embedding
+        # embed data into geometric algebra
         fourmomenta = v[:, :, None, [3, 0, 1, 2]]  # (px, py, pz, E) -> (E, px, py, pz)
-        mv = embed_vector(fourmomenta)
-        s = x
+        mv = embed_vector(fourmomenta)  # (batch_size, seq_len, 1, 16)
+        s = x  # (batch_size, seq_len, num_fts)
 
-        # spurion business
+        # symmetry breaking with spurions
         spurions = embed_spurions(**self.spurion_kwargs).to(
             device=s.device, dtype=s.dtype
         )
         if self.spurion_token:
-            # prepend spurions as extra tokens
-            # (have to also extend mask and zero-pad scalars)
-            mask_ones = torch.ones(
-                mask.shape[0],
-                spurions.shape[0],
-                mask.shape[2],
-                device=mask.device,
-                dtype=mask.dtype,
-            )
+            # prepend spurions as extra particles in the list
+            mask_ones = torch.ones_like(mask[:, [0]]).repeat(1, spurions.shape[0], 1)
             mask = torch.cat([mask_ones, mask], dim=1)
-
-            s_zeros = torch.zeros(
-                s.shape[0],
-                spurions.shape[0],
-                s.shape[2],
-                device=s.device,
-                dtype=s.dtype,
-            )
+            s_zeros = torch.zeros_like(s[:, [0]]).repeat(1, spurions.shape[0], 1)
             s = torch.cat([s_zeros, s], dim=1)
-
             spurions = spurions[None, :, None, :].repeat(mv.shape[0], 1, 1, 1)
             mv = torch.cat([spurions, mv], dim=1)
         else:
-            # add spurions as extra mv channels
+            # append spurions as extra mv channels
             spurions = spurions[None, None, :, :].repeat(mv.shape[0], mv.shape[1], 1, 1)
             mv = torch.cat([mv, spurions], dim=2)
 
-        # global token business
         if self.global_token:
             # prepend global token as first particle in the list
             global_token = torch.zeros_like(mv[:, [0], :, :])
@@ -145,7 +129,7 @@ class LGATrWrapper(nn.Module):
 
         # call network
         out_mv, _ = self.net(mv, s, mask)
-        output = extract_scalar(out_mv)[..., 0]
+        output = extract_scalar(out_mv)[..., 0]  # (batch_size, seq_len, num_classes)
 
         # aggregation
         if self.global_token:
