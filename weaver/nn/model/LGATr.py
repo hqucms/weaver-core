@@ -135,6 +135,7 @@ class LGATrWrapper(nn.Module):
         output = extract_scalar(out_mv)[..., 0]
 
         # mean aggregation
+        output[~mask[:, 0, 0]] = 0.0
         output = output.mean(dim=1)
         return output
 
