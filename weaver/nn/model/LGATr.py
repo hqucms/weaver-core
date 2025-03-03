@@ -28,6 +28,7 @@ class LGATrWrapper(nn.Module):
         num_classes,
         num_blocks,
         num_heads,
+        global_token=True,
         spurion_token=True,
         beam_reference="xyplane",
         add_time_reference=True,
@@ -44,17 +45,19 @@ class LGATrWrapper(nn.Module):
 
         # spurion business
         in_mv_channels = 1
+        self.global_token = global_token
+        self.spurion_token = spurion_token
+
         num_spurions = get_num_spurions(
             beam_reference, add_time_reference, two_beams=two_beams
         )
-        self.spurion_token = spurion_token
+        if not self.spurion_token:
+            in_mv_channels += num_spurions
         self.spurion_kwargs = {
             "beam_reference": beam_reference,
             "add_time_reference": add_time_reference,
             "two_beams": two_beams,
         }
-        if not self.spurion_token:
-            in_mv_channels += num_spurions
 
         attention = SelfAttentionConfig(
             multi_query=multi_query,
@@ -126,6 +129,16 @@ class LGATrWrapper(nn.Module):
             spurions = spurions[None, None, :, :].repeat(mv.shape[0], mv.shape[1], 1, 1)
             mv = torch.cat([mv, spurions], dim=2)
 
+        # global token business
+        if self.global_token:
+            # prepend global token as first particle in the list
+            global_token = torch.zeros_like(mv[:, [0], :, :])
+            mv = torch.cat((global_token, mv), dim=1)
+            mask_ones = torch.ones_like(mask[:, [0]])
+            mask = torch.cat((mask_ones, mask), dim=1)
+            s_zeros = torch.zeros_like(s[:, [0]])
+            s = torch.cat((s_zeros, s), dim=1)
+
         # reshape mask to broadcast correctly
         mask = mask.bool()
         mask = mask[:, None, None, :, 0]  # (batch_size, 1, 1, seq_len)
@@ -134,9 +147,13 @@ class LGATrWrapper(nn.Module):
         out_mv, _ = self.net(mv, s, mask)
         output = extract_scalar(out_mv)[..., 0]
 
-        # mean aggregation
-        output[~mask[:, 0, 0]] = 0.0
-        output = output.mean(dim=1)
+        # aggregation
+        if self.global_token:
+            output = output[:, 0]
+        else:
+            # mean aggregation
+            output[~mask[:, 0, 0]] = 0.0
+            output = output.mean(dim=1)
         return output
 
 
