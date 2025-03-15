@@ -13,13 +13,7 @@ from .ParticleTransformer import SequenceTrimmer
 
 
 class LGATrWrapper(nn.Module):
-    """
-    Wrapper that handles interface to the GATr code
-    - create dataclasses for attention and mlp
-    - append spurions (symmetry-breaking)
-    - interface to geometric algebra
-    - extract tagging score with global token or mean-aggregation
-    """
+    """Interface to the LGATr class"""
 
     def __init__(
         self,
