@@ -23,32 +23,111 @@ class LGATrWrapper(nn.Module):
 
     def __init__(
         self,
-        in_s_channels,
-        hidden_mv_channels,
-        hidden_s_channels,
-        num_classes,
-        num_blocks,
-        num_heads,
+        in_s_channels: int,
+        hidden_mv_channels: int,
+        hidden_s_channels: int,
+        num_classes: int,
+        num_blocks: int,
+        num_heads: int,
         # symmetry-breaking configurations
-        global_token=True,
-        spurion_token=True,
-        beam_spurion="xyplane",
-        add_time_spurion=True,
-        beam_mirror=True,
+        global_token: bool = True,
+        spurion_token: bool = True,
+        beam_spurion: str = "xyplane",
+        add_time_spurion: bool = True,
+        beam_mirror: bool = True,
         # network configurations
-        activation="gelu",
-        multi_query=False,
-        increase_hidden_channels=2,
-        head_scale=False,
-        double_layernorm=False,
-        dropout_prob=None,
-        checkpoint_blocks=False,
+        activation: str = "gelu",
+        multi_query: bool = False,
+        increase_hidden_channels: int = 2,
+        head_scale: bool = False,
+        double_layernorm: bool = False,
+        dropout_prob: float = None,
+        checkpoint_blocks: bool = False,
         # gatr configurations
-        use_fully_connected_subgroup=True,
-        mix_pseudoscalar_into_scalar=True,
-        use_bivector=True,
-        use_geometric_product=True,
+        use_fully_connected_subgroup: bool = True,
+        mix_pseudoscalar_into_scalar: bool = True,
+        use_bivector: bool = True,
+        use_geometric_product: bool = True,
     ):
+        """
+        Parameters
+        ----------
+        in_s_channels : int
+            Number of scalar input channels.
+            Examples are PID, trajectory displacements and kinematic features
+            like log(pT), delta_phi etc that are invariant under z-rotations.
+        hidden_mv_channels : int
+            Number of hidden multivector channels, defines width of L-GATr.
+        hidden_s_channels : int
+            Number of hidden scalar channels. We find best performance with
+            roughly hidden_s_channels ~ 2 * hidden_mv_channels.
+        num_classes : int
+            Number of classification scores to predict
+        num_blocks : int
+            Number of L-GATr blocks.
+        num_heads : int
+            Number of attention heads in L-GATr.
+        global_token : bool
+            If True, prepend a global token as first particle in the list.
+            If False, fallback to mean-aggregation.
+        spurion_token : bool
+            If True, prepend spurions as extra particles (tokens) in the list.
+            If False, append spurions as extra mv channels.
+        beam_spurion : str
+            How the beam spurion is embedded, see lgatr/interface/spurions.py
+        add_time_spurion : bool
+            If True, add a time spurion.
+        beam_mirror : bool
+            If True and beam_spurion in ["timelike", "lightlike", "spacelike"],
+            add a mirrored beam_spurion, i.e. with opposite p_z.
+        activation : {"relu", "sigmoid", "gelu"}
+            Activation function in the MLP layers.
+        multi_query : bool
+            If True, use the same query for each head in attention.
+        increase_hidden_channels : int
+            Factor by which hidden_mv_channels is increased in attention.
+        head_scale : bool
+            If True, scale the attention heads with a learnable factor.
+            Inspired by the NormFormer (https://arxiv.org/pdf/2110.09456)
+        double_layernorm : bool
+            If True, applies layer normalization also after attention.
+            The default is only before attention ('pre-layernorm transformer')
+        dropout_prob : float
+            Residual dropout after attention and MLP.
+        checkpoint_blocks : bool
+            If True, use torch.utils.checkpoint.checkpoint to save memory
+            at the cost of a slower backward pass.
+        use_fully_connected_subgroup : bool
+            If True, model is only equivariant with respect to
+            the fully connected subgroup of the Lorentz group,
+            the proper orthochronous Lorentz group SO^+(1,3),
+            which does not include parity and time reversal.
+            This setting affects how the EquiLinear maps work:
+            For SO^+(1,3), they include transitions scalars/pseudoscalars
+            vectors/axialvectors and among bivectors, effectively
+            treating the pseudoscalar/axialvector representations
+            like another scalar/vector.
+            Defaults to False, because parity-odd representations
+            are usually not important in high-energy physics simulations.
+        mix_pseudoscalar_into_scalar : bool
+            If True, the pseudoscalar part of the multivector mixes
+            with the pure-scalar channels in the EquiLinear layer.
+            This is a technical aspect of how EquiLinear maps work,
+            and only makes sense it use_fully_connected_subgroup=True.
+            Attention: The combination use_fully_connected_subgroup=False
+            and mix_pseudoscalar_into_scalar=True does not make sense,
+            you are only equivariant w.r.t. the fully connected subgroup
+            if you choose these settings.
+        use_bivector : bool
+            If False, the bivector components are set to zero after they
+            are created in the GeometricBilinear layer.
+            This is a toy switch to explore the effect of higher-order
+            representations.
+        use_geometric_product : bool
+            If False, the GeometricBilinear layer is replaced
+            by a EquiLinear + ScalarGatedNonlinearity layer.
+            This is a toy switch to explore the effect of the geometric product.
+        """
         super().__init__()
 
         # spurion business
@@ -100,6 +179,23 @@ class LGATrWrapper(nn.Module):
         )
 
     def forward(self, x, v, mask):
+        """
+        Parameters
+        ----------
+        x : torch.Tensor with shape (batch_size, num_fts, seq_len)
+            Scalar features, i.e. features that are invariant under z-rotations.
+            Examples: PID, trajectory displacements, kinematic features like
+            log(pT), delta_phi, delta_eta
+        v : torch.Tensor with shape (batch_size, 4, seq_len)
+            Lorentz vectors in format (px, py, pz, E)
+        mask : torch.Tensor with shape (batch_size, 1, seq_len)
+            Boolean mask that contains 'False' for padded jet constituents
+
+        Returns
+        -------
+        output : torch.Tensor with shape (batch_size, num_classes)
+            Tagging scores for each class
+        """
         # reshape input
         x = x.transpose(1, 2)  # (batch_size, seq_len, num_fts)
         v = v.transpose(1, 2)  # (batch_size, seq_len, 4)
@@ -155,7 +251,7 @@ class LGATrWrapper(nn.Module):
 
 
 class LGATrTagger(nn.Module):
-    """Mimic weaver features"""
+    """Mimic other weaver wrappers"""
 
     def __init__(
         self,
