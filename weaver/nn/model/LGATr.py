@@ -1,12 +1,13 @@
 import torch
 from torch import nn
 
-from .gatr import GATr, SelfAttentionConfig, MLPConfig
-from .gatr.interface import (
+from lgatr import (
+    LGATr,
     embed_vector,
     extract_scalar,
     get_num_spurions,
-    embed_spurions,
+    get_spurions,
+    gatr_config,
 )
 from .ParticleTransformer import SequenceTrimmer
 
@@ -28,11 +29,13 @@ class LGATrWrapper(nn.Module):
         num_classes,
         num_blocks,
         num_heads,
+        # symmetry-breaking configurations
         global_token=True,
         spurion_token=True,
-        beam_reference="xyplane",
-        add_time_reference=True,
-        two_beams=True,
+        beam_spurion="xyplane",
+        add_time_spurion=True,
+        beam_mirror=True,
+        # network configurations
         activation="gelu",
         multi_query=False,
         increase_hidden_channels=2,
@@ -40,6 +43,11 @@ class LGATrWrapper(nn.Module):
         double_layernorm=False,
         dropout_prob=None,
         checkpoint_blocks=False,
+        # gatr configurations
+        use_fully_connected_subgroup=True,
+        mix_pseudoscalar_into_scalar=True,
+        use_bivector=True,
+        use_geometric_product=True,
     ):
         super().__init__()
 
@@ -49,29 +57,34 @@ class LGATrWrapper(nn.Module):
         self.spurion_token = spurion_token
 
         num_spurions = get_num_spurions(
-            beam_reference, add_time_reference, two_beams=two_beams
+            beam_spurion, add_time_spurion, beam_mirror=beam_mirror
         )
         if not self.spurion_token:
             in_mv_channels += num_spurions
         self.spurion_kwargs = {
-            "beam_reference": beam_reference,
-            "add_time_reference": add_time_reference,
-            "two_beams": two_beams,
+            "beam_spurion": beam_spurion,
+            "add_time_spurion": add_time_spurion,
+            "beam_mirror": beam_mirror,
         }
 
-        attention = SelfAttentionConfig(
+        gatr_config.use_fully_connected_subgroup = use_fully_connected_subgroup
+        gatr_config.mix_pseudoscalar_into_scalar = mix_pseudoscalar_into_scalar
+        gatr_config.use_bivector = use_bivector
+        gatr_config.use_geometric_product = use_geometric_product
+
+        attention = dict(
             multi_query=multi_query,
             num_heads=num_heads,
             increase_hidden_channels=increase_hidden_channels,
             dropout_prob=dropout_prob,
             head_scale=head_scale,
         )
-        mlp = MLPConfig(
+        mlp = dict(
             activation=activation,
             dropout_prob=dropout_prob,
         )
 
-        self.net = GATr(
+        self.net = LGATr(
             in_mv_channels=in_mv_channels,
             out_mv_channels=num_classes,
             hidden_mv_channels=hidden_mv_channels,
@@ -98,7 +111,7 @@ class LGATrWrapper(nn.Module):
         s = x  # (batch_size, seq_len, num_fts)
 
         # symmetry breaking with spurions
-        spurions = embed_spurions(**self.spurion_kwargs).to(
+        spurions = get_spurions(**self.spurion_kwargs).to(
             device=s.device, dtype=s.dtype
         )
         if self.spurion_token:
@@ -128,7 +141,7 @@ class LGATrWrapper(nn.Module):
         mask = mask[:, None, None, :, 0]  # (batch_size, 1, 1, seq_len)
 
         # call network
-        out_mv, _ = self.net(mv, s, mask)
+        out_mv, _ = self.net(mv, s, attn_mask=mask)
         output = extract_scalar(out_mv)[..., 0]  # (batch_size, seq_len, num_classes)
 
         # aggregation
@@ -152,7 +165,7 @@ class LGATrTagger(nn.Module):
         for_segmentation=False,
         **kwargs,
     ):
-        super().__init__()  # not support this kind of **kwargs for now
+        super().__init__()
 
         self.use_amp = use_amp
         self.for_inference = for_inference
