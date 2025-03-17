@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+from torch.nn.attention.flex_attention import create_block_mask
+from torch_geometric.nn.aggr import MeanAggregation
 
 from lgatr import (
     LGATr,
@@ -9,6 +11,7 @@ from lgatr import (
     get_spurions,
     gatr_config,
 )
+import lgatr.primitives.attention
 from .ParticleTransformer import SequenceTrimmer
 
 
@@ -24,19 +27,22 @@ class LGATrWrapper(nn.Module):
         num_blocks: int,
         num_heads: int,
         # symmetry-breaking configurations
-        global_token: bool = True,
         spurion_token: bool = True,
         beam_spurion: str = "xyplane",
         add_time_spurion: bool = True,
         beam_mirror: bool = True,
         # network configurations
+        global_token: bool = True,
         activation: str = "gelu",
         multi_query: bool = False,
         increase_hidden_channels: int = 2,
         head_scale: bool = False,
         double_layernorm: bool = False,
         dropout_prob: float = None,
+        # time/memory configurations
         checkpoint_blocks: bool = False,
+        use_flex_attention: bool = True,
+        compile_flex_attention: bool = True,
         # gatr configurations
         use_fully_connected_subgroup: bool = True,
         mix_pseudoscalar_into_scalar: bool = True,
@@ -61,9 +67,6 @@ class LGATrWrapper(nn.Module):
             Number of L-GATr blocks.
         num_heads : int
             Number of attention heads in L-GATr.
-        global_token : bool
-            If True, prepend a global token as first particle in the list.
-            If False, fallback to mean-aggregation.
         spurion_token : bool
             If True, prepend spurions as extra particles (tokens) in the list.
             If False, append spurions as extra mv channels.
@@ -74,6 +77,9 @@ class LGATrWrapper(nn.Module):
         beam_mirror : bool
             If True and beam_spurion in ["timelike", "lightlike", "spacelike"],
             add a mirrored beam_spurion, i.e. with opposite p_z.
+        global_token : bool
+            If True, prepend a global token as first particle in the list.
+            If False, fallback to mean-aggregation.
         activation : {"relu", "sigmoid", "gelu"}
             Activation function in the MLP layers.
         multi_query : bool
@@ -91,6 +97,11 @@ class LGATrWrapper(nn.Module):
         checkpoint_blocks : bool
             If True, use torch.utils.checkpoint.checkpoint to save memory
             at the cost of a slower backward pass.
+        use_flex_attention : bool
+            If True, embed jets as sparse tensors and use flex-attention
+            for an efficient block-diagonal attention matrix.
+            If False, use the default torch attention backend with zero-padding.
+            Using True saves a factor of ~2 in memory and maybe a bit of speed.
         use_fully_connected_subgroup : bool
             If True, model is only equivariant with respect to
             the fully connected subgroup of the Lorentz group,
@@ -126,8 +137,24 @@ class LGATrWrapper(nn.Module):
 
         # spurion business
         in_mv_channels = 1
-        self.global_token = global_token
+        self.global_token = False  # global_token
         self.spurion_token = spurion_token
+        self.use_flex_attention = use_flex_attention
+
+        if self.use_flex_attention:
+            if compile_flex_attention:
+                # torch.compile for attention speedup
+                if not torch.cuda.is_available():
+                    # suppress weird error on CPU
+                    torch._dynamo.config.suppress_errors = True
+                lgatr.primitives.attention.flex_attention = torch.compile(
+                    lgatr.primitives.attention.flex_attention, dynamic=True
+                )
+                global create_block_mask
+                create_block_mask = torch.compile(create_block_mask, dynamic=True)
+
+            if not self.global_token:
+                self.aggregator = MeanAggregation()
 
         num_spurions = get_num_spurions(
             beam_spurion, add_time_spurion, beam_mirror=beam_mirror
@@ -225,22 +252,53 @@ class LGATrWrapper(nn.Module):
             mask = torch.cat((mask_ones, mask), dim=1)
             s_zeros = torch.zeros_like(s[:, [0]])
             s = torch.cat((s_zeros, s), dim=1)
+            is_global = torch.zeros_like(s[:, :, 0], dtype=torch.bool)
+            is_global[:, 0] = True
 
-        # reshape mask to broadcast correctly
-        mask = mask.bool()
-        mask = mask[:, None, None, :, 0]  # (batch_size, 1, 1, seq_len)
+        if self.use_flex_attention:
+            # flatten across batch and sequence dimension
+            mask = mask[:, :, 0]
+            mv = mv[mask].unsqueeze(0)
+            s = s[mask].unsqueeze(0)
+
+            if self.global_token:
+                is_global = is_global[mask]
+            else:
+                batch = torch.arange(mask.shape[0], device=mask.device)
+                batch = batch.unsqueeze(-1).repeat(1, mask.shape[1])
+                batch = batch[mask]
+
+            block_mask_fn = lambda b, h, q_idx, kv_idx: batch[q_idx] == batch[kv_idx]
+            block_mask = create_block_mask(
+                block_mask_fn,
+                B=None,
+                H=None,
+                Q_LEN=mv.shape[1],
+                KV_LEN=mv.shape[1],
+                device=mv.device,
+            )
+            attn_kwargs = {"block_mask": block_mask}
+        else:
+            # reshape mask to broadcast correctly
+            mask = mask.bool()
+            attn_mask = mask[:, None, None, :, 0]  # (batch_size, 1, 1, seq_len)
+            attn_kwargs = {"attn_mask": attn_mask}
 
         # call network
-        out_mv, _ = self.net(mv, s, attn_mask=mask)
+        out_mv, _ = self.net(mv, s, **attn_kwargs)
         output = extract_scalar(out_mv)[..., 0]  # (batch_size, seq_len, num_classes)
 
         # aggregation
         if self.global_token:
-            output = output[:, 0]
+            output = output[0] if self.use_flex_attention else output
+            output = output[is_global]
         else:
             # mean aggregation
-            output[~mask[:, 0, 0]] = 0.0
-            output = output.mean(dim=1)
+            if self.use_flex_attention:
+                output = self.aggregator(output[0], index=batch)
+            else:
+                output[~mask[:, 0, 0]] = 0.0
+                output = output.mean(dim=1)
         return output
 
 
