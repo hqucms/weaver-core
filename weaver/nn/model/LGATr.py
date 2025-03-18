@@ -144,9 +144,8 @@ class LGATrWrapper(nn.Module):
         if self.use_flex_attention:
             if compile_flex_attention:
                 # torch.compile for attention speedup
-                if not torch.cuda.is_available():
-                    # suppress weird error on CPU
-                    torch._dynamo.config.suppress_errors = True
+                # suppress weird error on CPU
+                torch._dynamo.config.suppress_errors = True
                 lgatr.primitives.attention.flex_attention = torch.compile(
                     lgatr.primitives.attention.flex_attention, dynamic=True
                 )
