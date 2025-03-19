@@ -11,6 +11,7 @@ import numpy as np
 import math
 import copy
 import torch
+from pytorch_optimizer import Lion
 
 from torch.utils.data import DataLoader
 from weaver.utils.logger import _logger, _configLogger
@@ -516,6 +517,8 @@ def init_opt(args, model, **optimizer_options):
         opt = torch.optim.AdamW(parameters, lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'radam':
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
+    elif args.optimizer == 'lion':
+        opt = Lion(parameters, lr=args.start_lr, **optimizer_options)
     else:
         opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
 
