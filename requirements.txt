@@ -13,7 +13,4 @@ lz4>=3.1.0
 xxhash>=1.4.4
 tables>=3.6.1
 tensorboard>=2.2.0
-einops
-opt_einsum
-lgatr @ git+https://github.com/heidelberg-hepml/lgatr.git@basics
-torch_geometric
+lgatr
