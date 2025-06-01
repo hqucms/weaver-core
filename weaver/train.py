@@ -11,6 +11,7 @@ import numpy as np
 import math
 import copy
 import torch
+from pytorch_optimizer import Lion
 
 from torch.utils.data import DataLoader
 from weaver.utils.logger import _logger, _configLogger
@@ -516,6 +517,8 @@ def init_opt(args, model, **optimizer_options):
         opt = torch.optim.AdamW(parameters, lr=args.start_lr, **optimizer_options)
     elif args.optimizer == 'radam':
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
+    elif args.optimizer == 'lion':
+        opt = Lion(parameters, lr=args.start_lr, **optimizer_options)
     else:
         opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
 
@@ -643,7 +646,8 @@ def model_setup(args, data_config, device='cpu'):
         _logger.info('The following weights has been frozen:\n - %s',
                      '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
     # _logger.info(model)
-    flops(model, model_info, device=device)
+    # dont use flop counting tool from 2019 (causes issues in modern torch, specifically einops; works with e.g. einops==0.6.1)
+    # flops(model, model_info, device=device)
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
