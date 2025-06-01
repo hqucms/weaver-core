@@ -32,9 +32,10 @@ class LGATrWrapper(nn.Module):
         global_token: bool = True,
         activation: str = "gelu",
         multi_query: bool = False,
-        increase_hidden_channels: int = 2,
+        increase_hidden_channels_attention: int = 2,
+        increase_hidden_channels_mlp: int = 2,
+        num_hidden_layers_mlp: int = 1,
         head_scale: bool = False,
-        double_layernorm: bool = False,
         dropout_prob: float = None,
         # time/memory configurations
         checkpoint_blocks: bool = False,
@@ -79,14 +80,15 @@ class LGATrWrapper(nn.Module):
             Activation function in the MLP layers.
         multi_query : bool
             If True, use the same query for each head in attention.
-        increase_hidden_channels : int
+        increase_hidden_channels_attention : int
             Factor by which hidden_mv_channels is increased in attention.
+        increase_hidden_channels_mlp : int
+            Factor by which hidden_mv_channels is increased in the MLP.
+        num_hidden_layers_mlp : int
+            Number of hidden layers in the MLP.
         head_scale : bool
             If True, scale the attention heads with a learnable factor.
             Inspired by the NormFormer (https://arxiv.org/pdf/2110.09456)
-        double_layernorm : bool
-            If True, applies layer normalization also after attention.
-            The default is only before attention ('pre-layernorm transformer')
         dropout_prob : float
             Residual dropout after attention and MLP.
         checkpoint_blocks : bool
@@ -149,16 +151,17 @@ class LGATrWrapper(nn.Module):
         attention = dict(
             multi_query=multi_query,
             num_heads=num_heads,
-            increase_hidden_channels=increase_hidden_channels,
-            dropout_prob=dropout_prob,
+            increase_hidden_channels=increase_hidden_channels_attention,
             head_scale=head_scale,
         )
         mlp = dict(
             activation=activation,
-            dropout_prob=dropout_prob,
+            increase_hidden_channels=increase_hidden_channels_mlp,
+            num_hidden_layers=num_hidden_layers_mlp,
         )
 
         self.net = LGATr(
+            num_blocks=num_blocks,
             in_mv_channels=in_mv_channels,
             out_mv_channels=num_classes,
             hidden_mv_channels=hidden_mv_channels,
@@ -167,8 +170,6 @@ class LGATrWrapper(nn.Module):
             hidden_s_channels=hidden_s_channels,
             attention=attention,
             mlp=mlp,
-            num_blocks=num_blocks,
-            double_layernorm=double_layernorm,
             dropout_prob=dropout_prob,
             checkpoint_blocks=checkpoint_blocks,
         )
