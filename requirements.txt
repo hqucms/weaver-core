@@ -15,3 +15,4 @@ tables>=3.6.1
 tensorboard>=2.2.0
 lgatr
 pytorch_optimizer>=3.0.0  # Lion optimizer
+pyarrow
