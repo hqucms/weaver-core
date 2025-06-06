@@ -370,7 +370,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._init_file_dict = file_dict
         self._init_load_range_and_fraction = load_range_and_fraction
         self._fetch_by_files = fetch_by_files
-        self._fetch_step = fetch_step
+        self._fetch_step = int(fetch_step) if fetch_by_files else fetch_step
         self._file_fraction = file_fraction
         self._async_load = async_load
         self._infinity_mode = infinity_mode
