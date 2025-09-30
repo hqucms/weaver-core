@@ -26,14 +26,23 @@ def delta_r2(eta1, phi1, eta2, phi2):
 
 
 def to_pt2(x, eps=1e-8):
+    assert x.size(1) >= 2
     pt2 = x[:, :2].square().sum(dim=1, keepdim=True)
     if eps is not None:
         pt2 = pt2.clamp(min=eps)
     return pt2
 
 
+def to_p2(x, eps=1e-8):
+    assert x.size(1) >= 3
+    p2 = x[:, :3].square().sum(dim=1, keepdim=True)
+    if eps is not None:
+        p2 = p2.clamp(min=eps)
+    return p2
+
+
 def to_m2(x, eps=1e-8):
-    m2 = x[:, 3:4].square() - x[:, :3].square().sum(dim=1, keepdim=True)
+    m2 = x[:, 3:4].square() - to_p2(x, eps=None)
     if eps is not None:
         m2 = m2.clamp(min=eps)
     return m2
@@ -51,6 +60,23 @@ def to_ptrapphim(x, return_mass=True, eps=1e-8):
     else:
         m = torch.sqrt(to_m2(x, eps=eps))
         return torch.cat((pt, rapidity, phi, m), dim=1)
+
+
+def to_spherical(coords):
+    # x: (N, 4, ...), dim1 : (x, y, z, t)
+    x, y, z = coords[:, :3].split((1, 1, 1), dim=1)
+    r = torch.sqrt(to_p2(coords, eps=None))
+    theta = torch.acos(z / r.clamp(min=1e-20))
+    phi = torch.atan2(y, x)
+    return r, theta, phi
+
+
+def to_cylindrical(coords):
+    # x: (N, 4, ...), dim1 : (x, y, z, t)
+    x, y, z = coords[:, :3].split((1, 1, 1), dim=1)
+    rho = torch.sqrt(to_pt2(coords, eps=None))
+    phi = torch.atan2(y, x)
+    return rho, phi, z
 
 
 def boost(x, boostp4, eps=1e-8):
@@ -72,8 +98,7 @@ def p3_norm(p, eps=1e-8):
 
 def to_energy_momentum(x, return_unit_vector=True):
     energy = x[:, 3:4]
-    p2 = x[:, :3].square().sum(dim=1, keepdim=True)
-    mom = torch.sqrt(p2)
+    mom = torch.sqrt(to_p2(x, eps=None))
     if return_unit_vector:
         return energy, mom, x[:, :3] / mom.clamp(min=1e-8)
     else:
@@ -149,6 +174,44 @@ def pairwise_lv_fts_ee(xi, xj, num_outputs=6, eps=1e-8):
     if num_outputs > 5:
         lnjade = torch.log((ei * ej * (1 - cos_angle)).clamp(min=eps))
         outputs.append(lnjade)
+
+    assert (len(outputs) == num_outputs)
+    return torch.cat(outputs, dim=1)
+
+
+def pairwise_lv_fts_xyzt(xi, xj, num_outputs=7, coords='rectangular', eps=1e-8):
+    # outputs: [ln_dist2, cos_angle, sin_angle, ln_dt] + coords-diff
+    dij = xi - xj
+    ln_dist2 = torch.log(to_p2(dij, eps=eps))
+    outputs = [ln_dist2]
+
+    if num_outputs > 1:
+        ei, pi, ni = to_energy_momentum(xi)
+        ej, pj, nj = to_energy_momentum(xj)
+        cos_angle, sin_angle = to_cos_sin_angles(ni, nj, normed_inputs=True)
+        outputs += [cos_angle, sin_angle]
+
+    if num_outputs > 3:
+        ln_dt = torch.asinh(dij[:, 3:4])
+        outputs += [ln_dt]
+
+    if num_outputs > 4:
+        if coords.lower().startswith('rect') or coords.lower().startswith('cart'):
+            # rectangular/Cartesian coordinate system
+            dx, dy, dz = dij[:, :3].split((1, 1, 1), dim=1)
+            outputs += [dx, dy, dz]
+        elif coords.lower().startswith('sph'):
+            # spherical coordinate system
+            r_i, theta_i, phi_i = to_spherical(xi)
+            r_j, theta_j, phi_j = to_spherical(xj)
+            outputs += [torch.asinh(r_i - r_j), theta_i - theta_j, delta_phi(phi_i, phi_j)]
+        elif coords.lower().startswith('cyl'):
+            # cylindrical coordinate system
+            rho_i, phi_i, z_i = to_cylindrical(xi)
+            rho_j, phi_j, z_j = to_cylindrical(xj)
+            outputs += [torch.asinh(rho_i - rho_j), delta_phi(phi_i, phi_j), torch.asinh(z_i - z_j)]
+        else:
+            raise RuntimeError(f'Unrecognized coordinate system name {coords}')
 
     assert (len(outputs) == num_outputs)
     return torch.cat(outputs, dim=1)
@@ -300,6 +363,10 @@ class PairEmbed(nn.Module):
         elif pairwise_lv_type == 'ee':
             self.is_symmetric = (pairwise_lv_dim <= 6) and (pairwise_input_dim == 0)
             self.pairwise_lv_fts = partial(pairwise_lv_fts_ee, num_outputs=pairwise_lv_dim, eps=eps)
+        elif pairwise_lv_type.startswith('xyzt'):
+            coords = pairwise_lv_type.split(':')[1] if ':' in pairwise_lv_type else None
+            self.is_symmetric = (pairwise_lv_dim <= 3) and (pairwise_input_dim == 0)
+            self.pairwise_lv_fts = partial(pairwise_lv_fts_xyzt, num_outputs=pairwise_lv_dim, coords=coords, eps=eps)
         else:
             raise RuntimeError('Invalid value for `pairwise_lv_type`: ' + pairwise_lv_type)
 
@@ -335,11 +402,14 @@ class PairEmbed(nn.Module):
         # x: (batch, v_dim, seq_len)
         # uu: (batch, v_dim, seq_len, seq_len)
         assert (x is not None or uu is not None)
-        with torch.no_grad():
-            if x is not None:
-                batch_size, _, seq_len = x.size()
-            else:
-                batch_size, _, seq_len, _ = uu.size()
+        _requires_grad = False
+        if x is not None:
+            batch_size, _, seq_len = x.size()
+            _requires_grad |= x.requires_grad
+        else:
+            batch_size, _, seq_len, _ = uu.size()
+            _requires_grad |= uu.requires_grad
+        with torch.set_grad_enabled(_requires_grad):
             if self.is_symmetric:
                 tril_indices_fn = tril_indices if self.for_onnx else torch.tril_indices
                 i, j = tril_indices_fn(
@@ -382,12 +452,15 @@ class PairEmbed(nn.Module):
         # x: (batch, v_dim, seq_len)
         # uu: (batch, v_dim, seq_len, seq_len)
         assert (x is not None or uu is not None)
-        with torch.no_grad():
-            if x is not None:
-                batch_size, _, seq_len = x.size()
-            else:
-                batch_size, _, seq_len, _ = uu.size()
+        _requires_grad = False
+        if x is not None:
+            batch_size, _, seq_len = x.size()
+            _requires_grad |= x.requires_grad
+        else:
+            batch_size, _, seq_len, _ = uu.size()
+            _requires_grad |= uu.requires_grad
 
+        with torch.set_grad_enabled(_requires_grad):
             i0, i1, i2, i3 = (Ellipsis,) * 4
             if mask is not None:
                 mask = mask.unsqueeze(-1) * mask.unsqueeze(-2)  # (batch_size, 1, seq_len, seq_len)
@@ -778,7 +851,12 @@ class ParticleTransformer(nn.Module):
         self.embed = Embed(input_dim, embed_dims, activation=activation) if len(embed_dims) > 0 else nn.Identity()
 
         if pair_input_dim is None:
-            pair_input_dim = 4 if pair_input_type == 'pp' else 6
+            if pair_input_type == 'pp':
+                pair_input_dim = 4
+            elif pair_input_type == 'ee':
+                pair_input_dim = 6
+            elif pair_input_type.startswith('xyzt'):
+                pair_input_dim = 7
         self.pair_extra_dim = pair_extra_dim
         self.pair_embed = PairEmbed(
             pair_input_dim, pair_extra_dim, (*pair_embed_dims, cfg_block['num_heads']),
@@ -845,7 +923,7 @@ class ParticleTransformer(nn.Module):
         return {'cls_token', }
 
     def _forward_encoder(self, x, v=None, mask=None, uu=None, uu_idx=None):
-        with torch.no_grad():
+        with torch.set_grad_enabled(x.requires_grad):
             if not self.for_inference:
                 if uu_idx is not None:
                     uu = build_sparse_tensor(uu, uu_idx, x.size(-1))
