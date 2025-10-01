@@ -136,6 +136,8 @@ parser.add_argument('--batch-size-test', type=int, default=None,
                     help='batch size for test dataset')
 parser.add_argument('--use-amp', action='store_true', default=False,
                     help='use mixed precision training (fp16)')
+parser.add_argument('--compile-model', action='store_true', default=False,
+                    help='use torch.compile')
 parser.add_argument('--gpus', type=str, default='0',
                     help='device for the training/testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
 parser.add_argument('--predict-gpus', type=str, default=None,
@@ -856,6 +858,9 @@ def _main(args):
 
     if training_mode:
         model = orig_model.to(dev)
+
+        if args.compile_model:
+            model = torch.compile(model)
 
         # DistributedDataParallel
         if args.backend is not None:
