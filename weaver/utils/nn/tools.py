@@ -11,6 +11,13 @@ from ..data.tools import _concat
 from ..logger import _logger
 
 
+_tb_global_helper = None
+
+
+def get_tensorboard_helper():
+    return _tb_global_helper
+
+
 def _flatten_label(label, mask=None):
     if label.ndim > 1:
         label = label.view(-1)
@@ -79,12 +86,45 @@ class AllGather(torch.autograd.Function):
         return grads
 
 
+def unwrap_model(model):
+    """
+    Recursively unwraps a model from DDP, DataParallel, and torch.compile 
+    wrappers to retrieve the original underlying model.
+    """
+    should_continue = True
+
+    while should_continue:
+        should_continue = False
+
+        # Unwrap DDP or DataParallel
+        if hasattr(model, "module"):
+            model = model.module
+            should_continue = True
+
+        # Unwrap torch.compile (OptimizedModule)
+        elif hasattr(model, "_orig_mod"):
+            model = model._orig_mod
+            should_continue = True
+
+    return model
+
+
+def get_autocast_config(args):
+    enable_autocast = args.use_amp
+    if args.amp_dtype == 'bf16':
+        autocast_dtype = torch.bfloat16
+    else:
+        autocast_dtype = None
+    return enable_autocast, autocast_dtype
+
+
 def train_classification(
         model, loss_func, opt, scheduler, train_loader, dev, epoch, steps_per_epoch=None, grad_scaler=None,
         tb_helper=None, extra_args=None):
     model.train()
 
     data_config = train_loader.dataset.config
+    clip_grad_norm = getattr(opt, '_clip_grad_norm', float('inf'))
 
     label_counter = Counter()
     total_loss = 0
@@ -92,6 +132,10 @@ def train_classification(
     total_correct = 0
     entry_count = 0
     count = 0
+    grad_norm_max_val = 0
+
+    enable_autocast, autocast_dtype = get_autocast_config(extra_args['args'])
+
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
@@ -102,16 +146,22 @@ def train_classification(
                 mask = y[data_config.label_names[0] + '_mask'].bool().to(dev)
             except KeyError:
                 mask = None
+            if tb_helper:
+                tb_helper.global_step += 1
             opt.zero_grad()
-            with torch.autocast('cuda', enabled=grad_scaler is not None):
+            with torch.autocast('cuda', enabled=enable_autocast, dtype=autocast_dtype):
                 model_output = model(*inputs)
                 logits, label, _ = _flatten_preds(model_output, label=label, mask=mask)
                 loss = loss_func(logits, label)
             if grad_scaler is None:
                 loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm).item()
                 opt.step()
             else:
                 grad_scaler.scale(loss).backward()
+                # unscale the gradients, then clipping
+                grad_scaler.unscale_(opt)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm).item()
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
@@ -120,6 +170,7 @@ def train_classification(
 
             _, preds = logits.max(1)
             loss = loss.item()
+            grad_norm_max_val = max(grad_norm_max_val, grad_norm)
 
             num_examples = label.shape[0]
             label_counter.update(label.numpy(force=True))
@@ -138,8 +189,9 @@ def train_classification(
 
             if tb_helper:
                 tb_helper.write_scalars([
-                    ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
-                    ("Acc/train", correct / num_examples, tb_helper.batch_train_count + num_batches),
+                    ("Loss/train", loss, tb_helper.global_step),
+                    ("GradNorm/train", grad_norm, tb_helper.global_step),
+                    ("Acc/train", correct / num_examples, tb_helper.global_step),
                 ])
                 if tb_helper.custom_fn:
                     with torch.no_grad():
@@ -153,6 +205,7 @@ def train_classification(
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (entry_count, entry_count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / num_batches, total_correct / count))
     _logger.info('Train class distribution: \n    %s', str(sorted(label_counter.items())))
+    _logger.info('Max Grad Norm: %.5f' % (grad_norm_max_val, ))
     _logger.info('Max CUDA memory: %.1f MB' % (torch.cuda.max_memory_allocated(dev) / 1024.**2,))
 
     if tb_helper:
@@ -187,6 +240,9 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
     labels = defaultdict(list)
     labels_counts = []
     observers = defaultdict(list)
+
+    enable_autocast, autocast_dtype = get_autocast_config(extra_args['args'])
+
     start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
@@ -200,7 +256,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
                     mask = y[data_config.label_names[0] + '_mask'].bool().to(dev)
                 except KeyError:
                     mask = None
-                model_output = AllGather.apply(model(*inputs))
+                with torch.autocast('cuda', enabled=enable_autocast, dtype=autocast_dtype):
+                    model_output = AllGather.apply(model(*inputs))
                 logits, label, mask = _flatten_preds(model_output, label=label, mask=mask)
                 scores.append(torch.softmax(logits.float(), dim=1).numpy(force=True))
 
@@ -336,12 +393,17 @@ def train_regression(
     model.train()
 
     data_config = train_loader.dataset.config
+    clip_grad_norm = getattr(opt, '_clip_grad_norm', float('inf'))
 
     total_loss = 0
     num_batches = 0
     sum_abs_err = 0
     sum_sqr_err = 0
     count = 0
+    grad_norm_max_val = 0
+
+    enable_autocast, autocast_dtype = get_autocast_config(extra_args['args'])
+
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
@@ -349,16 +411,22 @@ def train_regression(
             label = y[data_config.label_names[0]].float()
             num_examples = label.shape[0]
             label = label.to(dev)
+            if tb_helper:
+                tb_helper.global_step += 1
             opt.zero_grad()
-            with torch.autocast('cuda', enabled=grad_scaler is not None):
+            with torch.autocast('cuda', enabled=enable_autocast, dtype=autocast_dtype):
                 model_output = model(*inputs)
                 preds = model_output.squeeze()
                 loss = loss_func(preds, label)
             if grad_scaler is None:
                 loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm).item()
                 opt.step()
             else:
                 grad_scaler.scale(loss).backward()
+                # unscale the gradients, then clipping
+                grad_scaler.unscale_(opt)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm).item()
                 grad_scaler.step(opt)
                 grad_scaler.update()
 
@@ -366,6 +434,7 @@ def train_regression(
                 scheduler.step()
 
             loss = loss.item()
+            grad_norm_max_val = max(grad_norm_max_val, grad_norm)
 
             num_batches += 1
             count += num_examples
@@ -388,9 +457,10 @@ def train_regression(
 
             if tb_helper:
                 tb_helper.write_scalars([
-                    ("Loss/train", loss, tb_helper.batch_train_count + num_batches),
-                    ("MSE/train", sqr_err / num_examples, tb_helper.batch_train_count + num_batches),
-                    ("MAE/train", abs_err / num_examples, tb_helper.batch_train_count + num_batches),
+                    ("Loss/train", loss, tb_helper.global_step),
+                    ("GradNorm/train", grad_norm, tb_helper.global_step),
+                    ("MSE/train", sqr_err / num_examples, tb_helper.global_step),
+                    ("MAE/train", abs_err / num_examples, tb_helper.global_step),
                 ])
                 if tb_helper.custom_fn:
                     with torch.no_grad():
@@ -404,6 +474,7 @@ def train_regression(
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (count, count / time_diff))
     _logger.info('Train AvgLoss: %.5f, AvgMSE: %.5f, AvgMAE: %.5f' %
                  (total_loss / num_batches, sum_sqr_err / count, sum_abs_err / count))
+    _logger.info('Max Grad Norm: %.5f' % (grad_norm_max_val, ))
     _logger.info('Max CUDA memory: %.1f MB' % (torch.cuda.max_memory_allocated(dev) / 1024.**2,))
 
     if tb_helper:
@@ -438,6 +509,9 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
     scores = []
     labels = defaultdict(list)
     observers = defaultdict(list)
+
+    enable_autocast, autocast_dtype = get_autocast_config(extra_args['args'])
+
     start_time = time.time()
     with torch.no_grad():
         with tqdm.tqdm(test_loader) as tq:
@@ -447,7 +521,8 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
                 y = {k: AllGather.apply(v.to(dev)) for k, v in y.items()}
                 label = y[data_config.label_names[0]].float()
                 num_examples = label.shape[0]
-                model_output = AllGather.apply(model(*inputs))
+                with torch.autocast('cuda', enabled=enable_autocast, dtype=autocast_dtype):
+                    model_output = AllGather.apply(model(*inputs))
                 preds = model_output.squeeze().float()
 
                 scores.append(preds.numpy(force=True))
@@ -523,7 +598,8 @@ class TensorboardHelper(object):
         _logger.info('Create Tensorboard summary writer with comment %s' % self.tb_comment)
 
         # initiate the batch state
-        self.batch_train_count = 0
+        self.batch_train_count = 0  # deprecated
+        self.global_step = 0
 
         # load custom function
         self.custom_fn = tb_custom_fn
@@ -532,6 +608,9 @@ class TensorboardHelper(object):
             from functools import partial
             self.custom_fn = import_module(self.custom_fn, '_custom_fn')
             self.custom_fn = partial(self.custom_fn.get_tensorboard_custom_fn, tb_writer=self.writer)
+
+        global _tb_global_helper
+        _tb_global_helper = self
 
     def __del__(self):
         self.writer.close()

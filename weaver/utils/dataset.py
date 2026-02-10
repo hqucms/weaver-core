@@ -82,6 +82,8 @@ def _check_labels(table):
 
 
 def _preprocess(table, data_config, options):
+    # add training flag (=True only for train loader, =False for val/test)
+    table['aux_training_'] = options['mode'] == 'train'
     # apply selection
     table = _apply_selection(
         table, data_config.selection if options['training'] else data_config.test_time_selection,
@@ -393,6 +395,8 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             self._sampler_options.update(training=True, shuffle=True, reweight=True)
         else:
             self._sampler_options.update(training=False, shuffle=False, reweight=False)
+
+        self._sampler_options['mode'] = next((k for k in ('train', 'val', 'test') if k in name), None)
 
         # discover auto-generated reweight file
         if '.auto.yaml' in data_config_file:
