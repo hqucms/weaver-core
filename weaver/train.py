@@ -17,11 +17,12 @@ from weaver.utils.logger import _logger, _configLogger
 from weaver.utils.dataset import SimpleIterDataset
 from weaver.utils.import_tools import import_module
 from weaver.utils.data.eval_utils import _register_funcs
+from weaver.utils.nn.tools import unwrap_model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--run-mode', type=functools.partial(str.split, sep=','), default='train,val,test',
                     help='comma-separated list of the steps (train|val|test) to run, e.g., `train,test`')
-parser.add_argument('--regression-mode', action='store_true', default=False,
+parser.add_argument('--regression-mode', action=argparse.BooleanOptionalAction, default=False,
                     help='run in regression mode if this flag is set; otherwise run in classification mode')
 parser.add_argument('-c', '--data-config', type=str,
                     help='data config YAML file')
@@ -53,7 +54,7 @@ parser.add_argument('--data-fraction', type=float, default=1,
                     help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
 parser.add_argument('--file-fraction', type=float, default=1,
                     help='fraction of files to load; for training, the files are randomly selected for each epoch')
-parser.add_argument('--fetch-by-files', action='store_true', default=False,
+parser.add_argument('--fetch-by-files', action=argparse.BooleanOptionalAction, default=False,
                     help='When enabled, will load all events from a small number (set by ``--fetch-step``) of files for each data fetching. '
                          'Otherwise (default), load a small fraction of events from all files each time, which helps reduce variations in the sample composition.')
 parser.add_argument('--fetch-step', type=float, default=0.01,
@@ -65,15 +66,15 @@ parser.add_argument('--data-split-num', type=int, default=1,
                     help='for each dataloader worker, split its dataset further into N parts when loading a certain fraction of each file. Setting N > 1 can reduce the workers\' memory usage.')
 parser.add_argument('--data-split-val', type=int, default=None,
                     help='--data-split-num for the validation data loader.')
-parser.add_argument('--in-memory', action='store_true', default=False,
+parser.add_argument('--in-memory', action=argparse.BooleanOptionalAction, default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
-parser.add_argument('--in-memory-val', action='store_true', default=None,
+parser.add_argument('--in-memory-val', action=argparse.BooleanOptionalAction, default=None,
                     help='--in-memory for the validation data loader')
 parser.add_argument('--train-val-split', type=float, default=0.8,
                     help='training/validation split fraction')
 parser.add_argument('--no-remake-weights', action='store_true', default=False,
                     help='do not remake weights for sampling (reweighting), use existing ones in the previous auto-generated data config YAML file')
-parser.add_argument('--demo', action='store_true', default=False,
+parser.add_argument('--demo', action=argparse.BooleanOptionalAction, default=False,
                     help='quickly test the setup by running over only a small number of events')
 parser.add_argument('--lr-finder', type=str, default=None,
                     help='run learning rate finder instead of the actual training; format: ``start_lr, end_lr, num_iters``')
@@ -120,10 +121,10 @@ parser.add_argument('--optimizer', type=str, default='ranger',
 parser.add_argument('-p', '--optimizer-option', nargs=2, action='append', default=[],
                     help='options to pass to the optimizer class constructor, e.g., `--optimizer-option weight_decay 1e-4`')
 parser.add_argument('--lr-scheduler', type=str, default='flat+decay',
-                    choices=['none', 'steps', 'flat+decay', 'flat+linear', 'flat+cos', 'one-cycle'],
+                    choices=['none', 'steps', 'flat+decay', 'flat+linear', 'flat+cos', 'warmup+cos', 'one-cycle'],
                     help='learning rate scheduler')
-parser.add_argument('--warmup-steps', type=int, default=0,
-                    help='number of warm-up steps, only valid for `flat+linear` and `flat+cos` lr schedulers')
+parser.add_argument('--warmup-steps', type=float, default=0.25,
+                    help='number of warm-up steps (or fraction of the total steps if <1), only valid for `flat+linear` and `flat+cos` lr schedulers')
 parser.add_argument('--load-epoch', type=int, default=None,
                     help='used to resume interrupted training, load model and optimizer state saved in the `epoch-%%d_state.pt` and `epoch-%%d_optimizer.pt` files')
 parser.add_argument('--start-lr', type=float, default=5e-3,
@@ -134,17 +135,21 @@ parser.add_argument('--batch-size-val', type=int, default=None,
                     help='batch size for validation dataset')
 parser.add_argument('--batch-size-test', type=int, default=None,
                     help='batch size for test dataset')
-parser.add_argument('--use-amp', action='store_true', default=False,
+parser.add_argument('--use-amp', action=argparse.BooleanOptionalAction, default=False,
                     help='use mixed precision training (fp16)')
-parser.add_argument('--compile-model', action='store_true', default=False,
+parser.add_argument('--amp-dtype', type=str, default='bf16', choices=['fp16', 'bf16'],
+                    help='dtype for mixed precision training (fp16 or bf16)')
+parser.add_argument('--compile', action=argparse.BooleanOptionalAction, default=False,
                     help='use torch.compile')
+parser.add_argument('--compiler-option', nargs=2, action='append', default=[],
+                    help='options to pass to torch.compile, e.g., `--compiler-option dynamic False`')
 parser.add_argument('--gpus', type=str, default='0',
                     help='device for the training/testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`')
 parser.add_argument('--predict-gpus', type=str, default=None,
                     help='device for the testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`; if not set, use the same as `--gpus`')
 parser.add_argument('--num-workers', type=int, default=1,
                     help='number of threads to load the dataset; memory consumption and disk access load increases (~linearly) with this numbers')
-parser.add_argument('--predict', action='store_true', default=False,
+parser.add_argument('--predict', action=argparse.BooleanOptionalAction, default=False,
                     help='run prediction instead of training')
 parser.add_argument('--predict-output', type=str,
                     help='path to save the prediction output, support `.root` and `.parquet` format')
@@ -153,21 +158,21 @@ parser.add_argument('--export-onnx', type=str, default=None,
                          'needs to set `--data-config`, `--network-config`, and `--model-prefix` (requires the full model path)')
 parser.add_argument('--onnx-opset', type=int, default=15,
                     help='ONNX opset version.')
-parser.add_argument('--io-test', action='store_true', default=False,
+parser.add_argument('--io-test', action=argparse.BooleanOptionalAction, default=False,
                     help='test throughput of the dataloader')
-parser.add_argument('--copy-inputs', action='store_true', default=False,
+parser.add_argument('--copy-inputs', action=argparse.BooleanOptionalAction, default=False,
                     help='copy input files to the current dir (can help to speed up dataloading when running over remote files, e.g., from EOS)')
 parser.add_argument('--log-file', type=str, dest='log', default='',
                     help='path to the log file; `{auto}` can be used as part of the path to auto-generate a name, based on the timestamp and network configuration')
-parser.add_argument('--print', action='store_true', default=False,
+parser.add_argument('--print', action=argparse.BooleanOptionalAction, default=False,
                     help='do not run training/prediction but only print model information, e.g., FLOPs and number of parameters of a model')
-parser.add_argument('--profile', action='store_true', default=False,
+parser.add_argument('--profile', action=argparse.BooleanOptionalAction, default=False,
                     help='run the profiler')
 parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], default=None,
                     help='backend for distributed training')
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%%k`')
-parser.add_argument('--auto-clean', action='store_true', default=False,
+parser.add_argument('--auto-clean', action=argparse.BooleanOptionalAction, default=False,
                     help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
 
 
@@ -406,6 +411,7 @@ def flops(model, model_info, device='cpu'):
     :return:
     """
     from weaver.utils.flops_counter import get_model_complexity_info
+    from torch.utils.flop_counter import FlopCounterMode
     import copy
 
     model = copy.deepcopy(model).to(device)
@@ -413,10 +419,24 @@ def flops(model, model_info, device='cpu'):
 
     inputs = tuple(torch.ones(model_info['input_shapes'][k], dtype=torch.float32,
                               device=device) for k in model_info['input_names'])
-
+    
     macs, params = get_model_complexity_info(model, inputs, as_strings=True, print_per_layer_stat=True, verbose=True)
     _logger.info('{:<30}  {:<8}'.format('Computational complexity: ', macs))
     _logger.info('{:<30}  {:<8}'.format('Number of parameters: ', params))
+
+    flop_counter = FlopCounterMode(display=True)
+    with flop_counter:
+        _ = model(*inputs)
+    total_flops = flop_counter.get_total_flops()
+
+    def format_number(n):
+        for unit in ['', 'K', 'M', 'G', 'T', 'P']:
+            if abs(n) < 1000:
+                return f"{n:.2f} {unit}"
+            n /= 1000
+        return f"{n:.2f}E"
+
+    _logger.info('{:<30}  {:<8}'.format('Total FLOPs: ', format_number(total_flops)))
 
 
 def profile(args, model, model_info, device):
@@ -465,10 +485,11 @@ def init_opt(args, model, **optimizer_options):
         import re
         decay, no_decay = {}, {}
         names_no_decay = []
+        wd_skip_list = {'pos_embed', 'cls_token', 'mask_token', 'register_token'}
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue  # frozen weights
-            if len(param.shape) == 1 or name.endswith(".bias") or (
+            if len(param.shape) == 1 or name.endswith(".bias") or (name.split('.')[-1] in wd_skip_list) or (
                     hasattr(model, 'no_weight_decay') and name in model.no_weight_decay()):
                 no_decay[name] = param
                 names_no_decay.append(name)
@@ -496,7 +517,7 @@ def init_opt(args, model, **optimizer_options):
             assert (len(no_decay_1x) + len(no_decay_mult) == len(no_decay))
         else:
             decay_1x, no_decay_1x = list(decay.values()), list(no_decay.values())
-        wd = optimizer_options.pop('weight_decay', 0.)
+        wd = optimizer_options.get('weight_decay', 0.)
         parameters = [
             {'params': no_decay_1x, 'weight_decay': 0.},
             {'params': decay_1x, 'weight_decay': wd},
@@ -509,20 +530,29 @@ def init_opt(args, model, **optimizer_options):
     else:
         parameters = model.parameters()
 
+    clip_grad_norm = optimizer_options.pop('clip_grad_norm', float('inf'))
+
     if args.optimizer.lower() == 'ranger':
         from weaver.utils.nn.optimizer.ranger import Ranger
         opt = Ranger(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer == 'adam':
+    elif args.optimizer.lower() == 'adam':
         opt = torch.optim.Adam(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer == 'adamW':
+    elif args.optimizer.lower() == 'adamw':
+        if 'betas' not in optimizer_options:
+            optimizer_options['betas'] = (0.95, 0.999)
+        if 'weight_decay' not in optimizer_options:
+            optimizer_options['weight_decay'] = 0
+        _logger.info(f'Using AdamW optimizer w/ options: {str(optimizer_options)}')
         opt = torch.optim.AdamW(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer == 'radam':
+    elif args.optimizer.lower() == 'radam':
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
     else:
         opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
 
     if args.load_epoch is not None:
         load_checkpoint(args, model, opt)
+
+    opt._clip_grad_norm = clip_grad_norm
 
     scheduler = None
     if args.lr_finder is None:
@@ -539,14 +569,14 @@ def init_opt(args, model, **optimizer_options):
                 def get_lr(epoch): return gamma ** max(0, epoch - milestones[0] + 1)  # noqa
                 scheduler = torch.optim.lr_scheduler.LambdaLR(
                     opt, (lambda _: 1, lambda _: 1, get_lr, get_lr),
-                    last_epoch=-1 if args.load_epoch is None else args.load_epoch, verbose=True)
+                    last_epoch=-1 if args.load_epoch is None else args.load_epoch)
             else:
                 scheduler = torch.optim.lr_scheduler.MultiStepLR(
                     opt, milestones=milestones, gamma=gamma,
                     last_epoch=-1 if args.load_epoch is None else args.load_epoch)
         elif args.lr_scheduler == 'flat+linear' or args.lr_scheduler == 'flat+cos':
             total_steps = args.num_epochs * args.steps_per_epoch
-            warmup_steps = args.warmup_steps
+            warmup_steps = (args.warmup_steps * total_steps) if args.warmup_steps < 1 else args.warmup_steps
             flat_steps = total_steps * 0.7 - 1
             min_factor = 0.001
 
@@ -568,6 +598,20 @@ def init_opt(args, model, **optimizer_options):
             scheduler = torch.optim.lr_scheduler.LambdaLR(
                 opt, lr_fn, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch)
             scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
+        elif args.lr_scheduler == 'warmup+cos':
+            num_training_steps = args.num_epochs * args.steps_per_epoch
+            num_warmup_steps = (args.warmup_steps * num_training_steps) if args.warmup_steps < 1 else args.warmup_steps
+            num_cycles = 0.5
+
+            def lr_lambda(current_step):
+                if current_step < num_warmup_steps:
+                    return float(current_step) / float(max(1, num_warmup_steps))
+                progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+                return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                opt, lr_lambda, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch)
+            scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
         elif args.lr_scheduler == 'one-cycle':
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
                 opt, max_lr=args.start_lr, epochs=args.num_epochs, steps_per_epoch=args.steps_per_epoch, pct_start=0.3,
@@ -580,10 +624,7 @@ def load_checkpoint(args, model, opt):
     # load previous training and resume if `--load-epoch` is set
     _logger.info('Resume training from epoch %d' % args.load_epoch)
     model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location='cpu')
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        model.module.load_state_dict(model_state)
-    else:
-        model.load_state_dict(model_state)
+    model.load_state_dict(model_state)
     opt_state_file = args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch
     if os.path.exists(opt_state_file):
         opt_state = torch.load(opt_state_file, map_location='cpu')
@@ -606,6 +647,8 @@ def model_setup(args, data_config, device='cpu'):
         network_options['for_inference'] = True
     if args.use_amp:
         network_options['use_amp'] = True
+    if args.compile:
+        network_options['compile_model'] = True
     model, model_info = network_module.get_model(data_config, **network_options)
     if args.load_model_weights:
         if ':' in args.load_model_weights:
@@ -613,7 +656,6 @@ def model_setup(args, data_config, device='cpu'):
             model_state = torch.load(state_file, map_location='cpu')
             model_state = {k.replace(prefix + '.', '', 1): v for k,
                            v in model_state.items() if k.startswith(prefix + '.')}
-
         else:
             model_state = torch.load(args.load_model_weights, map_location='cpu')
         if args.exclude_model_weights:
@@ -645,7 +687,10 @@ def model_setup(args, data_config, device='cpu'):
         _logger.info('The following weights has been frozen:\n - %s',
                      '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
     # _logger.info(model)
-    flops(model, model_info, device=device)
+    try:
+        flops(model, model_info, device=device)
+    except Exception as e:
+        _logger.error('Error in flops: %s', str(e))
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
@@ -837,6 +882,12 @@ def _main(args):
         iotest(args, data_loader)
         return
 
+    if args.tensorboard and (args.backend is None or args.local_rank == 0):
+        from weaver.utils.nn.tools import TensorboardHelper
+        tb = TensorboardHelper(tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
+    else:
+        tb = None
+
     model, model_info, loss_func, train, evaluate = model_setup(args, data_config, device=dev)
 
     if args.print:
@@ -846,21 +897,12 @@ def _main(args):
         profile(args, model, model_info, device=dev)
         return
 
-    if args.tensorboard:
-        from weaver.utils.nn.tools import TensorboardHelper
-        tb = TensorboardHelper(tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
-    else:
-        tb = None
-
     # note: we should always save/load the state_dict of the original model, not the one wrapped by nn.DataParallel
     # so we do not convert it to nn.DataParallel now
     orig_model = model
 
     if training_mode:
         model = orig_model.to(dev)
-
-        if args.compile_model:
-            model = torch.compile(model)
 
         # DistributedDataParallel
         if args.backend is not None:
@@ -869,7 +911,7 @@ def _main(args):
                 model, device_ids=gpus, output_device=local_rank, find_unused_parameters=False)
 
         # optimizer & learning rate
-        opt, scheduler = optimizer_setup(args, model)
+        opt, scheduler = optimizer_setup(args, unwrap_model(model))
 
         # DataParallel
         if args.backend is None:
@@ -877,6 +919,11 @@ def _main(args):
                 # model becomes `torch.nn.DataParallel` w/ model.module being the original `torch.nn.Module`
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             # model = model.to(dev)
+
+        if args.compile:
+            compiler_options = {k: ast.literal_eval(v) for k, v in args.compiler_option}
+            _logger.info('Use torch.compile with options: %s' % str(compiler_options))
+            model = torch.compile(model, **compiler_options)
 
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
@@ -890,7 +937,7 @@ def _main(args):
 
         # training loop
         best_valid_metric = np.inf if args.regression_mode else 0
-        grad_scaler = torch.GradScaler('cuda') if args.use_amp else None
+        grad_scaler = torch.GradScaler('cuda') if args.use_amp and args.amp_dtype == 'fp16' else None
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
@@ -906,10 +953,8 @@ def _main(args):
                     if dirname and not os.path.exists(dirname):
                         os.makedirs(dirname)
                     prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
-                    state_dict = model.module.state_dict() if isinstance(
-                        model, (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel)) else model.state_dict()
                     ckpt_base_name = f'{args.model_prefix}_epoch-{epoch}'
-                    torch.save(state_dict, f'{ckpt_base_name}_state.pt')
+                    torch.save(unwrap_model(model).state_dict(), f'{ckpt_base_name}_state.pt')
                     torch.save(opt.state_dict(), f'{ckpt_base_name}_optimizer.pt')
                     if os.path.exists(f'{ckpt_base_name}_state.pt') and os.path.exists(f'{ckpt_base_name}_optimizer.pt'):
                         for f in prev_ckpts:
@@ -958,10 +1003,18 @@ def _main(args):
                 except AttributeError:
                     pass
             model = orig_model.to(dev)
-            model_path = args.model_prefix if args.model_prefix.endswith(
-                '.pt') else args.model_prefix + '_best_epoch_state.pt'
-            _logger.info('Loading model %s for eval' % model_path)
-            model.load_state_dict(torch.load(model_path, map_location=dev))
+
+            if ':' in args.model_prefix:
+                state_file, prefix = args.model_prefix.split(':')
+                model_state = torch.load(state_file, map_location=dev)
+                model_state = {k.replace(prefix + '.', '', 1): v for k,
+                               v in model_state.items() if k.startswith(prefix + '.')}
+            else:
+                state_file = args.model_prefix if args.model_prefix.endswith(
+                    '.pt') else args.model_prefix + '_best_epoch_state.pt'
+                model_state = torch.load(state_file, map_location=dev)
+            _logger.info('Loading model %s for eval' % state_file)
+            model.load_state_dict(model_state)
             if gpus is not None and len(gpus) > 1:
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             model = model.to(dev)
