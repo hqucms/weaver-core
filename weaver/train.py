@@ -19,6 +19,7 @@ from weaver.utils.import_tools import import_module
 from weaver.utils.data.eval_utils import _register_funcs
 from weaver.utils.nn.tools import unwrap_model
 
+# fmt: off
 parser = argparse.ArgumentParser()
 parser.add_argument('--run-mode', type=functools.partial(str.split, sep=','), default='train,val,test',
                     help='comma-separated list of the steps (train|val|test) to run, e.g., `train,test`')
@@ -174,23 +175,24 @@ parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%%k`')
 parser.add_argument('--auto-clean', action=argparse.BooleanOptionalAction, default=False,
                     help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
+# fmt: on
 
 
-def to_filelist(args, mode='train'):
-    if mode == 'train':
+def to_filelist(args, mode="train"):
+    if mode == "train":
         flist = args.data_train
-    elif mode == 'val':
+    elif mode == "val":
         flist = args.data_val
     else:
-        raise NotImplementedError('Invalid mode %s' % mode)
+        raise NotImplementedError("Invalid mode %s" % mode)
 
     # keyword-based: 'a:/path/to/a b:/path/to/b'
     file_dict = {}
     for f in flist:
-        if ':' in f:
-            name, fp = f.split(':')
+        if ":" in f:
+            name, fp = f.split(":")
         else:
-            name, fp = '_', f
+            name, fp = "_", f
         files = glob.glob(fp)
         if name in file_dict:
             file_dict[name] += files
@@ -202,37 +204,39 @@ def to_filelist(args, mode='train'):
         file_dict[name] = sorted(files)
 
     if args.local_rank is not None:
-        if mode == 'train' or mode == 'val':
-            local_world_size = int(os.environ['LOCAL_WORLD_SIZE'])
+        if mode == "train" or mode == "val":
+            local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
             new_file_dict = {}
             for name, files in file_dict.items():
-                new_files = files[args.local_rank::local_world_size]
-                assert (len(new_files) > 0)
+                new_files = files[args.local_rank :: local_world_size]
+                assert len(new_files) > 0
                 np.random.shuffle(new_files)
                 new_file_dict[name] = new_files
             file_dict = new_file_dict
 
     if args.copy_inputs:
         import tempfile
+
         tmpdir = tempfile.mkdtemp()
         if os.path.exists(tmpdir):
             shutil.rmtree(tmpdir)
         new_file_dict = {name: [] for name in file_dict}
         for name, files in file_dict.items():
             for src in files:
-                dest = os.path.join(tmpdir, src.lstrip('/'))
+                dest = os.path.join(tmpdir, src.lstrip("/"))
                 if not os.path.exists(os.path.dirname(dest)):
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                 shutil.copy2(src, dest)
-                _logger.info('Copied file %s to %s' % (src, dest))
+                _logger.info("Copied file %s to %s" % (src, dest))
                 new_file_dict[name].append(dest)
             if len(files) != len(new_file_dict[name]):
-                _logger.error('Only %d/%d files copied for %s file group %s',
-                              len(new_file_dict[name]), len(files), mode, name)
+                _logger.error(
+                    "Only %d/%d files copied for %s file group %s", len(new_file_dict[name]), len(files), mode, name
+                )
         file_dict = new_file_dict
 
     filelist = sum(file_dict.values(), [])
-    assert (len(filelist) == len(set(filelist)))
+    assert len(filelist) == len(set(filelist))
     return file_dict, filelist
 
 
@@ -243,22 +247,22 @@ def train_load(args):
     :return: train_loader, train_data_config, val_loader, val_data_config
     """
 
-    train_file_dict, train_files = to_filelist(args, 'train')
+    train_file_dict, train_files = to_filelist(args, "train")
     if args.data_val:
-        val_file_dict, val_files = to_filelist(args, 'val')
+        val_file_dict, val_files = to_filelist(args, "val")
         train_range = val_range = (0, 1)
     else:
         val_file_dict, val_files = train_file_dict, train_files
         train_range = (0, args.train_val_split)
         val_range = (args.train_val_split, 1)
-    _logger.info('Using %d files for training, range: %s' % (len(train_files), str(train_range)))
-    _logger.info('Using %d files for validation, range: %s' % (len(val_files), str(val_range)))
+    _logger.info("Using %d files for training, range: %s" % (len(train_files), str(train_range)))
+    _logger.info("Using %d files for validation, range: %s" % (len(val_files), str(val_range)))
 
     if args.demo:
         train_files = train_files[:20]
         val_files = val_files[:20]
-        train_file_dict = {'_': train_files}
-        val_file_dict = {'_': val_files}
+        train_file_dict = {"_": train_files}
+        val_file_dict = {"_": val_files}
         _logger.info(train_files)
         _logger.info(val_files)
         args.data_fraction = 0.1
@@ -267,49 +271,69 @@ def train_load(args):
 
     if args.in_memory:
         if args.steps_per_epoch is None:
-            raise RuntimeError('Must set --steps-per-epoch when using --in-memory!')
+            raise RuntimeError("Must set --steps-per-epoch when using --in-memory!")
         if args.fetch_by_files or args.fetch_step < 1:
             _logger.warning(
-                'Running with --in-memory, but --fetch-step is set to a value below 1 (or --fetch-by-files is set). '
-                'This means only a fraction of data will be loaded throughout the training.', color='bold')
+                "Running with --in-memory, but --fetch-step is set to a value below 1 (or --fetch-by-files is set). "
+                "This means only a fraction of data will be loaded throughout the training.",
+                color="bold",
+            )
 
     if args.in_memory_val:
         if args.steps_per_epoch_val is None:
-            raise RuntimeError('Must set --steps-per-epoch-val when using --in-memory-val!')
+            raise RuntimeError("Must set --steps-per-epoch-val when using --in-memory-val!")
         if args.fetch_by_files or args.fetch_step_val < 1:
             _logger.warning(
-                'Running with --in-memory-val, but --fetch-step-val is set to a value below 1 (or --fetch-by-files is set). '
-                'This means only a fraction of data will be loaded throughout the validation.', color='bold')
+                "Running with --in-memory-val, but --fetch-step-val is set to a value below 1 (or --fetch-by-files is set). "
+                "This means only a fraction of data will be loaded throughout the validation.",
+                color="bold",
+            )
 
-    train_data = SimpleIterDataset(train_file_dict, args.data_config,
-                                   batch_size=args.batch_size,
-                                   for_training=True,
-                                   extra_selection=args.extra_selection_train,
-                                   remake_weights=not args.no_remake_weights,
-                                   load_range_and_fraction=(train_range, args.data_fraction, args.data_split_num),
-                                   file_fraction=args.file_fraction,
-                                   fetch_by_files=args.fetch_by_files,
-                                   fetch_step=args.fetch_step,
-                                   infinity_mode=args.steps_per_epoch is not None,
-                                   in_memory=args.in_memory,
-                                   name='train' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    val_data = SimpleIterDataset(val_file_dict, args.data_config_val,
-                                 batch_size=args.batch_size_val,
-                                 for_training=True,
-                                 extra_selection=args.extra_selection_val,
-                                 load_range_and_fraction=(val_range, args.data_fraction, args.data_split_val),
-                                 file_fraction=args.file_fraction,
-                                 fetch_by_files=args.fetch_by_files,
-                                 fetch_step=args.fetch_step_val,
-                                 infinity_mode=args.steps_per_epoch_val is not None,
-                                 in_memory=args.in_memory_val,
-                                 name='val' + ('' if args.local_rank is None else '_rank%d' % args.local_rank))
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, drop_last=True, pin_memory=True,
-                              num_workers=min(args.num_workers, max(1, int(len(train_files) * args.file_fraction))),
-                              persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size_val, drop_last=True, pin_memory=True,
-                            num_workers=min(args.num_workers, max(1, int(len(val_files) * args.file_fraction))),
-                            persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None)
+    train_data = SimpleIterDataset(
+        train_file_dict,
+        args.data_config,
+        batch_size=args.batch_size,
+        for_training=True,
+        extra_selection=args.extra_selection_train,
+        remake_weights=not args.no_remake_weights,
+        load_range_and_fraction=(train_range, args.data_fraction, args.data_split_num),
+        file_fraction=args.file_fraction,
+        fetch_by_files=args.fetch_by_files,
+        fetch_step=args.fetch_step,
+        infinity_mode=args.steps_per_epoch is not None,
+        in_memory=args.in_memory,
+        name="train" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
+    )
+    val_data = SimpleIterDataset(
+        val_file_dict,
+        args.data_config_val,
+        batch_size=args.batch_size_val,
+        for_training=True,
+        extra_selection=args.extra_selection_val,
+        load_range_and_fraction=(val_range, args.data_fraction, args.data_split_val),
+        file_fraction=args.file_fraction,
+        fetch_by_files=args.fetch_by_files,
+        fetch_step=args.fetch_step_val,
+        infinity_mode=args.steps_per_epoch_val is not None,
+        in_memory=args.in_memory_val,
+        name="val" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
+    )
+    train_loader = DataLoader(
+        train_data,
+        batch_size=args.batch_size,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=min(args.num_workers, max(1, int(len(train_files) * args.file_fraction))),
+        persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None,
+    )
+    val_loader = DataLoader(
+        val_data,
+        batch_size=args.batch_size_val,
+        drop_last=True,
+        pin_memory=True,
+        num_workers=min(args.num_workers, max(1, int(len(val_files) * args.file_fraction))),
+        persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None,
+    )
     train_data_config = train_data.config
     val_data_config = val_data.config
 
@@ -327,13 +351,13 @@ def test_load(args):
     file_dict = {}
     split_dict = {}
     for f in args.data_test:
-        if ':' in f:
-            name, fp = f.split(':')
-            if '%' in name:
-                name, split = name.split('%')
+        if ":" in f:
+            name, fp = f.split(":")
+            if "%" in name:
+                name, split = name.split("%")
                 split_dict[name] = int(split)
         else:
-            name, fp = '', f
+            name, fp = "", f
         files = glob.glob(fp)
         if name in file_dict:
             file_dict[name] += files
@@ -348,19 +372,25 @@ def test_load(args):
     for name, split in split_dict.items():
         files = file_dict.pop(name)
         for i in range((len(files) + split - 1) // split):
-            file_dict[f'{name}_{i}'] = files[i * split:(i + 1) * split]
+            file_dict[f"{name}_{i}"] = files[i * split : (i + 1) * split]
 
     def get_test_loader(name):
         filelist = file_dict[name]
-        _logger.info('Running on test file group %s with %d files:\n...%s', name, len(filelist), '\n...'.join(filelist))
+        _logger.info("Running on test file group %s with %d files:\n...%s", name, len(filelist), "\n...".join(filelist))
         num_workers = min(args.num_workers, len(filelist))
-        test_data = SimpleIterDataset({name: filelist}, args.data_config_test, for_training=False,
-                                      extra_selection=args.extra_selection_test,
-                                      load_range_and_fraction=((0, 1), args.data_fraction, args.data_split_num),
-                                      fetch_by_files=True, fetch_step=1,
-                                      name='test_' + name)
-        test_loader = DataLoader(test_data, num_workers=num_workers, batch_size=args.batch_size_test, drop_last=False,
-                                 pin_memory=True)
+        test_data = SimpleIterDataset(
+            {name: filelist},
+            args.data_config_test,
+            for_training=False,
+            extra_selection=args.extra_selection_test,
+            load_range_and_fraction=((0, 1), args.data_fraction, args.data_split_num),
+            fetch_by_files=True,
+            fetch_step=1,
+            name="test_" + name,
+        )
+        test_loader = DataLoader(
+            test_data, num_workers=num_workers, batch_size=args.batch_size_test, drop_last=False, pin_memory=True
+        )
         return test_loader
 
     test_loaders = {name: functools.partial(get_test_loader, name) for name in file_dict}
@@ -374,35 +404,39 @@ def onnx(args):
     :param args:
     :return:
     """
-    assert (args.export_onnx.endswith('.onnx'))
+    assert args.export_onnx.endswith(".onnx")
     model_path = args.model_prefix
-    _logger.info('Exporting model %s to ONNX' % model_path)
+    _logger.info("Exporting model %s to ONNX" % model_path)
 
     from weaver.utils.dataset import DataConfig
+
     data_config = DataConfig.load(args.data_config, load_observers=False, load_reweight_info=False)
     model, model_info, *_ = model_setup(args, data_config)
-    model.load_state_dict(torch.load(model_path, map_location='cpu'))
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
     model = model.cpu()
     model.eval()
 
     if not os.path.dirname(args.export_onnx):
         args.export_onnx = os.path.join(os.path.dirname(model_path), args.export_onnx)
     os.makedirs(os.path.dirname(args.export_onnx), exist_ok=True)
-    inputs = tuple(
-        torch.ones(model_info['input_shapes'][k], dtype=torch.float32) for k in model_info['input_names'])
-    torch.onnx.export(model, inputs, args.export_onnx,
-                      input_names=model_info['input_names'],
-                      output_names=model_info['output_names'],
-                      dynamic_axes=model_info.get('dynamic_axes', None),
-                      opset_version=args.onnx_opset)
-    _logger.info('ONNX model saved to %s', args.export_onnx)
+    inputs = tuple(torch.ones(model_info["input_shapes"][k], dtype=torch.float32) for k in model_info["input_names"])
+    torch.onnx.export(
+        model,
+        inputs,
+        args.export_onnx,
+        input_names=model_info["input_names"],
+        output_names=model_info["output_names"],
+        dynamic_axes=model_info.get("dynamic_axes", None),
+        opset_version=args.onnx_opset,
+    )
+    _logger.info("ONNX model saved to %s", args.export_onnx)
 
-    preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), 'preprocess.json')
+    preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), "preprocess.json")
     data_config.export_json(preprocessing_json)
-    _logger.info('Preprocessing parameters saved to %s', preprocessing_json)
+    _logger.info("Preprocessing parameters saved to %s", preprocessing_json)
 
 
-def flops(model, model_info, device='cpu'):
+def flops(model, model_info, device="cpu"):
     """
     Count FLOPs and params.
     :param args:
@@ -417,12 +451,13 @@ def flops(model, model_info, device='cpu'):
     model = copy.deepcopy(model).to(device)
     model.eval()
 
-    inputs = tuple(torch.ones(model_info['input_shapes'][k], dtype=torch.float32,
-                              device=device) for k in model_info['input_names'])
-    
+    inputs = tuple(
+        torch.ones(model_info["input_shapes"][k], dtype=torch.float32, device=device) for k in model_info["input_names"]
+    )
+
     macs, params = get_model_complexity_info(model, inputs, as_strings=True, print_per_layer_stat=True, verbose=True)
-    _logger.info('{:<30}  {:<8}'.format('Computational complexity: ', macs))
-    _logger.info('{:<30}  {:<8}'.format('Number of parameters: ', params))
+    _logger.info("{:<30}  {:<8}".format("Computational complexity: ", macs))
+    _logger.info("{:<30}  {:<8}".format("Number of parameters: ", params))
 
     flop_counter = FlopCounterMode(display=True)
     with flop_counter:
@@ -430,13 +465,13 @@ def flops(model, model_info, device='cpu'):
     total_flops = flop_counter.get_total_flops()
 
     def format_number(n):
-        for unit in ['', 'K', 'M', 'G', 'T', 'P']:
+        for unit in ["", "K", "M", "G", "T", "P"]:
             if abs(n) < 1000:
                 return f"{n:.2f} {unit}"
             n /= 1000
         return f"{n:.2f}E"
 
-    _logger.info('{:<30}  {:<8}'.format('Total FLOPs: ', format_number(total_flops)))
+    _logger.info("{:<30}  {:<8}".format("Total FLOPs: ", format_number(total_flops)))
 
 
 def profile(args, model, model_info, device):
@@ -454,8 +489,9 @@ def profile(args, model, model_info, device):
     model.eval()
 
     inputs = tuple(
-        torch.ones((args.batch_size,) + model_info['input_shapes'][k][1:],
-                   dtype=torch.float32).to(device) for k in model_info['input_names'])
+        torch.ones((args.batch_size,) + model_info["input_shapes"][k][1:], dtype=torch.float32).to(device)
+        for k in model_info["input_names"]
+    )
     for x in inputs:
         print(x.shape, x.device)
 
@@ -466,12 +502,8 @@ def profile(args, model, model_info, device):
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            wait=2,
-            warmup=2,
-            active=6,
-            repeat=2),
-        on_trace_ready=trace_handler
+        schedule=torch.profiler.schedule(wait=2, warmup=2, active=6, repeat=2),
+        on_trace_ready=trace_handler,
     ) as p:
         for idx in range(100):
             model(*inputs)
@@ -480,17 +512,22 @@ def profile(args, model, model_info, device):
 
 def init_opt(args, model, **optimizer_options):
     names_lr_mult = []
-    if 'weight_decay' in optimizer_options or 'lr_mult' in optimizer_options:
+    if "weight_decay" in optimizer_options or "lr_mult" in optimizer_options:
         # https://github.com/rwightman/pytorch-image-models/blob/master/timm/optim/optim_factory.py#L31
         import re
+
         decay, no_decay = {}, {}
         names_no_decay = []
-        wd_skip_list = {'pos_embed', 'cls_token', 'mask_token', 'register_token'}
+        wd_skip_list = {"pos_embed", "cls_token", "mask_token", "register_token"}
         for name, param in model.named_parameters():
             if not param.requires_grad:
                 continue  # frozen weights
-            if len(param.shape) == 1 or name.endswith(".bias") or (name.split('.')[-1] in wd_skip_list) or (
-                    hasattr(model, 'no_weight_decay') and name in model.no_weight_decay()):
+            if (
+                len(param.shape) == 1
+                or name.endswith(".bias")
+                or (name.split(".")[-1] in wd_skip_list)
+                or (hasattr(model, "no_weight_decay") and name in model.no_weight_decay())
+            ):
                 no_decay[name] = param
                 names_no_decay.append(name)
             else:
@@ -499,8 +536,8 @@ def init_opt(args, model, **optimizer_options):
         decay_1x, no_decay_1x = [], []
         decay_mult, no_decay_mult = [], []
         mult_factor = 1
-        if 'lr_mult' in optimizer_options:
-            pattern, mult_factor = optimizer_options.pop('lr_mult')
+        if "lr_mult" in optimizer_options:
+            pattern, mult_factor = optimizer_options.pop("lr_mult")
             for name, param in decay.items():
                 if re.match(pattern, name):
                     decay_mult.append(param)
@@ -513,38 +550,39 @@ def init_opt(args, model, **optimizer_options):
                     names_lr_mult.append(name)
                 else:
                     no_decay_1x.append(param)
-            assert (len(decay_1x) + len(decay_mult) == len(decay))
-            assert (len(no_decay_1x) + len(no_decay_mult) == len(no_decay))
+            assert len(decay_1x) + len(decay_mult) == len(decay)
+            assert len(no_decay_1x) + len(no_decay_mult) == len(no_decay)
         else:
             decay_1x, no_decay_1x = list(decay.values()), list(no_decay.values())
-        wd = optimizer_options.get('weight_decay', 0.)
+        wd = optimizer_options.get("weight_decay", 0.0)
         parameters = [
-            {'params': no_decay_1x, 'weight_decay': 0.},
-            {'params': decay_1x, 'weight_decay': wd},
-            {'params': no_decay_mult, 'weight_decay': 0., 'lr': args.start_lr * mult_factor},
-            {'params': decay_mult, 'weight_decay': wd, 'lr': args.start_lr * mult_factor},
+            {"params": no_decay_1x, "weight_decay": 0.0},
+            {"params": decay_1x, "weight_decay": wd},
+            {"params": no_decay_mult, "weight_decay": 0.0, "lr": args.start_lr * mult_factor},
+            {"params": decay_mult, "weight_decay": wd, "lr": args.start_lr * mult_factor},
         ]
-        _logger.info('Parameters excluded from weight decay:\n - %s', '\n - '.join(names_no_decay))
+        _logger.info("Parameters excluded from weight decay:\n - %s", "\n - ".join(names_no_decay))
         if len(names_lr_mult):
-            _logger.info('Parameters with lr multiplied by %s:\n - %s', mult_factor, '\n - '.join(names_lr_mult))
+            _logger.info("Parameters with lr multiplied by %s:\n - %s", mult_factor, "\n - ".join(names_lr_mult))
     else:
         parameters = model.parameters()
 
-    clip_grad_norm = optimizer_options.pop('clip_grad_norm', float('inf'))
+    clip_grad_norm = optimizer_options.pop("clip_grad_norm", float("inf"))
 
-    if args.optimizer.lower() == 'ranger':
+    if args.optimizer.lower() == "ranger":
         from weaver.utils.nn.optimizer.ranger import Ranger
+
         opt = Ranger(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer.lower() == 'adam':
+    elif args.optimizer.lower() == "adam":
         opt = torch.optim.Adam(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer.lower() == 'adamw':
-        if 'betas' not in optimizer_options:
-            optimizer_options['betas'] = (0.95, 0.999)
-        if 'weight_decay' not in optimizer_options:
-            optimizer_options['weight_decay'] = 0
-        _logger.info(f'Using AdamW optimizer w/ options: {str(optimizer_options)}')
+    elif args.optimizer.lower() == "adamw":
+        if "betas" not in optimizer_options:
+            optimizer_options["betas"] = (0.95, 0.999)
+        if "weight_decay" not in optimizer_options:
+            optimizer_options["weight_decay"] = 0
+        _logger.info(f"Using AdamW optimizer w/ options: {str(optimizer_options)}")
         opt = torch.optim.AdamW(parameters, lr=args.start_lr, **optimizer_options)
-    elif args.optimizer.lower() == 'radam':
+    elif args.optimizer.lower() == "radam":
         opt = torch.optim.RAdam(parameters, lr=args.start_lr, **optimizer_options)
     else:
         opt = getattr(torch.optim, args.optimizer)(parameters, lr=args.start_lr, **optimizer_options)
@@ -556,25 +594,36 @@ def init_opt(args, model, **optimizer_options):
 
     scheduler = None
     if args.lr_finder is None:
-        if args.lr_scheduler == 'steps':
+        if args.lr_scheduler == "steps":
             lr_step = round(args.num_epochs / 3)
             scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                opt, milestones=[lr_step, 2 * lr_step], gamma=0.1,
-                last_epoch=-1 if args.load_epoch is None else args.load_epoch)
-        elif args.lr_scheduler == 'flat+decay':
+                opt,
+                milestones=[lr_step, 2 * lr_step],
+                gamma=0.1,
+                last_epoch=-1 if args.load_epoch is None else args.load_epoch,
+            )
+        elif args.lr_scheduler == "flat+decay":
             num_decay_epochs = max(1, int(args.num_epochs * 0.3))
             milestones = list(range(args.num_epochs - num_decay_epochs, args.num_epochs))
-            gamma = 0.01 ** (1. / num_decay_epochs)
+            gamma = 0.01 ** (1.0 / num_decay_epochs)
             if len(names_lr_mult):
-                def get_lr(epoch): return gamma ** max(0, epoch - milestones[0] + 1)  # noqa
+
+                def get_lr(epoch):
+                    return gamma ** max(0, epoch - milestones[0] + 1)  # noqa
+
                 scheduler = torch.optim.lr_scheduler.LambdaLR(
-                    opt, (lambda _: 1, lambda _: 1, get_lr, get_lr),
-                    last_epoch=-1 if args.load_epoch is None else args.load_epoch)
+                    opt,
+                    (lambda _: 1, lambda _: 1, get_lr, get_lr),
+                    last_epoch=-1 if args.load_epoch is None else args.load_epoch,
+                )
             else:
                 scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                    opt, milestones=milestones, gamma=gamma,
-                    last_epoch=-1 if args.load_epoch is None else args.load_epoch)
-        elif args.lr_scheduler == 'flat+linear' or args.lr_scheduler == 'flat+cos':
+                    opt,
+                    milestones=milestones,
+                    gamma=gamma,
+                    last_epoch=-1 if args.load_epoch is None else args.load_epoch,
+                )
+        elif args.lr_scheduler == "flat+linear" or args.lr_scheduler == "flat+cos":
             total_steps = args.num_epochs * args.steps_per_epoch
             warmup_steps = (args.warmup_steps * total_steps) if args.warmup_steps < 1 else args.warmup_steps
             flat_steps = total_steps * 0.7 - 1
@@ -584,21 +633,24 @@ def init_opt(args, model, **optimizer_options):
                 if step_num > total_steps:
                     raise ValueError(
                         "Tried to step {} times. The specified number of total steps is {}".format(
-                            step_num + 1, total_steps))
+                            step_num + 1, total_steps
+                        )
+                    )
                 if step_num < warmup_steps:
-                    return 1. * step_num / warmup_steps
+                    return 1.0 * step_num / warmup_steps
                 if step_num <= flat_steps:
                     return 1.0
                 pct = (step_num - flat_steps) / (total_steps - flat_steps)
-                if args.lr_scheduler == 'flat+linear':
+                if args.lr_scheduler == "flat+linear":
                     return max(min_factor, 1 - pct)
                 else:
                     return max(min_factor, 0.5 * (math.cos(math.pi * pct) + 1))
 
             scheduler = torch.optim.lr_scheduler.LambdaLR(
-                opt, lr_fn, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch)
+                opt, lr_fn, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch
+            )
             scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
-        elif args.lr_scheduler == 'warmup+cos':
+        elif args.lr_scheduler == "warmup+cos":
             num_training_steps = args.num_epochs * args.steps_per_epoch
             num_warmup_steps = (args.warmup_steps * num_training_steps) if args.warmup_steps < 1 else args.warmup_steps
             num_cycles = 0.5
@@ -610,58 +662,68 @@ def init_opt(args, model, **optimizer_options):
                 return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
 
             scheduler = torch.optim.lr_scheduler.LambdaLR(
-                opt, lr_lambda, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch)
+                opt, lr_lambda, last_epoch=-1 if args.load_epoch is None else args.load_epoch * args.steps_per_epoch
+            )
             scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
-        elif args.lr_scheduler == 'one-cycle':
+        elif args.lr_scheduler == "one-cycle":
             scheduler = torch.optim.lr_scheduler.OneCycleLR(
-                opt, max_lr=args.start_lr, epochs=args.num_epochs, steps_per_epoch=args.steps_per_epoch, pct_start=0.3,
-                anneal_strategy='cos', div_factor=25.0, last_epoch=-1 if args.load_epoch is None else args.load_epoch)
+                opt,
+                max_lr=args.start_lr,
+                epochs=args.num_epochs,
+                steps_per_epoch=args.steps_per_epoch,
+                pct_start=0.3,
+                anneal_strategy="cos",
+                div_factor=25.0,
+                last_epoch=-1 if args.load_epoch is None else args.load_epoch,
+            )
             scheduler._update_per_step = True  # mark it to update the lr every step, instead of every epoch
     return opt, scheduler
 
 
 def load_checkpoint(args, model, opt):
     # load previous training and resume if `--load-epoch` is set
-    _logger.info('Resume training from epoch %d' % args.load_epoch)
-    model_state = torch.load(args.model_prefix + '_epoch-%d_state.pt' % args.load_epoch, map_location='cpu')
+    _logger.info("Resume training from epoch %d" % args.load_epoch)
+    model_state = torch.load(args.model_prefix + "_epoch-%d_state.pt" % args.load_epoch, map_location="cpu")
     model.load_state_dict(model_state)
-    opt_state_file = args.model_prefix + '_epoch-%d_optimizer.pt' % args.load_epoch
+    opt_state_file = args.model_prefix + "_epoch-%d_optimizer.pt" % args.load_epoch
     if os.path.exists(opt_state_file):
-        opt_state = torch.load(opt_state_file, map_location='cpu')
+        opt_state = torch.load(opt_state_file, map_location="cpu")
         opt.load_state_dict(opt_state)
     else:
-        _logger.warning('Optimizer state file %s NOT found!' % opt_state_file)
+        _logger.warning("Optimizer state file %s NOT found!" % opt_state_file)
 
 
-def model_setup(args, data_config, device='cpu'):
+def model_setup(args, data_config, device="cpu"):
     """
     Loads the model
     :param args:
     :param data_config:
     :return: model, model_info, network_module, network_options
     """
-    network_module = import_module(args.network_config, name='_network_module')
+    network_module = import_module(args.network_config, name="_network_module")
     network_options = {k: ast.literal_eval(v) for k, v in args.network_option}
-    _logger.info('Network options: %s' % str(network_options))
+    _logger.info("Network options: %s" % str(network_options))
     if args.export_onnx:
-        network_options['for_inference'] = True
+        network_options["for_inference"] = True
     if args.use_amp:
-        network_options['use_amp'] = True
+        network_options["use_amp"] = True
     if args.compile:
-        network_options['compile_model'] = True
+        network_options["compile_model"] = True
     model, model_info = network_module.get_model(data_config, **network_options)
     if args.load_model_weights:
-        if ':' in args.load_model_weights:
-            state_file, prefix = args.load_model_weights.split(':')
-            model_state = torch.load(state_file, map_location='cpu')
-            model_state = {k.replace(prefix + '.', '', 1): v for k,
-                           v in model_state.items() if k.startswith(prefix + '.')}
+        if ":" in args.load_model_weights:
+            state_file, prefix = args.load_model_weights.split(":")
+            model_state = torch.load(state_file, map_location="cpu")
+            model_state = {
+                k.replace(prefix + ".", "", 1): v for k, v in model_state.items() if k.startswith(prefix + ".")
+            }
         else:
-            model_state = torch.load(args.load_model_weights, map_location='cpu')
+            model_state = torch.load(args.load_model_weights, map_location="cpu")
         if args.exclude_model_weights:
             import re
-            exclude_patterns = args.exclude_model_weights.split(',')
-            _logger.info('The following weights will not be loaded: %s' % str(exclude_patterns))
+
+            exclude_patterns = args.exclude_model_weights.split(",")
+            _logger.info("The following weights will not be loaded: %s" % str(exclude_patterns))
             key_state = {}
             for k in model_state.keys():
                 key_state[k] = True
@@ -671,11 +733,14 @@ def model_setup(args, data_config, device='cpu'):
                         break
             model_state = {k: v for k, v in model_state.items() if key_state[k]}
         missing_keys, unexpected_keys = model.load_state_dict(model_state, strict=False)
-        _logger.info('Model initialized with weights from %s\n ... Missing: %s\n ... Unexpected: %s' %
-                     (args.load_model_weights, missing_keys, unexpected_keys))
+        _logger.info(
+            "Model initialized with weights from %s\n ... Missing: %s\n ... Unexpected: %s"
+            % (args.load_model_weights, missing_keys, unexpected_keys)
+        )
     if args.freeze_model_weights:
         import re
-        freeze_patterns = args.freeze_model_weights.split(',')
+
+        freeze_patterns = args.freeze_model_weights.split(",")
         for name, param in model.named_parameters():
             freeze = False
             for pattern in freeze_patterns:
@@ -684,33 +749,36 @@ def model_setup(args, data_config, device='cpu'):
                     break
             if freeze:
                 param.requires_grad = False
-        _logger.info('The following weights has been frozen:\n - %s',
-                     '\n - '.join([name for name, p in model.named_parameters() if not p.requires_grad]))
+        _logger.info(
+            "The following weights has been frozen:\n - %s",
+            "\n - ".join([name for name, p in model.named_parameters() if not p.requires_grad]),
+        )
     # _logger.info(model)
     try:
         flops(model, model_info, device=device)
     except Exception as e:
-        _logger.error('Error in flops: %s', str(e))
+        _logger.error("Error in flops: %s", str(e))
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
-        _logger.info('Using loss function %s with options %s' % (loss_func, network_options))
+        _logger.info("Using loss function %s with options %s" % (loss_func, network_options))
     except AttributeError:
         loss_func = torch.nn.CrossEntropyLoss()
-        _logger.warning('Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.',
-                        args.network_config)
+        _logger.warning(
+            "Loss function not defined in %s. Will use `torch.nn.CrossEntropyLoss()` by default.", args.network_config
+        )
     # train / evaluate loop implementation
     try:
         train = network_module.get_train_fn(data_config, **network_options)
         evaluate = network_module.get_evaluate_fn(data_config, **network_options)
-        _logger.info('Using custom train/evaluate functions with options %s' % network_options)
+        _logger.info("Using custom train/evaluate functions with options %s" % network_options)
     except AttributeError:
         if args.regression_mode:
-            _logger.info('Running in regression mode')
+            _logger.info("Running in regression mode")
             from weaver.utils.nn.tools import train_regression as train
             from weaver.utils.nn.tools import evaluate_regression as evaluate
         else:
-            _logger.info('Running in classification mode')
+            _logger.info("Running in classification mode")
             from weaver.utils.nn.tools import train_classification as train
             from weaver.utils.nn.tools import evaluate_classification as evaluate
     return model, model_info, loss_func, train, evaluate
@@ -724,9 +792,9 @@ def optimizer_setup(args, model):
     :return:
     """
     optimizer_options = {k: ast.literal_eval(v) for k, v in args.optimizer_option}
-    _logger.info('Optimizer options: %s' % str(optimizer_options))
+    _logger.info("Optimizer options: %s" % str(optimizer_options))
 
-    network_module = import_module(args.network_config, name='_network_module')
+    network_module = import_module(args.network_config, name="_network_module")
     try:
         return network_module.init_opt(args, model, **optimizer_options)
     except AttributeError:
@@ -743,7 +811,8 @@ def iotest(args, data_loader):
     from tqdm.auto import tqdm
     from collections import defaultdict
     from weaver.utils.data.tools import _concat
-    _logger.info('Start running IO test')
+
+    _logger.info("Start running IO test")
     monitor_info = defaultdict(list)
 
     for X, y, Z in tqdm(data_loader):
@@ -751,13 +820,14 @@ def iotest(args, data_loader):
             monitor_info[k].append(v)
     monitor_info = {k: _concat(v) for k, v in monitor_info.items()}
     if monitor_info:
-        monitor_output_path = 'weaver_monitor_info.parquet'
+        monitor_output_path = "weaver_monitor_info.parquet"
         try:
             import awkward as ak
-            ak.to_parquet(ak.Array(monitor_info), monitor_output_path, compression='LZ4', compression_level=4)
-            _logger.info('Monitor info written to %s' % monitor_output_path, color='bold')
+
+            ak.to_parquet(ak.Array(monitor_info), monitor_output_path, compression="LZ4", compression_level=4)
+            _logger.info("Monitor info written to %s" % monitor_output_path, color="bold")
         except Exception as e:
-            _logger.error('Error when writing output parquet file: \n' + str(e))
+            _logger.error("Error when writing output parquet file: \n" + str(e))
 
 
 def save_root(args, output_path, data_config, scores, labels, observers):
@@ -771,46 +841,47 @@ def save_root(args, output_path, data_config, scores, labels, observers):
     """
     import awkward as ak
     from weaver.utils.data.fileio import _write_root
+
     output = {}
-    if data_config.label_type == 'simple':
+    if data_config.label_type == "simple":
         for idx, label_name in enumerate(data_config.label_value):
-            output[label_name] = (labels[data_config.label_names[0]] == idx)
-            output['score_' + label_name] = scores[:, idx]
+            output[label_name] = labels[data_config.label_names[0]] == idx
+            output["score_" + label_name] = scores[:, idx]
     else:
         if scores.ndim <= 2:
-            output['output'] = scores
+            output["output"] = scores
         elif scores.ndim == 3:
             num_classes = len(scores[0, 0, :])
             try:
-                names = data_config.labels['names']
-                assert (len(names) == num_classes)
+                names = data_config.labels["names"]
+                assert len(names) == num_classes
             except KeyError:
-                names = [f'class_{idx}' for idx in range(num_classes)]
+                names = [f"class_{idx}" for idx in range(num_classes)]
             for idx, label_name in enumerate(names):
-                output[label_name] = (labels[data_config.label_names[0]] == idx)
-                output['score_' + label_name] = scores[:, :, idx]
+                output[label_name] = labels[data_config.label_names[0]] == idx
+                output["score_" + label_name] = scores[:, :, idx]
         else:
-            output['output'] = scores
+            output["output"] = scores
     output.update(labels)
     output.update(observers)
 
     try:
         _write_root(output_path, ak.Array(output))
-        _logger.info('Written output to %s' % output_path, color='bold')
+        _logger.info("Written output to %s" % output_path, color="bold")
     except Exception as e:
-        _logger.error('Error when writing output ROOT file: \n' + str(e))
+        _logger.error("Error when writing output ROOT file: \n" + str(e))
 
     save_as_parquet = any(v.ndim > 2 for v in output.values())
     if save_as_parquet:
         try:
             ak.to_parquet(
-                ak.Array(output),
-                output_path.replace('.root', '.parquet'),
-                compression='LZ4', compression_level=4)
-            _logger.info('Written alternative output file to %s' %
-                         output_path.replace('.root', '.parquet'), color='bold')
+                ak.Array(output), output_path.replace(".root", ".parquet"), compression="LZ4", compression_level=4
+            )
+            _logger.info(
+                "Written alternative output file to %s" % output_path.replace(".root", ".parquet"), color="bold"
+            )
         except Exception as e:
-            _logger.error('Error when writing output parquet file: \n' + str(e))
+            _logger.error("Error when writing output parquet file: \n" + str(e))
 
 
 def save_parquet(args, output_path, scores, labels, observers):
@@ -822,18 +893,19 @@ def save_parquet(args, output_path, scores, labels, observers):
     :return:
     """
     import awkward as ak
-    output = {'scores': scores}
+
+    output = {"scores": scores}
     output.update(labels)
     output.update(observers)
     try:
-        ak.to_parquet(ak.Array(output), output_path, compression='LZ4', compression_level=4)
-        _logger.info('Written output to %s' % output_path, color='bold')
+        ak.to_parquet(ak.Array(output), output_path, compression="LZ4", compression_level=4)
+        _logger.info("Written output to %s" % output_path, color="bold")
     except Exception as e:
-        _logger.error('Error when writing output parquet file: \n' + str(e))
+        _logger.error("Error when writing output parquet file: \n" + str(e))
 
 
 def _main(args):
-    _logger.info('args:\n - %s', '\n - '.join(str(it) for it in args.__dict__.items()))
+    _logger.info("args:\n - %s", "\n - ".join(str(it) for it in args.__dict__.items()))
 
     # export to ONNX
     if args.export_onnx:
@@ -841,13 +913,13 @@ def _main(args):
         return
 
     if args.file_fraction < 1:
-        _logger.warning('Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.')
+        _logger.warning("Use of `file-fraction` is not recommended in general -- prefer using `data-fraction` instead.")
 
     # training/testing mode
     if args.predict:
-        _logger.warning('The `--predict` flag is set. Overriding the `--run-mode` to `test`.')
-        args.run_mode = ['test']
-    training_mode = any(m in args.run_mode for m in ['train', 'val'])
+        _logger.warning("The `--predict` flag is set. Overriding the `--run-mode` to `test`.")
+        args.run_mode = ["test"]
+    training_mode = any(m in args.run_mode for m in ["train", "val"])
 
     # device
     if args.gpus:
@@ -858,16 +930,16 @@ def _main(args):
             gpus = [local_rank]
             dev = torch.device(local_rank)
             torch.distributed.init_process_group(backend=args.backend)
-            _logger.info(f'Using distributed PyTorch with {args.backend} backend')
+            _logger.info(f"Using distributed PyTorch with {args.backend} backend")
         else:
-            gpus = [int(i) for i in args.gpus.split(',')]
+            gpus = [int(i) for i in args.gpus.split(",")]
             dev = torch.device(gpus[0])
     else:
         gpus = None
-        dev = torch.device('cpu')
+        dev = torch.device("cpu")
         try:
             if torch.backends.mps.is_available():
-                dev = torch.device('mps')
+                dev = torch.device("mps")
         except AttributeError:
             pass
 
@@ -884,6 +956,7 @@ def _main(args):
 
     if args.tensorboard and (args.backend is None or args.local_rank == 0):
         from weaver.utils.nn.tools import TensorboardHelper
+
         tb = TensorboardHelper(tb_comment=args.tensorboard, tb_custom_fn=args.tensorboard_custom_fn)
     else:
         tb = None
@@ -908,7 +981,8 @@ def _main(args):
         if args.backend is not None:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=gpus, output_device=local_rank, find_unused_parameters=False)
+                model, device_ids=gpus, output_device=local_rank, find_unused_parameters=False
+            )
 
         # optimizer & learning rate
         opt, scheduler = optimizer_setup(args, unwrap_model(model))
@@ -922,98 +996,137 @@ def _main(args):
 
         if args.compile:
             compiler_options = {k: ast.literal_eval(v) for k, v in args.compiler_option}
-            _logger.info('Use torch.compile with options: %s' % str(compiler_options))
+            _logger.info("Use torch.compile with options: %s" % str(compiler_options))
             model = torch.compile(model, **compiler_options)
 
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
-            start_lr, end_lr, num_iter = args.lr_finder.replace(' ', '').split(',')
+            start_lr, end_lr, num_iter = args.lr_finder.replace(" ", "").split(",")
             from weaver.utils.lr_finder import LRFinder
-            lr_finder = LRFinder(model, opt, loss_func, device=dev, input_names=data_config.input_names,
-                                 label_names=data_config.label_names)
+
+            lr_finder = LRFinder(
+                model,
+                opt,
+                loss_func,
+                device=dev,
+                input_names=data_config.input_names,
+                label_names=data_config.label_names,
+            )
             lr_finder.range_test(train_loader, start_lr=float(start_lr), end_lr=float(end_lr), num_iter=int(num_iter))
-            lr_finder.plot(output='lr_finder.png')  # to inspect the loss-learning rate graph
+            lr_finder.plot(output="lr_finder.png")  # to inspect the loss-learning rate graph
             return
 
         # training loop
         best_valid_metric = np.inf if args.regression_mode else 0
-        grad_scaler = torch.GradScaler('cuda') if args.use_amp and args.amp_dtype == 'fp16' else None
+        grad_scaler = torch.GradScaler("cuda") if args.use_amp and args.amp_dtype == "fp16" else None
         for epoch in range(args.num_epochs):
             if args.load_epoch is not None:
                 if epoch <= args.load_epoch:
                     continue
-            _logger.info('-' * 50)
+            _logger.info("-" * 50)
 
-            if 'train' in args.run_mode:
-                _logger.info('Epoch #%d training' % epoch)
-                train(model, loss_func, opt, scheduler, train_loader, dev, epoch,
-                      steps_per_epoch=args.steps_per_epoch, grad_scaler=grad_scaler, tb_helper=tb, extra_args=locals())
+            if "train" in args.run_mode:
+                _logger.info("Epoch #%d training" % epoch)
+                train(
+                    model,
+                    loss_func,
+                    opt,
+                    scheduler,
+                    train_loader,
+                    dev,
+                    epoch,
+                    steps_per_epoch=args.steps_per_epoch,
+                    grad_scaler=grad_scaler,
+                    tb_helper=tb,
+                    extra_args=locals(),
+                )
                 if args.model_prefix and (args.backend is None or local_rank == 0):
                     dirname = os.path.dirname(args.model_prefix)
                     if dirname and not os.path.exists(dirname):
                         os.makedirs(dirname)
-                    prev_ckpts = glob.glob(args.model_prefix + '_epoch-*.pt') if args.auto_clean else []
-                    ckpt_base_name = f'{args.model_prefix}_epoch-{epoch}'
-                    torch.save(unwrap_model(model).state_dict(), f'{ckpt_base_name}_state.pt')
-                    torch.save(opt.state_dict(), f'{ckpt_base_name}_optimizer.pt')
-                    if os.path.exists(f'{ckpt_base_name}_state.pt') and os.path.exists(f'{ckpt_base_name}_optimizer.pt'):
+                    prev_ckpts = glob.glob(args.model_prefix + "_epoch-*.pt") if args.auto_clean else []
+                    ckpt_base_name = f"{args.model_prefix}_epoch-{epoch}"
+                    torch.save(unwrap_model(model).state_dict(), f"{ckpt_base_name}_state.pt")
+                    torch.save(opt.state_dict(), f"{ckpt_base_name}_optimizer.pt")
+                    if os.path.exists(f"{ckpt_base_name}_state.pt") and os.path.exists(
+                        f"{ckpt_base_name}_optimizer.pt"
+                    ):
                         for f in prev_ckpts:
                             try:
                                 os.remove(f)
                             except OSError:
                                 pass
 
-            if 'val' in args.run_mode:
-                _logger.info('Epoch #%d validating' % epoch)
-                if 'train' not in args.run_mode:
-                    model.load_state_dict(torch.load(args.model_prefix + '_epoch-%d_state.pt' %
-                                          epoch, map_location=dev))
-                valid_metric = evaluate(model, val_loader, dev, epoch, loss_func=loss_func,
-                                        steps_per_epoch=args.steps_per_epoch_val, tb_helper=tb, extra_args=locals())
+            if "val" in args.run_mode:
+                _logger.info("Epoch #%d validating" % epoch)
+                if "train" not in args.run_mode:
+                    model.load_state_dict(
+                        torch.load(args.model_prefix + "_epoch-%d_state.pt" % epoch, map_location=dev)
+                    )
+                valid_metric = evaluate(
+                    model,
+                    val_loader,
+                    dev,
+                    epoch,
+                    loss_func=loss_func,
+                    steps_per_epoch=args.steps_per_epoch_val,
+                    tb_helper=tb,
+                    extra_args=locals(),
+                )
                 is_best_epoch = (
-                    valid_metric < best_valid_metric) if args.regression_mode else (
-                    valid_metric > best_valid_metric)
+                    (valid_metric < best_valid_metric) if args.regression_mode else (valid_metric > best_valid_metric)
+                )
                 if is_best_epoch:
                     best_valid_metric = valid_metric
                     if args.model_prefix and (args.backend is None or local_rank == 0):
-                        shutil.copy2(f'{args.model_prefix}_epoch-{epoch}_state.pt',
-                                     args.model_prefix + '_best_epoch_state.pt')
-                        shutil.copy2(f'{args.model_prefix}_epoch-{epoch}_optimizer.pt',
-                                     args.model_prefix + '_best_epoch_optimizer.pt')
-                _logger.info('Epoch #%d: Current validation metric: %.5f (best: %.5f)' %
-                             (epoch, valid_metric, best_valid_metric), color='bold')
+                        shutil.copy2(
+                            f"{args.model_prefix}_epoch-{epoch}_state.pt", args.model_prefix + "_best_epoch_state.pt"
+                        )
+                        shutil.copy2(
+                            f"{args.model_prefix}_epoch-{epoch}_optimizer.pt",
+                            args.model_prefix + "_best_epoch_optimizer.pt",
+                        )
+                _logger.info(
+                    "Epoch #%d: Current validation metric: %.5f (best: %.5f)"
+                    % (epoch, valid_metric, best_valid_metric),
+                    color="bold",
+                )
 
-    if 'test' in args.run_mode and args.data_test:
+    if "test" in args.run_mode and args.data_test:
         if args.backend is not None and local_rank != 0:
             return
         if training_mode:
             del train_loader, val_loader
             test_loaders, data_config = test_load(args)
 
-        if not args.model_prefix.endswith('.onnx'):
+        if not args.model_prefix.endswith(".onnx"):
             if args.predict_gpus:
-                gpus = [int(i) for i in args.predict_gpus.split(',')]
+                gpus = [int(i) for i in args.predict_gpus.split(",")]
                 dev = torch.device(gpus[0])
             else:
                 gpus = None
-                dev = torch.device('cpu')
+                dev = torch.device("cpu")
                 try:
                     if torch.backends.mps.is_available():
-                        dev = torch.device('mps')
+                        dev = torch.device("mps")
                 except AttributeError:
                     pass
             model = orig_model.to(dev)
 
-            if ':' in args.model_prefix:
-                state_file, prefix = args.model_prefix.split(':')
+            if ":" in args.model_prefix:
+                state_file, prefix = args.model_prefix.split(":")
                 model_state = torch.load(state_file, map_location=dev)
-                model_state = {k.replace(prefix + '.', '', 1): v for k,
-                               v in model_state.items() if k.startswith(prefix + '.')}
+                model_state = {
+                    k.replace(prefix + ".", "", 1): v for k, v in model_state.items() if k.startswith(prefix + ".")
+                }
             else:
-                state_file = args.model_prefix if args.model_prefix.endswith(
-                    '.pt') else args.model_prefix + '_best_epoch_state.pt'
+                state_file = (
+                    args.model_prefix
+                    if args.model_prefix.endswith(".pt")
+                    else args.model_prefix + "_best_epoch_state.pt"
+                )
                 model_state = torch.load(state_file, map_location=dev)
-            _logger.info('Loading model %s for eval' % state_file)
+            _logger.info("Loading model %s for eval" % state_file)
             model.load_state_dict(model_state)
             if gpus is not None and len(gpus) > 1:
                 model = torch.nn.DataParallel(model, device_ids=gpus)
@@ -1022,30 +1135,32 @@ def _main(args):
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()
             # run prediction
-            if args.model_prefix.endswith('.onnx'):
-                _logger.info('Loading model %s for eval' % args.model_prefix)
+            if args.model_prefix.endswith(".onnx"):
+                _logger.info("Loading model %s for eval" % args.model_prefix)
                 from weaver.utils.nn.tools import evaluate_onnx
+
                 test_metric, scores, labels, observers = evaluate_onnx(args.model_prefix, test_loader)
             else:
                 test_metric, scores, labels, observers = evaluate(
-                    model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb, extra_args=locals())
-            _logger.info('Test metric %.5f' % test_metric, color='bold')
+                    model, test_loader, dev, epoch=None, for_training=False, tb_helper=tb, extra_args=locals()
+                )
+            _logger.info("Test metric %.5f" % test_metric, color="bold")
             del test_loader
 
             if args.predict_output:
                 if not os.path.dirname(args.predict_output):
                     predict_output = os.path.join(
-                        os.path.dirname(args.model_prefix),
-                        'predict_output', args.predict_output)
+                        os.path.dirname(args.model_prefix), "predict_output", args.predict_output
+                    )
                 else:
                     predict_output = args.predict_output
                 os.makedirs(os.path.dirname(predict_output), exist_ok=True)
-                if name == '':
+                if name == "":
                     output_path = predict_output
                 else:
                     base, ext = os.path.splitext(predict_output)
-                    output_path = base + '_' + name + ext
-                if output_path.endswith('.root'):
+                    output_path = base + "_" + name + ext
+                if output_path.endswith(".root"):
                     save_root(args, output_path, data_config, scores, labels, observers)
                 else:
                     save_parquet(args, output_path, scores, labels, observers)
@@ -1063,17 +1178,22 @@ def main():
         if args.steps_per_epoch is None:
             args.steps_per_epoch = args.samples_per_epoch // args.batch_size
         else:
-            raise RuntimeError('Please use either `--steps-per-epoch` or `--samples-per-epoch`, but not both!')
+            raise RuntimeError("Please use either `--steps-per-epoch` or `--samples-per-epoch`, but not both!")
 
     if args.samples_per_epoch_val is not None:
         if args.steps_per_epoch_val is None:
             args.steps_per_epoch_val = args.samples_per_epoch_val // args.batch_size_val
         else:
-            raise RuntimeError('Please use either `--steps-per-epoch-val` or `--samples-per-epoch-val`, but not both!')
+            raise RuntimeError("Please use either `--steps-per-epoch-val` or `--samples-per-epoch-val`, but not both!")
 
     if args.steps_per_epoch_val is None and args.steps_per_epoch is not None:
         args.steps_per_epoch_val = round(
-            args.steps_per_epoch * args.batch_size * (1 - args.train_val_split) / args.train_val_split / args.batch_size_val)
+            args.steps_per_epoch
+            * args.batch_size
+            * (1 - args.train_val_split)
+            / args.train_val_split
+            / args.batch_size_val
+        )
     if args.steps_per_epoch_val is not None and args.steps_per_epoch_val < 0:
         args.steps_per_epoch_val = None
 
@@ -1090,21 +1210,23 @@ def main():
         args.in_memory_val = args.in_memory
 
     if args.custom_functions is not None:
-        func_module = import_module(args.custom_functions, '_func_module')
+        func_module = import_module(args.custom_functions, "_func_module")
         _register_funcs(func_module)
 
-    if '{auto}' in args.model_prefix or '{auto}' in args.log:
+    if "{auto}" in args.model_prefix or "{auto}" in args.log:
         import hashlib
         import time
-        model_name = time.strftime('%Y%m%d-%H%M%S') + "_" + os.path.basename(args.network_config).replace('.py', '')
+
+        model_name = time.strftime("%Y%m%d-%H%M%S") + "_" + os.path.basename(args.network_config).replace(".py", "")
         if len(args.network_option):
-            model_name = model_name + "_" + hashlib.md5(str(args.network_option).encode('utf-8')).hexdigest()
-        model_name += '_{optim}_lr{lr}_batch{batch}'.format(lr=args.start_lr,
-                                                            optim=args.optimizer, batch=args.batch_size)
+            model_name = model_name + "_" + hashlib.md5(str(args.network_option).encode("utf-8")).hexdigest()
+        model_name += "_{optim}_lr{lr}_batch{batch}".format(
+            lr=args.start_lr, optim=args.optimizer, batch=args.batch_size
+        )
         args._auto_model_name = model_name
-        args.model_prefix = args.model_prefix.replace('{auto}', model_name)
-        args.log = args.log.replace('{auto}', model_name)
-        print('Using auto-generated model prefix %s' % args.model_prefix)
+        args.model_prefix = args.model_prefix.replace("{auto}", model_name)
+        args.log = args.log.replace("{auto}", model_name)
+        print("Using auto-generated model prefix %s" % args.model_prefix)
 
     if args.predict_gpus is None:
         args.predict_gpus = args.gpus
@@ -1113,34 +1235,34 @@ def main():
 
     stdout = sys.stdout
     if args.local_rank is not None:
-        args.log += '.%03d' % args.local_rank
+        args.log += ".%03d" % args.local_rank
         if args.local_rank != 0:
             stdout = None
-    _configLogger('weaver', stdout=stdout, filename=args.log)
+    _configLogger("weaver", stdout=stdout, filename=args.log)
 
     if args.cross_validation:
         model_dir, model_fn = os.path.split(args.model_prefix)
         if args.predict_output:
             predict_output_base, predict_output_ext = os.path.splitext(args.predict_output)
         load_model = args.load_model_weights or None
-        var_name, kfold = args.cross_validation.split('%')
+        var_name, kfold = args.cross_validation.split("%")
         kfold = int(kfold)
         for i in range(kfold):
-            _logger.info(f'\n=== Running cross validation, fold {i} of {kfold} ===')
+            _logger.info(f"\n=== Running cross validation, fold {i} of {kfold} ===")
             opts = copy.deepcopy(args)
-            opts.model_prefix = os.path.join(f'{model_dir}_fold{i}', model_fn)
+            opts.model_prefix = os.path.join(f"{model_dir}_fold{i}", model_fn)
             if args.predict_output:
-                opts.predict_output = f'{predict_output_base}_fold{i}' + predict_output_ext
-            opts.extra_selection_train = f'{var_name}%{kfold}!={i}'
+                opts.predict_output = f"{predict_output_base}_fold{i}" + predict_output_ext
+            opts.extra_selection_train = f"{var_name}%{kfold}!={i}"
             opts.extra_selection_val = opts.extra_selection_train
-            opts.extra_selection_test = f'{var_name}%{kfold}=={i}'
-            if load_model and '{fold}' in load_model:
-                opts.load_model_weights = load_model.replace('{fold}', f'fold{i}')
+            opts.extra_selection_test = f"{var_name}%{kfold}=={i}"
+            if load_model and "{fold}" in load_model:
+                opts.load_model_weights = load_model.replace("{fold}", f"fold{i}")
 
             _main(opts)
     else:
         _main(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

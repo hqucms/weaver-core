@@ -1,17 +1,17 @@
 # MIT License
-# 
+#
 # Copyright (c) 2018 davidtvs
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -244,8 +244,7 @@ class LRFinder(object):
             new_lrs = [new_lrs] * len(self.optimizer.param_groups)
         if len(new_lrs) != len(self.optimizer.param_groups):
             raise ValueError(
-                "Length of `new_lrs` is not equal to the number of parameter groups "
-                + "in the given optimizer"
+                "Length of `new_lrs` is not equal to the number of parameter groups " + "in the given optimizer"
             )
 
         for param_group, new_lr in zip(self.optimizer.param_groups, new_lrs):
@@ -278,9 +277,7 @@ class LRFinder(object):
                 # https://nvidia.github.io/apex/advanced.html#gradient-accumulation-across-iterations
                 delay_unscale = ((i + 1) % accumulation_steps) != 0
 
-                with amp.scale_loss(
-                    loss, self.optimizer, delay_unscale=delay_unscale
-                ) as scaled_loss:
+                with amp.scale_loss(loss, self.optimizer, delay_unscale=delay_unscale) as scaled_loss:
                     scaled_loss.backward()
             else:
                 loss.backward()
@@ -470,9 +467,7 @@ class StateCacher(object):
         else:
             fn = self.cached.get(key)
             if not os.path.exists(fn):
-                raise RuntimeError(
-                    "Failed to load state in {}. File doesn't exist anymore.".format(fn)
-                )
+                raise RuntimeError("Failed to load state in {}. File doesn't exist anymore.".format(fn))
             state_dict = torch.load(fn, map_location=lambda storage, location: storage)
             return state_dict
 
@@ -515,7 +510,7 @@ class DataLoaderIterWrapper(object):
             labels = [labels[k] for k in self.label_names]
             if len(labels) == 1:
                 labels = labels[0]
-            
+
         return inputs, labels
 
     # make it compatible with python 2

@@ -1,10 +1,10 @@
-'''
+"""
 Copyright (C) 2019 Sovrasov V. - All Rights Reserved
  * You may use, distribute and modify this code under the
  * terms of the MIT license.
  * You should have received a copy of the MIT license with
  * this file. If not visit https://opensource.org/licenses/MIT
-'''
+"""
 
 import sys
 import traceback
@@ -18,28 +18,30 @@ import torch.nn.functional as F
 
 from .logger import _logger
 
-'''Modified from: https://github.com/sovrasov/flops-counter.pytorch'''
+"""Modified from: https://github.com/sovrasov/flops-counter.pytorch"""
 
 
-def get_model_complexity_info(model, inputs,
-                              print_per_layer_stat=True,
-                              as_strings=True,
-                              ost=sys.stdout,
-                              verbose=False, ignore_modules=[],
-                              custom_modules_hooks={},
-                              output_precision=3,
-                              flops_units: Optional[str] = None,
-                              param_units: Optional[str] = 'M',
-                              extra_config: Dict = {}) -> Tuple[Union[int, None],
-                                                                Union[int, None]]:
+def get_model_complexity_info(
+    model,
+    inputs,
+    print_per_layer_stat=True,
+    as_strings=True,
+    ost=sys.stdout,
+    verbose=False,
+    ignore_modules=[],
+    custom_modules_hooks={},
+    output_precision=3,
+    flops_units: Optional[str] = None,
+    param_units: Optional[str] = "M",
+    extra_config: Dict = {},
+) -> Tuple[Union[int, None], Union[int, None]]:
     global CUSTOM_MODULES_MAPPING
     CUSTOM_MODULES_MAPPING = custom_modules_hooks
     flops_model = add_flops_counting_methods(model)
     flops_model.eval()
-    flops_model.start_flops_count(ost=ost, verbose=verbose,
-                                  ignore_list=ignore_modules)
+    flops_model.start_flops_count(ost=ost, verbose=verbose, ignore_list=ignore_modules)
 
-    enable_func_ops_patching = extra_config.get('count_functional', True)
+    enable_func_ops_patching = extra_config.get("count_functional", True)
     torch_functional_flops = []
     torch_tensor_ops_flops = []
     if enable_func_ops_patching:
@@ -61,8 +63,9 @@ def get_model_complexity_info(model, inputs,
         flops_count += sum(torch_tensor_ops_flops)
 
     except Exception as e:
-        _logger.info("Flops estimation was not finished successfully because of"
-              f" the following exception:\n{type(e)} : {e}")
+        _logger.info(
+            f"Flops estimation was not finished successfully because of the following exception:\n{type(e)} : {e}"
+        )
         traceback.print_exc()
         reset_environment()
 
@@ -76,7 +79,7 @@ def get_model_complexity_info(model, inputs,
             ost=ost,
             flops_units=flops_units,
             param_units=param_units,
-            precision=output_precision
+            precision=output_precision,
         )
     reset_environment()
 
@@ -97,26 +100,25 @@ def flops_to_string(flops: int, units: Optional[str] = None, precision: int = 2)
     """
     if units is None:
         if flops // 10**9 > 0:
-            return str(round(flops / 10.**9, precision)) + ' GMac'
+            return str(round(flops / 10.0**9, precision)) + " GMac"
         elif flops // 10**6 > 0:
-            return str(round(flops / 10.**6, precision)) + ' MMac'
+            return str(round(flops / 10.0**6, precision)) + " MMac"
         elif flops // 10**3 > 0:
-            return str(round(flops / 10.**3, precision)) + ' KMac'
+            return str(round(flops / 10.0**3, precision)) + " KMac"
         else:
-            return str(flops) + ' Mac'
+            return str(flops) + " Mac"
     else:
-        if units == 'GMac':
-            return str(round(flops / 10.**9, precision)) + ' ' + units
-        elif units == 'MMac':
-            return str(round(flops / 10.**6, precision)) + ' ' + units
-        elif units == 'KMac':
-            return str(round(flops / 10.**3, precision)) + ' ' + units
+        if units == "GMac":
+            return str(round(flops / 10.0**9, precision)) + " " + units
+        elif units == "MMac":
+            return str(round(flops / 10.0**6, precision)) + " " + units
+        elif units == "KMac":
+            return str(round(flops / 10.0**3, precision)) + " " + units
         else:
-            return str(flops) + ' Mac'
+            return str(flops) + " Mac"
 
 
-def params_to_string(params_num: int, units: Optional[str] = None,
-                     precision: int = 2) -> str:
+def params_to_string(params_num: int, units: Optional[str] = None, precision: int = 2) -> str:
     """
     Converts integer params representation to a readable string.
 
@@ -126,19 +128,19 @@ def params_to_string(params_num: int, units: Optional[str] = None,
         given units.
     """
     if units is None:
-        if params_num // 10 ** 6 > 0:
-            return str(round(params_num / 10 ** 6, precision)) + ' M'
-        elif params_num // 10 ** 3:
-            return str(round(params_num / 10 ** 3, precision)) + ' k'
+        if params_num // 10**6 > 0:
+            return str(round(params_num / 10**6, precision)) + " M"
+        elif params_num // 10**3:
+            return str(round(params_num / 10**3, precision)) + " k"
         else:
             return str(params_num)
     else:
-        if units == 'M':
-            return str(round(params_num / 10.**6, precision)) + ' ' + units
-        elif units == 'K':
-            return str(round(params_num / 10.**3, precision)) + ' ' + units
-        elif units == 'B':
-            return str(round(params_num / 10.**9, precision)) + ' ' + units
+        if units == "M":
+            return str(round(params_num / 10.0**6, precision)) + " " + units
+        elif units == "K":
+            return str(round(params_num / 10.0**3, precision)) + " " + units
+        elif units == "B":
+            return str(round(params_num / 10.0**9, precision)) + " " + units
         else:
             return str(params_num)
 
@@ -153,10 +155,15 @@ def accumulate_flops(self):
         return sum
 
 
-def print_model_with_flops(model, total_flops, total_params,
-                           flops_units: Optional[str] = 'GMac',
-                           param_units: Optional[str] = 'M',
-                           precision=3, ost=sys.stdout):
+def print_model_with_flops(
+    model,
+    total_flops,
+    total_params,
+    flops_units: Optional[str] = "GMac",
+    param_units: Optional[str] = "M",
+    precision=3,
+    ost=sys.stdout,
+):
     if total_flops < 1:
         total_flops = 1
     if total_params < 1:
@@ -175,16 +182,25 @@ def print_model_with_flops(model, total_flops, total_params,
         accumulated_params_num = self.accumulate_params()
         accumulated_flops_cost = self.accumulate_flops() / model.__batch_counter__
         if accumulated_params_num > total_params:
-            _logger.info('Warning: parameters of some of the modules were counted twice because'
-                  ' of multiple links to the same modules.'
-                  ' Extended per layer parameters num statistic could be unreliable.')
+            _logger.info(
+                "Warning: parameters of some of the modules were counted twice because"
+                " of multiple links to the same modules."
+                " Extended per layer parameters num statistic could be unreliable."
+            )
 
-        prefix = self.original_extra_repr() + ', |' if self.original_extra_repr() else '|'
-        return prefix + ', '.join([
-            params_to_string(accumulated_params_num, units=param_units, precision=precision),
-            '{:.3%} Params'.format(accumulated_params_num / total_params),
-            flops_to_string(accumulated_flops_cost, units=flops_units, precision=precision),
-            '{:.3%} MACs'.format(accumulated_flops_cost / total_flops)]) + '|'
+        prefix = self.original_extra_repr() + ", |" if self.original_extra_repr() else "|"
+        return (
+            prefix
+            + ", ".join(
+                [
+                    params_to_string(accumulated_params_num, units=param_units, precision=precision),
+                    "{:.3%} Params".format(accumulated_params_num / total_params),
+                    flops_to_string(accumulated_flops_cost, units=flops_units, precision=precision),
+                    "{:.3%} MACs".format(accumulated_flops_cost / total_flops),
+                ]
+            )
+            + "|"
+        )
 
     def add_extra_repr(m):
         m.accumulate_flops = accumulate_flops.__get__(m)
@@ -196,14 +212,14 @@ def print_model_with_flops(model, total_flops, total_params,
             assert m.extra_repr != m.original_extra_repr
 
     def del_extra_repr(m):
-        if hasattr(m, 'original_extra_repr'):
+        if hasattr(m, "original_extra_repr"):
             m.extra_repr = m.original_extra_repr
             del m.original_extra_repr
-        if hasattr(m, 'accumulate_flops'):
+        if hasattr(m, "accumulate_flops"):
             del m.accumulate_flops
 
     model.apply(add_extra_repr)
-    _logger.info(repr(model), color='lightgray')
+    _logger.info(repr(model), color="lightgray")
     model.apply(del_extra_repr)
 
 
@@ -218,8 +234,7 @@ def add_flops_counting_methods(net_main_module):
     net_main_module.start_flops_count = start_flops_count.__get__(net_main_module)
     net_main_module.stop_flops_count = stop_flops_count.__get__(net_main_module)
     net_main_module.reset_flops_count = reset_flops_count.__get__(net_main_module)
-    net_main_module.compute_average_flops_cost = compute_average_flops_cost.__get__(
-        net_main_module)
+    net_main_module.compute_average_flops_cost = compute_average_flops_cost.__get__(net_main_module)
 
     net_main_module.reset_flops_count()
 
@@ -241,7 +256,7 @@ def compute_average_flops_cost(self):
     flops_sum = self.accumulate_flops()
 
     for m in self.modules():
-        if hasattr(m, 'accumulate_flops'):
+        if hasattr(m, "accumulate_flops"):
             del m.accumulate_flops
 
     params_sum = get_model_parameters_number(self)
@@ -267,20 +282,19 @@ def start_flops_count(self, **kwargs):
             if is_supported_instance(module):
                 module.__params__ = 0
         elif is_supported_instance(module):
-            if hasattr(module, '__flops_handle__'):
+            if hasattr(module, "__flops_handle__"):
                 return
             if type(module) in CUSTOM_MODULES_MAPPING:
-                handle = module.register_forward_hook(
-                    CUSTOM_MODULES_MAPPING[type(module)])
+                handle = module.register_forward_hook(CUSTOM_MODULES_MAPPING[type(module)])
             else:
                 handle = module.register_forward_hook(MODULES_MAPPING[type(module)])
             module.__flops_handle__ = handle
             seen_types.add(type(module))
         else:
-            if verbose and not type(module) in (nn.Sequential, nn.ModuleList) and \
-               not type(module) in seen_types:
-                _logger.info('Warning: module ' + type(module).__name__ +
-                             ' is treated as a zero-op.', color='lightgray')
+            if verbose and not type(module) in (nn.Sequential, nn.ModuleList) and not type(module) in seen_types:
+                _logger.info(
+                    "Warning: module " + type(module).__name__ + " is treated as a zero-op.", color="lightgray"
+                )
             seen_types.add(type(module))
 
     self.apply(partial(add_flops_counter_hook_function, **kwargs))
@@ -321,8 +335,7 @@ def batch_counter_hook(module, input, output):
         batch_size = len(input)
     else:
         pass
-        _logger.info('Warning! No positional inputs found for a module,'
-              ' assuming batch size is 1.')
+        _logger.info("Warning! No positional inputs found for a module, assuming batch size is 1.")
     module.__batch_counter__ += batch_size
 
 
@@ -332,7 +345,7 @@ def add_batch_counter_variables_or_reset(module):
 
 
 def add_batch_counter_hook_function(module):
-    if hasattr(module, '__batch_counter_handle__'):
+    if hasattr(module, "__batch_counter_handle__"):
         return
 
     handle = module.register_forward_hook(batch_counter_hook)
@@ -340,17 +353,18 @@ def add_batch_counter_hook_function(module):
 
 
 def remove_batch_counter_hook_function(module):
-    if hasattr(module, '__batch_counter_handle__'):
+    if hasattr(module, "__batch_counter_handle__"):
         module.__batch_counter_handle__.remove()
         del module.__batch_counter_handle__
 
 
 def add_flops_counter_variable_or_reset(module):
     if is_supported_instance(module):
-        if hasattr(module, '__flops__') or hasattr(module, '__params__'):
-            _logger.info('Warning: variables __flops__ or __params__ are already '
-                  'defined for the module' + type(module).__name__ +
-                  ' ptflops can affect your code!')
+        if hasattr(module, "__flops__") or hasattr(module, "__params__"):
+            _logger.info(
+                "Warning: variables __flops__ or __params__ are already "
+                "defined for the module" + type(module).__name__ + " ptflops can affect your code!"
+            )
             module.__ptflops_backup_flops__ = module.__flops__
             module.__ptflops_backup_params__ = module.__params__
         module.__flops__ = 0
@@ -365,20 +379,20 @@ def is_supported_instance(module):
 
 def remove_flops_counter_hook_function(module):
     if is_supported_instance(module):
-        if hasattr(module, '__flops_handle__'):
+        if hasattr(module, "__flops_handle__"):
             module.__flops_handle__.remove()
             del module.__flops_handle__
 
 
 def remove_flops_counter_variables(module):
     if is_supported_instance(module):
-        if hasattr(module, '__flops__'):
+        if hasattr(module, "__flops__"):
             del module.__flops__
-            if hasattr(module, '__ptflops_backup_flops__'):
+            if hasattr(module, "__ptflops_backup_flops__"):
                 module.__flops__ = module.__ptflops_backup_flops__
-        if hasattr(module, '__params__'):
+        if hasattr(module, "__params__"):
             del module.__params__
-            if hasattr(module, '__ptflops_backup_params__'):
+            if hasattr(module, "__ptflops_backup_params__"):
                 module.__params__ = module.__ptflops_backup_params__
 
 
@@ -402,38 +416,35 @@ def patch_functional(collector):
     F.relu6 = torch_function_wrapper(F.relu6, FUNCTIONAL_MAPPING[F.relu6], collector)
     F.gelu = torch_function_wrapper(F.gelu, FUNCTIONAL_MAPPING[F.gelu], collector)
 
-    F.avg_pool1d = torch_function_wrapper(F.avg_pool1d,
-                                          FUNCTIONAL_MAPPING[F.avg_pool1d], collector)
-    F.avg_pool2d = torch_function_wrapper(F.avg_pool2d,
-                                          FUNCTIONAL_MAPPING[F.avg_pool2d], collector)
-    F.avg_pool3d = torch_function_wrapper(F.avg_pool3d,
-                                          FUNCTIONAL_MAPPING[F.avg_pool3d], collector)
-    F.max_pool1d = torch_function_wrapper(F.max_pool1d,
-                                          FUNCTIONAL_MAPPING[F.max_pool1d], collector)
-    F.max_pool2d = torch_function_wrapper(F.max_pool2d,
-                                          FUNCTIONAL_MAPPING[F.max_pool2d], collector)
-    F.max_pool3d = torch_function_wrapper(F.max_pool3d,
-                                          FUNCTIONAL_MAPPING[F.max_pool3d], collector)
+    F.avg_pool1d = torch_function_wrapper(F.avg_pool1d, FUNCTIONAL_MAPPING[F.avg_pool1d], collector)
+    F.avg_pool2d = torch_function_wrapper(F.avg_pool2d, FUNCTIONAL_MAPPING[F.avg_pool2d], collector)
+    F.avg_pool3d = torch_function_wrapper(F.avg_pool3d, FUNCTIONAL_MAPPING[F.avg_pool3d], collector)
+    F.max_pool1d = torch_function_wrapper(F.max_pool1d, FUNCTIONAL_MAPPING[F.max_pool1d], collector)
+    F.max_pool2d = torch_function_wrapper(F.max_pool2d, FUNCTIONAL_MAPPING[F.max_pool2d], collector)
+    F.max_pool3d = torch_function_wrapper(F.max_pool3d, FUNCTIONAL_MAPPING[F.max_pool3d], collector)
     F.adaptive_avg_pool1d = torch_function_wrapper(
-        F.adaptive_avg_pool1d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool1d], collector)
+        F.adaptive_avg_pool1d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool1d], collector
+    )
     F.adaptive_avg_pool2d = torch_function_wrapper(
-        F.adaptive_avg_pool2d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool2d], collector)
+        F.adaptive_avg_pool2d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool2d], collector
+    )
     F.adaptive_avg_pool3d = torch_function_wrapper(
-        F.adaptive_avg_pool3d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool3d], collector)
+        F.adaptive_avg_pool3d, FUNCTIONAL_MAPPING[F.adaptive_avg_pool3d], collector
+    )
     F.adaptive_max_pool1d = torch_function_wrapper(
-        F.adaptive_max_pool1d, FUNCTIONAL_MAPPING[F.adaptive_max_pool1d], collector)
+        F.adaptive_max_pool1d, FUNCTIONAL_MAPPING[F.adaptive_max_pool1d], collector
+    )
     F.adaptive_max_pool2d = torch_function_wrapper(
-        F.adaptive_max_pool2d, FUNCTIONAL_MAPPING[F.adaptive_max_pool2d], collector)
+        F.adaptive_max_pool2d, FUNCTIONAL_MAPPING[F.adaptive_max_pool2d], collector
+    )
     F.adaptive_max_pool3d = torch_function_wrapper(
-        F.adaptive_max_pool3d, FUNCTIONAL_MAPPING[F.adaptive_max_pool3d], collector)
+        F.adaptive_max_pool3d, FUNCTIONAL_MAPPING[F.adaptive_max_pool3d], collector
+    )
 
-    F.softmax = torch_function_wrapper(
-        F.softmax, FUNCTIONAL_MAPPING[F.softmax], collector)
+    F.softmax = torch_function_wrapper(F.softmax, FUNCTIONAL_MAPPING[F.softmax], collector)
 
-    F.upsample = torch_function_wrapper(
-        F.upsample, FUNCTIONAL_MAPPING[F.upsample], collector)
-    F.interpolate = torch_function_wrapper(
-        F.interpolate, FUNCTIONAL_MAPPING[F.interpolate], collector)
+    F.upsample = torch_function_wrapper(F.upsample, FUNCTIONAL_MAPPING[F.upsample], collector)
+    F.interpolate = torch_function_wrapper(F.interpolate, FUNCTIONAL_MAPPING[F.interpolate], collector)
 
     if hasattr(F, "silu"):
         F.silu = torch_function_wrapper(F.silu, FUNCTIONAL_MAPPING[F.silu], collector)
@@ -469,8 +480,7 @@ def unpatch_functional():
 
 
 def wrap_tensor_op(op, collector):
-    tensor_op_handler = torch_function_wrapper(
-        op, TENSOR_OPS_MAPPING[op], collector)
+    tensor_op_handler = torch_function_wrapper(op, TENSOR_OPS_MAPPING[op], collector)
 
     def wrapper(*args, **kwargs):
         return tensor_op_handler(*args, **kwargs)
@@ -481,27 +491,20 @@ def wrap_tensor_op(op, collector):
 
 
 def patch_tensor_ops(collector):
-    torch.matmul = torch_function_wrapper(
-        torch.matmul, TENSOR_OPS_MAPPING[torch.matmul], collector)
+    torch.matmul = torch_function_wrapper(torch.matmul, TENSOR_OPS_MAPPING[torch.matmul], collector)
     torch.Tensor.matmul = wrap_tensor_op(torch.Tensor.matmul, collector)
-    torch.mm = torch_function_wrapper(
-        torch.mm, TENSOR_OPS_MAPPING[torch.mm], collector)
+    torch.mm = torch_function_wrapper(torch.mm, TENSOR_OPS_MAPPING[torch.mm], collector)
     torch.Tensor.mm = wrap_tensor_op(torch.Tensor.mm, collector)
-    torch.bmm = torch_function_wrapper(
-        torch.bmm, TENSOR_OPS_MAPPING[torch.bmm], collector)
+    torch.bmm = torch_function_wrapper(torch.bmm, TENSOR_OPS_MAPPING[torch.bmm], collector)
     torch.Tensor.bmm = wrap_tensor_op(torch.Tensor.bmm, collector)
 
-    torch.addmm = torch_function_wrapper(
-        torch.addmm, TENSOR_OPS_MAPPING[torch.addmm], collector)
+    torch.addmm = torch_function_wrapper(torch.addmm, TENSOR_OPS_MAPPING[torch.addmm], collector)
     torch.Tensor.addmm = wrap_tensor_op(torch.Tensor.addmm, collector)
-    torch.baddbmm = torch_function_wrapper(
-        torch.baddbmm, TENSOR_OPS_MAPPING[torch.baddbmm], collector)
+    torch.baddbmm = torch_function_wrapper(torch.baddbmm, TENSOR_OPS_MAPPING[torch.baddbmm], collector)
 
-    torch.mul = torch_function_wrapper(
-        torch.mul, TENSOR_OPS_MAPPING[torch.mul], collector)
+    torch.mul = torch_function_wrapper(torch.mul, TENSOR_OPS_MAPPING[torch.mul], collector)
     torch.Tensor.mul = wrap_tensor_op(torch.Tensor.mul, collector)
-    torch.add = torch_function_wrapper(
-        torch.add, TENSOR_OPS_MAPPING[torch.add], collector)
+    torch.add = torch_function_wrapper(torch.add, TENSOR_OPS_MAPPING[torch.add], collector)
     torch.Tensor.add = wrap_tensor_op(torch.Tensor.add, collector)
 
 
@@ -549,8 +552,7 @@ def linear_flops_counter_hook(module, input, output):
     input_last_dim = input.shape[-1]
     pre_last_dims_prod = np.prod(input.shape[0:-1], dtype=np.int64)
     bias_flops = output_last_dim if module.bias is not None else 0
-    module.__flops__ += int((input_last_dim * output_last_dim + bias_flops)
-                            * pre_last_dims_prod)
+    module.__flops__ += int((input_last_dim * output_last_dim + bias_flops) * pre_last_dims_prod)
 
 
 def pool_flops_counter_hook(module, input, output):
@@ -580,8 +582,9 @@ def conv_flops_counter_hook(conv_module, input, output, extra_per_position_flops
     groups = conv_module.groups
 
     filters_per_channel = out_channels // groups
-    conv_per_position_flops = int(np.prod(kernel_dims, dtype=np.int64)) * \
-        (in_channels * filters_per_channel + extra_per_position_flops)
+    conv_per_position_flops = int(np.prod(kernel_dims, dtype=np.int64)) * (
+        in_channels * filters_per_channel + extra_per_position_flops
+    )
 
     active_elements_count = batch_size * int(np.prod(output_dims, dtype=np.int64))
 
@@ -590,7 +593,6 @@ def conv_flops_counter_hook(conv_module, input, output, extra_per_position_flops
     bias_flops = 0
 
     if conv_module.bias is not None:
-
         bias_flops = out_channels * active_elements_count
 
     overall_flops = overall_conv_flops + bias_flops
@@ -610,9 +612,9 @@ def deformable_conv_flops_counter_hook(conv_module, input, output):
 
 def rnn_flops(flops, rnn_module, w_ih, w_hh, input_size):
     # matrix matrix mult ih state and internal state
-    flops += w_ih.shape[0]*w_ih.shape[1]
+    flops += w_ih.shape[0] * w_ih.shape[1]
     # matrix matrix mult hh state and internal state
-    flops += w_hh.shape[0]*w_hh.shape[1]
+    flops += w_hh.shape[0] * w_hh.shape[1]
     if isinstance(rnn_module, (nn.RNN, nn.RNNCell)):
         # add both operations
         flops += rnn_module.hidden_size
@@ -620,12 +622,12 @@ def rnn_flops(flops, rnn_module, w_ih, w_hh, input_size):
         # hadamard of r
         flops += rnn_module.hidden_size
         # adding operations from both states
-        flops += rnn_module.hidden_size*3
+        flops += rnn_module.hidden_size * 3
         # last two hadamard product and add
-        flops += rnn_module.hidden_size*3
+        flops += rnn_module.hidden_size * 3
     elif isinstance(rnn_module, (nn.LSTM, nn.LSTMCell)):
         # adding operations from both states
-        flops += rnn_module.hidden_size*4
+        flops += rnn_module.hidden_size * 4
         # two hadamard product and add for C state
         flops += rnn_module.hidden_size + rnn_module.hidden_size + rnn_module.hidden_size
         # final hadamard
@@ -647,16 +649,16 @@ def rnn_flops_counter_hook(rnn_module, input, output):
     num_layers = rnn_module.num_layers
 
     for i in range(num_layers):
-        w_ih = rnn_module.__getattr__('weight_ih_l' + str(i))
-        w_hh = rnn_module.__getattr__('weight_hh_l' + str(i))
+        w_ih = rnn_module.__getattr__("weight_ih_l" + str(i))
+        w_hh = rnn_module.__getattr__("weight_hh_l" + str(i))
         if i == 0:
             input_size = rnn_module.input_size
         else:
             input_size = rnn_module.hidden_size
         flops = rnn_flops(flops, rnn_module, w_ih, w_hh, input_size)
         if rnn_module.bias:
-            b_ih = rnn_module.__getattr__('bias_ih_l' + str(i))
-            b_hh = rnn_module.__getattr__('bias_hh_l' + str(i))
+            b_ih = rnn_module.__getattr__("bias_ih_l" + str(i))
+            b_hh = rnn_module.__getattr__("bias_hh_l" + str(i))
             flops += b_ih.shape[0] + b_hh.shape[0]
 
     flops *= batch_size
@@ -670,13 +672,13 @@ def rnn_cell_flops_counter_hook(rnn_cell_module, input, output):
     flops = 0
     inp = input[0]
     batch_size = inp.shape[0]
-    w_ih = rnn_cell_module.__getattr__('weight_ih')
-    w_hh = rnn_cell_module.__getattr__('weight_hh')
+    w_ih = rnn_cell_module.__getattr__("weight_ih")
+    w_hh = rnn_cell_module.__getattr__("weight_hh")
     input_size = inp.shape[1]
     flops = rnn_flops(flops, rnn_cell_module, w_ih, w_hh, input_size)
     if rnn_cell_module.bias:
-        b_ih = rnn_cell_module.__getattr__('bias_ih')
-        b_hh = rnn_cell_module.__getattr__('bias_hh')
+        b_ih = rnn_cell_module.__getattr__("bias_ih")
+        b_hh = rnn_cell_module.__getattr__("bias_hh")
         flops += b_ih.shape[0] + b_hh.shape[0]
 
     flops *= batch_size
@@ -688,8 +690,9 @@ def multihead_attention_counter_hook(multihead_attention_module, input, output):
 
     q, k, v = input
 
-    batch_first = multihead_attention_module.batch_first \
-        if hasattr(multihead_attention_module, 'batch_first') else False
+    batch_first = (
+        multihead_attention_module.batch_first if hasattr(multihead_attention_module, "batch_first") else False
+    )
     if batch_first:
         batch_size = q.shape[0]
         len_idx = 1
@@ -802,7 +805,6 @@ MODULES_MAPPING = {
     nn.BatchNorm1d: bn_flops_counter_hook,
     nn.BatchNorm2d: bn_flops_counter_hook,
     nn.BatchNorm3d: bn_flops_counter_hook,
-
     nn.InstanceNorm1d: bn_flops_counter_hook,
     nn.InstanceNorm2d: bn_flops_counter_hook,
     nn.InstanceNorm3d: bn_flops_counter_hook,
@@ -823,20 +825,22 @@ MODULES_MAPPING = {
     nn.RNNCell: rnn_cell_flops_counter_hook,
     nn.LSTMCell: rnn_cell_flops_counter_hook,
     nn.GRUCell: rnn_cell_flops_counter_hook,
-    nn.MultiheadAttention: multihead_attention_counter_hook
+    nn.MultiheadAttention: multihead_attention_counter_hook,
 }
 
-if hasattr(nn, 'GELU'):
+if hasattr(nn, "GELU"):
     MODULES_MAPPING[nn.GELU] = relu_flops_counter_hook
 
 try:
     import torchvision.ops as tops
+
     MODULES_MAPPING[tops.DeformConv2d] = deformable_conv_flops_counter_hook
 except ImportError:
     pass
 
 try:
     from timm.models.vision_transformer import Attention as timm_Attention
+
     MODULES_MAPPING[timm_Attention] = timm_attention_counter_hook
 except ImportError:
     pass
@@ -855,11 +859,11 @@ def _numel_functional_flops_hook(input, *args, **kwargs):
 
 
 def _interpolate_functional_flops_hook(*args, **kwargs):
-    input = kwargs.get('input', None)
+    input = kwargs.get("input", None)
     if input is None and len(args) > 0:
         input = args[0]
 
-    size = kwargs.get('size', None)
+    size = kwargs.get("size", None)
     if size is None and len(args) > 1:
         size = args[1]
 
@@ -869,7 +873,7 @@ def _interpolate_functional_flops_hook(*args, **kwargs):
         else:
             return int(size)
 
-    scale_factor = kwargs.get('scale_factor', None)
+    scale_factor = kwargs.get("scale_factor", None)
     if scale_factor is None and len(args) > 2:
         scale_factor = args[2]
     assert scale_factor is not None, "either size or scale_factor"
@@ -879,7 +883,7 @@ def _interpolate_functional_flops_hook(*args, **kwargs):
     if isinstance(scale_factor, tuple) and len(scale_factor) == len(input):
         flops *= int(np.prod(scale_factor, dtype=np.int64))
     else:
-        flops *= scale_factor**len(input)
+        flops *= scale_factor ** len(input)
 
     return flops
 
@@ -928,7 +932,6 @@ FUNCTIONAL_MAPPING = {
     F.elu: _numel_functional_flops_hook,
     F.relu6: _numel_functional_flops_hook,
     F.gelu: _numel_functional_flops_hook,
-
     F.avg_pool1d: _numel_functional_flops_hook,
     F.avg_pool2d: _numel_functional_flops_hook,
     F.avg_pool3d: _numel_functional_flops_hook,
@@ -941,9 +944,7 @@ FUNCTIONAL_MAPPING = {
     F.adaptive_max_pool1d: _numel_functional_flops_hook,
     F.adaptive_max_pool2d: _numel_functional_flops_hook,
     F.adaptive_max_pool3d: _numel_functional_flops_hook,
-
     F.softmax: _numel_functional_flops_hook,
-
     F.upsample: _interpolate_functional_flops_hook,
     F.interpolate: _interpolate_functional_flops_hook,
 }
@@ -959,11 +960,9 @@ TENSOR_OPS_MAPPING = {
     torch.Tensor.mm: _matmul_tensor_flops_hook,
     torch.bmm: _matmul_tensor_flops_hook,
     torch.Tensor.bmm: _matmul_tensor_flops_hook,
-
     torch.addmm: _addmm_tensor_flops_hook,
     torch.baddbmm: _addmm_tensor_flops_hook,
     torch.Tensor.addmm: _addmm_tensor_flops_hook,
-
     torch.mul: _elementwise_tensor_flops_hook,
     torch.Tensor.mul: _elementwise_tensor_flops_hook,
     torch.add: _elementwise_tensor_flops_hook,
