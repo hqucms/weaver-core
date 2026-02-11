@@ -19,6 +19,9 @@ def _collate_awkward_array_fn(batch, *, collate_fn_map=None):
     return _stack(batch, axis=0)
 
 
+_nan_warned_vars = set()
+
+
 def _finalize_inputs(table, data_config):
     output = {}
     # copy observer variables before transformation
@@ -37,16 +40,30 @@ def _finalize_inputs(table, data_config):
         if params["length"] is not None:
             pad_fn = _repeat_pad if params["pad_mode"] == "wrap" else partial(_pad, value=params["pad_value"])
             table[k] = pad_fn(table[k], params["length"])
-        # check for NaN
-        if np.any(np.isnan(table[k])):
-            _logger.warning("Found NaN in %s, silently converting it to 0.", k)
-            table[k] = np.nan_to_num(table[k])
+        # log variables that contain NaN (once per variable)
+        if k not in _nan_warned_vars:
+            _has_nan = np.any(np.isnan(table[k]))
+            if _has_nan:
+                _logger.warning("Variable '%s' contains NaN values (this warning is shown only once)", k)
+                _nan_warned_vars.add(k)
+        table[k] = np.nan_to_num(table[k])
+
     # stack variables for each input group
+    def _to_f32(x):
+        if isinstance(x, np.ndarray):
+            return x if x.dtype == np.float32 else x.astype("float32")
+        return np.asarray(ak.to_numpy(ak.values_astype(x, "float32")), dtype="float32")
+
     for k, names in data_config.input_dicts.items():
         if len(names) == 1 and data_config.preprocess_params[names[0]]["length"] is None:
-            output["_" + k] = ak.to_numpy(ak.values_astype(table[names[0]], "float32"))
+            output["_" + k] = _to_f32(table[names[0]])
         else:
-            output["_" + k] = ak.to_numpy(np.stack([ak.to_numpy(table[n]).astype("float32") for n in names], axis=1))
+            first = _to_f32(table[names[0]])
+            result = np.empty((len(first), len(names)) + first.shape[1:], dtype="float32")
+            result[:, 0] = first
+            for idx, n in enumerate(names[1:], 1):
+                result[:, idx] = _to_f32(table[n])
+            output["_" + k] = result
     # copy monitor variables (after transformation)
     for k in data_config.z_variables:
         if k in data_config.monitor_variables:
@@ -67,7 +84,7 @@ def _get_reweight_indices(weights, up_sample=True, max_resample=10, weight_scale
         all_indices = np.repeat(np.arange(len(weights)), n_repeats)
         randwgt = np.random.uniform(low=0, high=weight_scale, size=len(weights) * n_repeats)
         keep_indices = all_indices[randwgt < np.repeat(weights, n_repeats)]
-    return copy.deepcopy(keep_indices)
+    return keep_indices
 
 
 def _check_labels(table):
@@ -92,8 +109,8 @@ def _preprocess(table, data_config, options):
     if len(table) == 0:
         return []
     # define new variables
-    aux_branches = data_config.train_aux_branches if options["training"] else data_config.test_aux_branches
-    table = _build_new_variables(table, {k: v for k, v in data_config.var_funcs.items() if k in aux_branches})
+    aux_var_funcs = data_config.train_var_funcs if options["training"] else data_config.test_var_funcs
+    table = _build_new_variables(table, aux_var_funcs)
     # check labels
     if data_config.label_type == "simple" and options["training"]:
         _check_labels(table)
@@ -358,12 +375,9 @@ class _SimpleIter(object):
         self.ipos += 1
 
     def get_data(self, i):
-        # inputs
-        X = {k: copy.deepcopy(self.table["_" + k][i]) for k in self._data_config.input_names}
-        # labels
-        y = {k: copy.deepcopy(self.table[k][i]) for k in self._data_config.label_names}
-        # observers / monitor variables
-        Z = {k: copy.deepcopy(self.table[k][i]) for k in self._data_config.z_variables}
+        X = {k: self.table["_" + k][i] for k in self._data_config.input_names}
+        y = {k: self.table[k][i] for k in self._data_config.label_names}
+        Z = {k: self.table[k][i] for k in self._data_config.z_variables}
         return X, y, Z
 
 

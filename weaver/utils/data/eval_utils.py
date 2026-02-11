@@ -1,4 +1,5 @@
 import math
+import functools
 import numpy as np
 import awkward as ak
 
@@ -13,7 +14,8 @@ def _register_funcs(module):
     _eval_funcs.update(dict(getmembers(module, isfunction)))
 
 
-def _get_variable_names(expr, exclude=["awkward", "ak", "np", "numpy", "math", "len"]):
+@functools.lru_cache(maxsize=None)
+def _get_variable_names(expr, exclude=("awkward", "ak", "np", "numpy", "math", "len")):
     import ast
 
     root = ast.parse(expr)
@@ -23,10 +25,14 @@ def _get_variable_names(expr, exclude=["awkward", "ak", "np", "numpy", "math", "
     )
 
 
+@functools.lru_cache(maxsize=None)
+def _compile_expr(expr):
+    return compile(expr, "<expr>", "eval")
+
+
 def _eval_expr(expr, table):
-    tmp = {k: table[k] for k in _get_variable_names(expr)}
-    tmp.update(_eval_funcs)
-    return eval(expr, tmp)
+    tmp = {**_eval_funcs, **{k: table[k] for k in _get_variable_names(expr)}}
+    return eval(_compile_expr(expr), tmp)
 
 
 _register_funcs(tools)
