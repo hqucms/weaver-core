@@ -1,5 +1,6 @@
 import numpy as np
 import awkward as ak
+import numba
 
 
 def _hash(*args):
@@ -27,33 +28,88 @@ def _stack(arrays, axis=1):
         return ak.concatenate([a.__getitem__(s) for a in arrays], axis=axis)
 
 
+@numba.njit(cache=True)
+def _pad_jagged_kernel(content, offsets, out):
+    """Fill pre-allocated output (nrows x maxlen) from jagged flat content + offsets."""
+    maxlen = out.shape[1]
+    for i in range(len(offsets) - 1):
+        start = offsets[i]
+        stop = offsets[i + 1]
+        n = stop - start
+        if n > maxlen:
+            n = maxlen
+        for j in range(n):
+            out[i, j] = content[start + j]
+
+
+@numba.njit(cache=True)
+def _repeat_pad_jagged_kernel(content, offsets, out):
+    """Fill output (nrows x maxlen) by repeating each row's values cyclically."""
+    maxlen = out.shape[1]
+    for i in range(len(offsets) - 1):
+        start = offsets[i]
+        length = offsets[i + 1] - start
+        if length == 0:
+            continue
+        for j in range(maxlen):
+            out[i, j] = content[start + j % length]
+
+
+def _get_content_and_offsets(a):
+    """Extract flat content and offsets from a 1-level jagged awkward array. Returns None if not applicable."""
+    try:
+        layout = a.layout
+        # unwrap wrappers that don't have offsets (e.g. VirtualArray, IndexedArray)
+        while not hasattr(layout, "offsets"):
+            if hasattr(layout, "content"):
+                layout = layout.content
+            else:
+                return None
+        offsets = np.asarray(layout.offsets.data)
+        inner = layout.content
+        # get the raw numpy data from the NumpyArray content
+        content = np.asarray(inner.data)
+        if content.ndim != 1:
+            return None
+        return content, offsets
+    except Exception:
+        return None
+
+
 def _pad(a, maxlen, value=0, dtype="float32"):
     if isinstance(a, np.ndarray) and a.ndim >= 2 and a.shape[1] == maxlen:
         return a
     elif isinstance(a, ak.Array):
         if a.ndim == 1:
             a = ak.unflatten(a, 1)
+        result = _get_content_and_offsets(a)
+        if result is not None:
+            content, offsets = result
+            nrows = len(offsets) - 1
+            out = np.full((nrows, maxlen), value, dtype=dtype)
+            _pad_jagged_kernel(content.astype(dtype), offsets, out)
+            return out
+        # fallback for complex layouts
         a = ak.fill_none(ak.pad_none(a, maxlen, clip=True), value)
         return ak.values_astype(a, dtype)
     else:
-        x = (np.ones((len(a), maxlen)) * value).astype(dtype)
+        x = np.full((len(a), maxlen), value, dtype=dtype)
         for idx, s in enumerate(a):
-            if not len(s):
-                continue
-            trunc = s[:maxlen].astype(dtype)
-            x[idx, : len(trunc)] = trunc
+            n = min(len(s), maxlen)
+            if n > 0:
+                x[idx, :n] = np.asarray(s[:n], dtype=dtype)
         return x
 
 
-def _repeat_pad(a, maxlen, shuffle=False, dtype="float32"):
-    x = ak.to_numpy(ak.flatten(a))
-    x = np.tile(x, int(np.ceil(len(a) * maxlen / len(x))))
-    if shuffle:
-        np.random.shuffle(x)
-    x = x[: len(a) * maxlen].reshape((len(a), maxlen))
-    mask = _pad(ak.zeros_like(a), maxlen, value=1)
-    x = _pad(a, maxlen) + mask * x
-    return ak.values_astype(x, dtype)
+def _repeat_pad(a, maxlen, dtype="float32"):
+    assert isinstance(a, ak.Array)
+    if a.ndim == 1:
+        a = ak.unflatten(a, 1)
+    content, offsets = _get_content_and_offsets(a)
+    nrows = len(offsets) - 1
+    out = np.empty((nrows, maxlen), dtype=dtype)
+    _repeat_pad_jagged_kernel(content.astype(dtype), offsets, out)
+    return out
 
 
 def _clip(a, a_min, a_max):

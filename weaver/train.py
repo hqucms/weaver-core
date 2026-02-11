@@ -150,6 +150,8 @@ parser.add_argument('--predict-gpus', type=str, default=None,
                     help='device for the testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`; if not set, use the same as `--gpus`')
 parser.add_argument('--num-workers', type=int, default=1,
                     help='number of threads to load the dataset; memory consumption and disk access load increases (~linearly) with this numbers')
+parser.add_argument('--prefetch-factor', type=int, default=None,
+                    help='number of batches loaded in advance by each DataLoader worker; increase for I/O-bound workloads')
 parser.add_argument('--predict', action=argparse.BooleanOptionalAction, default=False,
                     help='run prediction instead of training')
 parser.add_argument('--predict-output', type=str,
@@ -318,21 +320,25 @@ def train_load(args):
         in_memory=args.in_memory_val,
         name="val" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
+    num_workers_train = min(args.num_workers, max(1, int(len(train_files) * args.file_fraction)))
+    num_workers_val = min(args.num_workers, max(1, int(len(val_files) * args.file_fraction)))
     train_loader = DataLoader(
         train_data,
         batch_size=args.batch_size,
         drop_last=True,
         pin_memory=True,
-        num_workers=min(args.num_workers, max(1, int(len(train_files) * args.file_fraction))),
-        persistent_workers=args.num_workers > 0 and args.steps_per_epoch is not None,
+        num_workers=num_workers_train,
+        persistent_workers=num_workers_train > 0,
+        prefetch_factor=args.prefetch_factor if num_workers_train > 0 else None,
     )
     val_loader = DataLoader(
         val_data,
         batch_size=args.batch_size_val,
         drop_last=True,
         pin_memory=True,
-        num_workers=min(args.num_workers, max(1, int(len(val_files) * args.file_fraction))),
-        persistent_workers=args.num_workers > 0 and args.steps_per_epoch_val is not None,
+        num_workers=num_workers_val,
+        persistent_workers=num_workers_val > 0,
+        prefetch_factor=args.prefetch_factor if num_workers_val > 0 else None,
     )
     train_data_config = train_data.config
     val_data_config = val_data.config
@@ -389,7 +395,13 @@ def test_load(args):
             name="test_" + name,
         )
         test_loader = DataLoader(
-            test_data, num_workers=num_workers, batch_size=args.batch_size_test, drop_last=False, pin_memory=True
+            test_data,
+            num_workers=num_workers,
+            batch_size=args.batch_size_test,
+            drop_last=False,
+            pin_memory=True,
+            persistent_workers=num_workers > 0,
+            prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
         )
         return test_loader
 

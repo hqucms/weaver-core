@@ -519,10 +519,10 @@ class PairEmbed(nn.Module):
             if x is not None:
                 x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
                 x = x.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_lv_dim)
-                x = x.T.unsqueeze(0).contiguous()  # (1, pairwise_lv_dim, num_elements)
+                x = x.T.unsqueeze(0)  # (1, pairwise_lv_dim, num_elements)
             if uu is not None:
                 uu = uu.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_input_dim)
-                uu = uu.T.unsqueeze(0).contiguous()  # (1, pairwise_input_dim, num_elements)
+                uu = uu.T.unsqueeze(0)  # (1, pairwise_input_dim, num_elements)
 
         # with grad
         elements = 0
@@ -680,9 +680,9 @@ class Attention(torch.nn.Module):
         q, k, v = F._in_projection_packed(query, key, value, self.in_proj.weight, self.in_proj.bias)
 
         # -> (bsz, num_heads, src/tgt_len, head_dim)
-        q = self.q_norm(q.view(bsz, tgt_len, self.num_heads, self.head_dim)).transpose(1, 2).contiguous()
-        k = self.k_norm(k.view(bsz, src_len, self.num_heads, self.head_dim)).transpose(1, 2).contiguous()
-        v = v.view(bsz, src_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+        q = self.q_norm(q.view(bsz, tgt_len, self.num_heads, self.head_dim)).transpose(1, 2)
+        k = self.k_norm(k.view(bsz, src_len, self.num_heads, self.head_dim)).transpose(1, 2)
+        v = v.view(bsz, src_len, self.num_heads, self.head_dim).transpose(1, 2)
 
         dropout_p = self.dropout if self.training else 0.0
 
@@ -864,12 +864,12 @@ class Block(nn.Module):
         if self.c_attn is not None:
             bsz, tgt_len, _ = x.size()
             x = x.view(bsz, tgt_len, self.num_heads, self.head_dim)
-            x = torch.einsum("bthd,h->btdh", x, self.c_attn)
+            x = x * self.c_attn.view(1, 1, self.num_heads, 1)
             x = x.reshape(bsz, tgt_len, self.embed_dim)
         x = self.post_attn_norm(x)
         x = self.dropout(x)
         x = self.drop_path1(self.ls1(x))
-        x += residual
+        x = x + residual
 
         residual = x
         x = self.pre_fc_norm(x)
@@ -886,7 +886,7 @@ class Block(nn.Module):
         x = self.drop_path2(self.ls2(x))
         if self.w_resid is not None:
             residual = torch.mul(self.w_resid, residual)
-        x += residual
+        x = x + residual
 
         return x
 
@@ -1149,11 +1149,9 @@ class ParticleTransformer(nn.Module):
             cls_tokens = cls_tokens.squeeze(1)  # (batch, embed_dim)
         else:
             # for classification: simple average pooling
-            mask = ~padding_mask.unsqueeze(1)  # (batch, 1, seq_len)
-            x = x.transpose(1, 2).contiguous()  # (batch, embed_dim, seq_len)
-            counts = mask.float().sum(-1)  # (batch, 1)
-            counts = torch.max(counts, torch.ones_like(counts))  # >=1
-            cls_tokens = (x * mask).sum(-1) / counts  # (batch, embed_dim)
+            mask = ~padding_mask.unsqueeze(-1)  # (batch, seq_len, 1)
+            counts = mask.float().sum(dim=1).clamp(min=1)  # (batch, 1)
+            cls_tokens = (x * mask).sum(dim=1) / counts  # (batch, embed_dim)
 
         x_cls = self.norm(cls_tokens)  # (batch, embed_dim)
         return x_cls

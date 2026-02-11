@@ -235,6 +235,10 @@ class DataConfig(object):
             _logger.debug("test_load_branches:\n  %s", ", ".join(sorted(self.test_load_branches)))
             _logger.debug("test_aux_branches:\n  %s", ", ".join(sorted(self.test_aux_branches)))
 
+        # pre-compute filtered var_funcs for train/test to avoid rebuilding every fetch
+        self.train_var_funcs = {k: v for k, v in self.var_funcs.items() if k in self.train_aux_branches}
+        self.test_var_funcs = {k: v for k, v in self.var_funcs.items() if k in self.test_aux_branches}
+
     def __getattr__(self, name):
         return self.options[name]
 
