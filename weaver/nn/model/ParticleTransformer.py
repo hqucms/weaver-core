@@ -4,7 +4,7 @@ Paper: "Particle Transformer for Jet Tagging" - https://arxiv.org/abs/2202.03772
 """
 
 import math
-import random
+
 import copy
 from functools import partial
 from typing import Optional, Tuple, Any, Callable
@@ -251,7 +251,6 @@ class SequenceTrimmer(nn.Module):
         self.num_extra_tokens = num_extra_tokens
         self.register_buffer("_counter", torch.LongTensor([0]), persistent=False)
 
-    @torch.compiler.disable
     def forward(self, x, v=None, mask=None, uu=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
@@ -270,12 +269,16 @@ class SequenceTrimmer(nn.Module):
                     if not isinstance(v, (list, tuple)):
                         v = [v]
                 if self.training:
-                    q = min(1, random.uniform(*self.target))
-                    maxlen = torch.quantile(mask.float().sum(dim=-1), q).long().item()
+                    # Use torch RNG instead of Python random to avoid graph breaks
+                    q = torch.empty(1, device=mask.device).uniform_(*self.target).clamp_(max=1)
+                    maxlen = torch.quantile(mask.float().sum(dim=-1), q).long()
                     if self.round_to_32:
-                        # round up to next multiple of 32
-                        next_multiple_of_32 = max(1, (maxlen + self.num_extra_tokens + 31) // 32) * 32
-                        maxlen = min(next_multiple_of_32, seq_len) - self.num_extra_tokens
+                        # Round up to next multiple of 32
+                        # effectively: ceil(x / 32) * 32
+                        target_len = maxlen + self.num_extra_tokens
+                        target_len = ((target_len + 31) // 32) * 32
+                        target_len = torch.clamp(target_len, min=32)
+                        maxlen = torch.clamp(target_len, max=seq_len) - self.num_extra_tokens
                     rand = torch.rand_like(mask.float())
                     rand.masked_fill_(~mask, -1)
                     perm = rand.argsort(dim=-1, descending=True)  # (N, 1, P)
@@ -288,7 +291,7 @@ class SequenceTrimmer(nn.Module):
                         uu = torch.gather(uu, -1, perm.unsqueeze(-2).expand_as(uu))
                 else:
                     maxlen = mask.sum(dim=-1).max()
-                maxlen = max(maxlen, 1)
+                maxlen = maxlen.clamp(min=1)
                 if maxlen < seq_len:
                     mask = mask[:, :, :maxlen]
                     x = x[:, :, :maxlen]
@@ -394,6 +397,7 @@ class PairEmbed(nn.Module):
         self.remove_self_pair = remove_self_pair
         self.for_onnx = for_onnx
         self.sparse_eval = (not for_onnx) if sparse_eval is None else sparse_eval
+        self.tril_indices_fn = tril_indices if self.for_onnx else torch.tril_indices
         self.out_dim = dims[-1]
 
         if pairwise_lv_type == "pp":
@@ -441,95 +445,84 @@ class PairEmbed(nn.Module):
                 module_list = module_list[:-1]
             self.fts_embed = nn.Sequential(*module_list)
 
+    def _embed_pairs(self, x, uu):
+        """Run embedding networks on pair features. Returns (batch_or_1, out_dim, num_pairs)."""
+        elements = None
+        if x is not None:
+            elements = self.embed(x)
+        if uu is not None:
+            fts = self.fts_embed(uu)
+            elements = fts if elements is None else elements + fts
+        return elements
+
     def _forward_dense(self, x, uu=None, mask=None):
         # x: (batch, v_dim, seq_len)
         # uu: (batch, v_dim, seq_len, seq_len)
-        assert x is not None or uu is not None
-        _requires_grad = False
         if x is not None:
             batch_size, _, seq_len = x.size()
-            _requires_grad |= x.requires_grad
         else:
             batch_size, _, seq_len, _ = uu.size()
-            _requires_grad |= uu.requires_grad
-        with torch.set_grad_enabled(_requires_grad):
-            if self.is_symmetric:
-                tril_indices_fn = tril_indices if self.for_onnx else torch.tril_indices
-                i, j = tril_indices_fn(
-                    seq_len,
-                    seq_len,
-                    offset=-1 if self.remove_self_pair else 0,
-                    device=(x if x is not None else uu).device,
-                )
-                if x is not None:
-                    x = x.unsqueeze(-1).repeat(1, 1, 1, seq_len)
-                    xi = x[:, :, i, j]  # (batch, dim, seq_len*(seq_len+1)/2)
-                    xj = x[:, :, j, i]
-                    x = self.pairwise_lv_fts(xi, xj)
-                if uu is not None:
-                    # (batch, dim, seq_len*(seq_len+1)/2)
-                    uu = uu[:, :, i, j]
-            else:
-                if x is not None:
-                    x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
-                    if self.remove_self_pair:
-                        i = torch.arange(0, seq_len, device=x.device)
-                        x[:, :, i, i] = 0
-                    x = x.view(-1, self.pairwise_lv_dim, seq_len * seq_len)
-                if uu is not None:
-                    uu = uu.view(-1, self.pairwise_input_dim, seq_len * seq_len)
-
-        # with grad
-        elements = 0
-        if x is not None:
-            elements = elements + self.embed(x)
-        if uu is not None:
-            elements = elements + self.fts_embed(uu)
 
         if self.is_symmetric:
-            y = torch.zeros(batch_size, self.out_dim, seq_len, seq_len, dtype=elements.dtype, device=elements.device)
+            i, j = self.tril_indices_fn(
+                seq_len,
+                seq_len,
+                offset=-1 if self.remove_self_pair else 0,
+                device=(x if x is not None else uu).device,
+            )
+            if x is not None:
+                xi = x[:, :, i]  # (batch, dim, num_tril_pairs)
+                xj = x[:, :, j]
+                x = self.pairwise_lv_fts(xi, xj)
+            if uu is not None:
+                # (batch, dim, num_tril_pairs)
+                uu = uu[:, :, i, j]
+        else:
+            if x is not None:
+                x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
+                if self.remove_self_pair:
+                    diag_idx = torch.arange(0, seq_len, device=x.device)
+                    x[:, :, diag_idx, diag_idx] = 0
+                x = x.reshape(batch_size, self.pairwise_lv_dim, seq_len * seq_len)
+            if uu is not None:
+                uu = uu.reshape(batch_size, self.pairwise_input_dim, seq_len * seq_len)
+
+        elements = self._embed_pairs(x, uu)
+
+        if self.is_symmetric:
+            y = elements.new_zeros(batch_size, self.out_dim, seq_len, seq_len)
             y[:, :, i, j] = elements
             y[:, :, j, i] = elements
         else:
-            y = elements.view(-1, self.out_dim, seq_len, seq_len)
+            y = elements.reshape(batch_size, self.out_dim, seq_len, seq_len)
         return y
 
     def _forward_sparse(self, x, uu=None, mask=None):
         # x: (batch, v_dim, seq_len)
         # uu: (batch, v_dim, seq_len, seq_len)
-        assert x is not None or uu is not None
-        _requires_grad = False
         if x is not None:
             batch_size, _, seq_len = x.size()
-            _requires_grad |= x.requires_grad
         else:
             batch_size, _, seq_len, _ = uu.size()
-            _requires_grad |= uu.requires_grad
 
-        with torch.set_grad_enabled(_requires_grad):
-            i0, i1, i2, i3 = (Ellipsis,) * 4
-            if mask is not None:
-                mask = mask.unsqueeze(-1) * mask.unsqueeze(-2)  # (batch_size, 1, seq_len, seq_len)
-                if self.is_symmetric:
-                    offset = -1 if self.remove_self_pair else 0
-                    i0, _, i2, i3 = mask.float().tril(offset).nonzero(as_tuple=True)
-                else:
-                    i0, _, i2, i3 = mask.nonzero(as_tuple=True)
+        i0, i2, i3 = (Ellipsis,) * 3
+        if mask is not None:
+            pair_mask = mask.unsqueeze(-1) * mask.unsqueeze(-2)  # (batch_size, 1, seq_len, seq_len)
+            if self.is_symmetric:
+                offset = -1 if self.remove_self_pair else 0
+                i0, _, i2, i3 = pair_mask.float().tril(offset).nonzero(as_tuple=True)
+            else:
+                i0, _, i2, i3 = pair_mask.nonzero(as_tuple=True)
 
-            if x is not None:
-                x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
-                x = x.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_lv_dim)
-                x = x.T.unsqueeze(0)  # (1, pairwise_lv_dim, num_elements)
-            if uu is not None:
-                uu = uu.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_input_dim)
-                uu = uu.T.unsqueeze(0)  # (1, pairwise_input_dim, num_elements)
-
-        # with grad
-        elements = 0
         if x is not None:
-            elements = elements + self.embed(x)
+            x = self.pairwise_lv_fts(x.unsqueeze(-1), x.unsqueeze(-2))
+            x = x.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_lv_dim)
+            x = x.T.unsqueeze(0)  # (1, pairwise_lv_dim, num_elements)
         if uu is not None:
-            elements = elements + self.fts_embed(uu)
+            uu = uu.permute(0, 2, 3, 1)[i0, i2, i3, :]  # (num_elements, pairwise_input_dim)
+            uu = uu.T.unsqueeze(0)  # (1, pairwise_input_dim, num_elements)
+
+        elements = self._embed_pairs(x, uu)
         elements = elements.squeeze(0).T  # (num_elements, out_dim)
 
         y = torch.zeros(batch_size, seq_len, seq_len, self.out_dim, dtype=elements.dtype, device=elements.device)
@@ -621,7 +614,7 @@ class Attention(torch.nn.Module):
         self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
     ):
 
-        for k in state_dict.keys():
+        for k in list(state_dict.keys()):
             if k.endswith("in_proj_weight"):
                 state_dict[k.replace("_weight", ".weight")] = state_dict.pop(k)
             elif k.endswith("in_proj_bias"):
