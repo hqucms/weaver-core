@@ -164,6 +164,101 @@ def _batch_permute_and_drop_indices(array, random_permute=True, drop_rate_min=0,
     return indices
 
 
+@numba.njit(cache=True)
+def _fused_repeat_pad_one_var(content, offsets, center, scale, lo, hi, do_center, out_v):
+    """Standardize + clip + repeat-pad + nan_to_num for one variable, writing into a 2D slice (nrows, maxlen)."""
+    nrows = len(offsets) - 1
+    maxlen = out_v.shape[1]
+    for i in range(nrows):
+        row_start = offsets[i]
+        row_len = offsets[i + 1] - row_start
+        if row_len == 0:
+            continue
+        for j in range(maxlen):
+            val = np.float32(content[row_start + j % row_len])
+            if do_center:
+                val = (val - center) * scale
+                if val < lo:
+                    val = lo
+                elif val > hi:
+                    val = hi
+            if val != val:
+                val = np.float32(0.0)
+            out_v[i, j] = val
+
+
+@numba.njit(cache=True)
+def _fused_constant_pad_one_var(content, offsets, center, scale, lo, hi, do_center, pad_value, out_v):
+    """Standardize + clip + constant-pad + nan_to_num for one variable, writing into a 2D slice (nrows, maxlen)."""
+    nrows = len(offsets) - 1
+    maxlen = out_v.shape[1]
+    for i in range(nrows):
+        row_start = offsets[i]
+        row_len = offsets[i + 1] - row_start
+        n = min(row_len, maxlen)
+        for j in range(n, maxlen):
+            out_v[i, j] = pad_value
+        for j in range(n):
+            val = np.float32(content[row_start + j])
+            if do_center:
+                val = (val - center) * scale
+                if val < lo:
+                    val = lo
+                elif val > hi:
+                    val = hi
+            if val != val:
+                val = np.float32(0.0)
+            out_v[i, j] = val
+
+
+def _fused_pad_and_stack(table, var_names, preprocess_params, dtype="float32"):
+    """Fused standardize + clip + pad + nan_to_num + stack for variables sharing the same jagged structure.
+
+    Processes each variable with a per-variable numba kernel but writes directly into slices of
+    the final (nrows, n_vars, padlen) output array, avoiding intermediate allocations and the
+    separate stacking + nan_to_num passes.
+    """
+    if not var_names:
+        return None
+
+    first_result = _get_content_and_offsets(table[var_names[0]])
+    if first_result is None:
+        return None
+    _, shared_offsets = first_result
+
+    nrows = len(shared_offsets) - 1
+    n_vars = len(var_names)
+    padlen = preprocess_params[var_names[0]]["length"]
+    if padlen is None:
+        return None
+
+    pad_mode = preprocess_params[var_names[0]]["pad_mode"]
+    out = np.zeros((nrows, n_vars, padlen), dtype=dtype) if pad_mode != "wrap" else np.empty((nrows, n_vars, padlen), dtype=dtype)
+
+    for vi, vn in enumerate(var_names):
+        result = _get_content_and_offsets(table[vn])
+        if result is None or len(result[1]) != len(shared_offsets):
+            return None
+        content, offsets = result
+        if offsets[-1] != shared_offsets[-1]:
+            return None
+
+        p = preprocess_params[vn]
+        do_center = p["center"] is not None
+        center = np.float32(p["center"]) if do_center else np.float32(0.0)
+        scale = np.float32(p["scale"])
+        lo = np.float32(p["min"])
+        hi = np.float32(p["max"])
+        content_f32 = content.astype(np.float32) if content.dtype != np.float32 else content
+
+        if pad_mode == "wrap":
+            _fused_repeat_pad_one_var(content_f32, offsets, center, scale, lo, hi, do_center, out[:, vi, :])
+        else:
+            _fused_constant_pad_one_var(content_f32, offsets, center, scale, lo, hi, do_center,
+                                        np.float32(p["pad_value"]), out[:, vi, :])
+    return out
+
+
 def _p4_from_pxpypze(px, py, pz, energy):
     import vector
 
