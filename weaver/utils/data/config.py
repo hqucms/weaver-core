@@ -240,7 +240,10 @@ class DataConfig(object):
         self.test_var_funcs = {k: v for k, v in self.var_funcs.items() if k in self.test_aux_branches}
 
     def __getattr__(self, name):
-        return self.options[name]
+        try:
+            return self.options[name]
+        except KeyError:
+            raise AttributeError(name)
 
     def register(self, name, expr=None, to="both"):
         assert to in ("train", "test", "both")
