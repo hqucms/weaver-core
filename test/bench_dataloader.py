@@ -79,9 +79,9 @@ def main():
                         help="Run minimal scenarios to verify the script works")
     args = parser.parse_args()
 
-    files = sorted(glob.glob(f"{args.data_dir}/*.root"))
+    files = sorted(glob.glob(f"{args.data_dir}/*.root")) + sorted(glob.glob(f"{args.data_dir}/*.parquet"))
     if not files:
-        raise RuntimeError(f"No .root files found in {args.data_dir}")
+        raise RuntimeError(f"No .root or .parquet files found in {args.data_dir}")
     file_dict = {"_": files}
     max_batches = args.max_batches or None
     quick = args.quick
