@@ -38,7 +38,7 @@ def convert_file(input_path, output_path, *, branches=None, treename=None, branc
         output_path,
         compression=compression if compression != "none" else None,
         compression_level=compression_level,
-        row_group_size=row_group_size,
+        row_group_size=row_group_size if row_group_size > 0 else None,
     )
     return len(table)
 
