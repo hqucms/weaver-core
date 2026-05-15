@@ -73,11 +73,40 @@ def _read_awkd(filepath, branches, load_range=None):
 
 
 def _read_parquet(filepath, branches, load_range=None):
-    outputs = ak.from_parquet(filepath, columns=branches)
-    if load_range is not None:
-        start = math.trunc(load_range[0] * len(outputs))
-        stop = max(start + 1, math.trunc(load_range[1] * len(outputs)))
-        outputs = outputs[start:stop]
+    import pyarrow.parquet as pq
+
+    pf = pq.ParquetFile(filepath)
+    meta = pf.metadata
+    n_rg = meta.num_row_groups
+
+    if load_range is not None and n_rg > 1:
+        total = meta.num_rows
+        start_row = math.trunc(load_range[0] * total)
+        stop_row = max(start_row + 1, math.trunc(load_range[1] * total))
+        # find which row groups overlap [start_row, stop_row)
+        rg_indices = []
+        row_offset = 0
+        for i in range(n_rg):
+            rg_rows = meta.row_group(i).num_rows
+            rg_end = row_offset + rg_rows
+            if rg_end > start_row and row_offset < stop_row:
+                rg_indices.append(i)
+            row_offset = rg_end
+        tbl = pf.read_row_groups(rg_indices, columns=branches)
+        outputs = ak.from_arrow(tbl)
+        # trim to exact range within the selected row groups
+        rg0_start = sum(meta.row_group(i).num_rows for i in range(rg_indices[0]))
+        local_start = start_row - rg0_start
+        local_stop = local_start + (stop_row - start_row)
+        if local_start > 0 or local_stop < len(outputs):
+            outputs = outputs[local_start:local_stop]
+    else:
+        tbl = pf.read(columns=branches)
+        outputs = ak.from_arrow(tbl)
+        if load_range is not None:
+            start = math.trunc(load_range[0] * len(outputs))
+            stop = max(start + 1, math.trunc(load_range[1] * len(outputs)))
+            outputs = outputs[start:stop]
     return outputs
 
 
