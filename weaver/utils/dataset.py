@@ -314,7 +314,7 @@ class _SimpleIter(object):
             self._file_fraction,
             int(len(sum(self._init_file_dict.values(), [])) * self._file_fraction),
             str(self.load_range),
-            "\n".join(self.filelist[:3]) + "\n ... " + self.filelist[-1],
+            "\n".join(self.filelist[:3]) + ("\n ... " + self.filelist[-1] if self.filelist else ""),
         )
 
         debug_text = "Load filelist and ranges in each iteration:\n"
@@ -378,7 +378,7 @@ class _SimpleIter(object):
         if end_of_list:
             if init:
                 raise RuntimeError(
-                    "Nothing to load for worker %d" % 0 if self.worker_info is None else self.worker_info.id
+                    "Nothing to load for worker %d" % (0 if self.worker_info is None else self.worker_info.id)
                 )
             if self._infinity_mode and not self._in_memory:
                 # infinity mode: re-start
