@@ -67,6 +67,10 @@ def run_one(loader, max_batches=None):
     return len(batch_times), n_samples, batch_times
 
 
+def parse_list(s, typ):
+    return [typ(x) for x in s.split(",")]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dataloader benchmark")
     parser.add_argument("--data-config", type=str, default="test/data/JetClass_full.yaml")
@@ -75,8 +79,14 @@ def main():
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--max-batches", type=int, default=200,
                         help="Max batches per benchmark run (0 = exhaust loader)")
-    parser.add_argument("--quick", action="store_true",
-                        help="Run minimal scenarios to verify the script works")
+    parser.add_argument("--mode", choices=["train", "test", "both"], default="both",
+                        help="Run train, test, or both (default: both)")
+    parser.add_argument("--batch-size", type=str, default="1024",
+                        help="Comma-separated batch sizes (default: 1024)")
+    parser.add_argument("--fetch-step", type=str, default="0.05",
+                        help="Comma-separated fetch steps for train mode (default: 0.05)")
+    parser.add_argument("--fetch-by-files", action="store_true", default=None,
+                        help="Use fetch_by_files=True in train mode (default: False)")
     args = parser.parse_args()
 
     files = sorted(glob.glob(f"{args.data_dir}/*.root")) + sorted(glob.glob(f"{args.data_dir}/*.parquet"))
@@ -84,40 +94,44 @@ def main():
         raise RuntimeError(f"No .root or .parquet files found in {args.data_dir}")
     file_dict = {"_": files}
     max_batches = args.max_batches or None
-    quick = args.quick
+
+    batch_sizes = parse_list(args.batch_size, int)
+    fetch_steps = parse_list(args.fetch_step, float)
+
+    run_train = args.mode in ("train", "both")
+    run_test = args.mode in ("test", "both")
 
     print(f"Files: {len(files)}  |  Workers: {args.num_workers}  |  Max batches: {max_batches}")
     print()
 
     scenarios = []
 
-    # --- (1) Training mode ---
-    train_fetch_steps = (0.02, 0.05, 0.1) if not quick else (0.05,)
-    train_batch_sizes = (512, 1024, 2048, 4096, 8192) if not quick else (1024,)
-    for fetch_step in train_fetch_steps:
-        for batch_size in train_batch_sizes:
+    if run_train:
+        fetch_by_files = bool(args.fetch_by_files)
+        for fetch_step in fetch_steps:
+            for batch_size in batch_sizes:
+                scenarios.append(
+                    dict(
+                        label=f"train  fetch_step={fetch_step:<5}  bs={batch_size}"
+                              + (f"  fetch_by_files" if fetch_by_files else ""),
+                        for_training=True,
+                        fetch_by_files=fetch_by_files,
+                        fetch_step=fetch_step,
+                        batch_size=batch_size,
+                    )
+                )
+
+    if run_test:
+        for batch_size in batch_sizes:
             scenarios.append(
                 dict(
-                    label=f"train  fetch_step={fetch_step:<5}  bs={batch_size}",
-                    for_training=True,
-                    fetch_by_files=False,
-                    fetch_step=fetch_step,
+                    label=f"test   fetch_by_files=True  fetch_step=1  bs={batch_size}",
+                    for_training=False,
+                    fetch_by_files=True,
+                    fetch_step=1,
                     batch_size=batch_size,
                 )
             )
-
-    # --- (2) Test mode ---
-    test_batch_sizes = (512, 1024, 2048, 4096, 8192) if not quick else (1024,)
-    for batch_size in test_batch_sizes:
-        scenarios.append(
-            dict(
-                label=f"test   fetch_by_files=True  fetch_step=1  bs={batch_size}",
-                for_training=False,
-                fetch_by_files=True,
-                fetch_step=1,
-                batch_size=batch_size,
-            )
-        )
 
     header = f"{'scenario':<58} {'batches':>8} {'samples':>10} {'1st(s)':>8} {'rest(s)':>8} {'total(s)':>8} {'samp/s':>10}"
     print(header)
