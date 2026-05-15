@@ -7,12 +7,6 @@ import logging
 import multiprocessing
 import time
 
-# Python 3.14 defaults to forkserver which requires pickling the dataset;
-# use fork to avoid that overhead and match typical training setups.
-multiprocessing.set_start_method("fork", force=True)
-
-logging.disable(logging.CRITICAL)
-
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
