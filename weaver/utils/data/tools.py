@@ -165,53 +165,6 @@ def _batch_permute_and_drop_indices(array, random_permute=True, drop_rate_min=0,
 
 
 @numba.njit(cache=True)
-def _fused_repeat_pad_one_var(content, offsets, center, scale, lo, hi, do_center, out_v):
-    """Standardize + clip + repeat-pad + nan_to_num for one variable, writing into a 2D slice (nrows, maxlen)."""
-    nrows = len(offsets) - 1
-    maxlen = out_v.shape[1]
-    for i in range(nrows):
-        row_start = offsets[i]
-        row_len = offsets[i + 1] - row_start
-        if row_len == 0:
-            continue
-        for j in range(maxlen):
-            val = np.float32(content[row_start + j % row_len])
-            if do_center:
-                val = (val - center) * scale
-                if val < lo:
-                    val = lo
-                elif val > hi:
-                    val = hi
-            if val != val:
-                val = np.float32(0.0)
-            out_v[i, j] = val
-
-
-@numba.njit(cache=True)
-def _fused_constant_pad_one_var(content, offsets, center, scale, lo, hi, do_center, pad_value, out_v):
-    """Standardize + clip + constant-pad + nan_to_num for one variable, writing into a 2D slice (nrows, maxlen)."""
-    nrows = len(offsets) - 1
-    maxlen = out_v.shape[1]
-    for i in range(nrows):
-        row_start = offsets[i]
-        row_len = offsets[i + 1] - row_start
-        n = min(row_len, maxlen)
-        for j in range(n, maxlen):
-            out_v[i, j] = pad_value
-        for j in range(n):
-            val = np.float32(content[row_start + j])
-            if do_center:
-                val = (val - center) * scale
-                if val < lo:
-                    val = lo
-                elif val > hi:
-                    val = hi
-            if val != val:
-                val = np.float32(0.0)
-            out_v[i, j] = val
-
-
-@numba.njit(cache=True)
 def _batched_fused_repeat_pad(all_content, content_starts, offsets, centers, scales, los, his, do_centers, out):
     """Batched: standardize + clip + repeat-pad + nan_to_num for all variables in one kernel call."""
     nrows = out.shape[0]
