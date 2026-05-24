@@ -53,6 +53,8 @@ parser.add_argument('-t', '--data-test', nargs='*', default=[],
                          ' (c) split output per N input files, `--data-test a%%10:/path/to/a/*`, will split per 10 input files')
 parser.add_argument('--data-fraction', type=float, default=1,
                     help='fraction of events to load from each file; for training, the events are randomly selected for each epoch')
+parser.add_argument('--data-fraction-val', type=float, default=None,
+                    help='--data-fraction for the validation data loader; defaults to --data-fraction if not set')
 parser.add_argument('--file-fraction', type=float, default=1,
                     help='fraction of files to load; for training, the files are randomly selected for each epoch')
 parser.add_argument('--fetch-by-files', action=argparse.BooleanOptionalAction, default=False,
@@ -312,7 +314,7 @@ def train_load(args):
         batch_size=args.batch_size_val,
         for_training=True,
         extra_selection=args.extra_selection_val,
-        load_range_and_fraction=(val_range, args.data_fraction, args.data_split_val),
+        load_range_and_fraction=(val_range, args.data_fraction_val if args.data_fraction_val is not None else args.data_fraction, args.data_split_val),
         file_fraction=args.file_fraction,
         fetch_by_files=args.fetch_by_files,
         fetch_step=args.fetch_step_val,
