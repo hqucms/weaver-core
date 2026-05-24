@@ -895,14 +895,14 @@ class ParticleTransformer(nn.Module):
         pair_extra_dim=0,
         remove_self_pair=False,
         use_pre_activation_pair=True,
-        use_conv_embed=None,
+        use_conv_embed=False,
         embed_dims=(128, 512, 128),
         pair_embed_dims=(64, 64, 64),
         num_heads=8,
         num_layers=8,
         block_params=None,
         block_ids_with_attn_mask=None,
-        include_global_token=None,
+        include_global_token=False,
         num_cls_layers=2,
         cls_block_params=None,
         fc_params=(),
@@ -960,16 +960,22 @@ class ParticleTransformer(nn.Module):
             default_cfg.update(
                 use_rmsnorm=True,
                 use_bias=False,
-                use_qk_norm=True,
-                elementwise_attn_output_gate=True,
                 dropout=0,
                 attn_dropout=0,
                 activation_dropout=0,
                 drop_path_rate=0.1,
             )
-            if use_conv_embed is None:
-                use_conv_embed = True
-            if include_global_token is None:
+            # TODO: still experimental
+            if version == 3.5:
+                default_cfg.update(
+                    use_qk_norm=True,
+                    elementwise_attn_output_gate=True,
+                )
+            if version == 3.6:
+                default_cfg.update(
+                    use_qk_norm=True,
+                    elementwise_attn_output_gate=True,
+                )
                 include_global_token = True
                 num_cls_layers = 0
         norm_layer = nn.RMSNorm if default_cfg["use_rmsnorm"] else nn.LayerNorm
