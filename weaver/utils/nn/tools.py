@@ -300,6 +300,7 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
 
     time_diff = time.time() - start_time
     _logger.info('Processed %d entries in total (avg. speed %.1f entries/s)' % (entry_count, entry_count / time_diff))
+    _logger.info('Eval AvgLoss: %.5f, AvgAcc: %.5f' % (total_loss / count, total_correct / count))
     _logger.info('Evaluation class distribution: \n    %s', str(sorted(label_counter.items())))
 
     if tb_helper:
