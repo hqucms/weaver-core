@@ -263,8 +263,11 @@ class _SimpleIter(object):
             if self.split_num > 1:
                 _logger.warning("`split_num` is fixed to 1 when fetching by files.")
             self.load_filelist_and_ranges = [
-                (self.filelist[i : i + self._fetch_step], [self.load_range] * self._fetch_step)
-                for i in range(0, len(self.filelist), self._fetch_step)
+                (files, [self.load_range] * len(files))
+                for files in (
+                    self.filelist[i : i + self._fetch_step]
+                    for i in range(0, len(self.filelist), self._fetch_step)
+                )
             ]
         else:
             self.load_filelist_and_ranges = []

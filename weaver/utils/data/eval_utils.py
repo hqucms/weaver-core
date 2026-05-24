@@ -25,13 +25,20 @@ def _get_variable_names(expr, exclude=("awkward", "ak", "np", "numpy", "math", "
     )
 
 
+def _get_data_var_names(expr):
+    # Names referenced in `expr` that should be looked up in the data table.
+    # Excludes registered functions (np, ak, user helpers from --custom-functions, etc.),
+    # which are resolved from `_eval_funcs` at eval time instead.
+    return [v for v in _get_variable_names(expr) if v not in _eval_funcs]
+
+
 @functools.lru_cache(maxsize=None)
 def _compile_expr(expr):
     return compile(expr, "<expr>", "eval")
 
 
 def _eval_expr(expr, table):
-    tmp = {**_eval_funcs, **{k: table[k] for k in _get_variable_names(expr)}}
+    tmp = {**_eval_funcs, **{k: table[k] for k in _get_data_var_names(expr)}}
     return eval(_compile_expr(expr), tmp)
 
 

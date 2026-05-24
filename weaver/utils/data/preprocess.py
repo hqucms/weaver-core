@@ -5,7 +5,7 @@ import numpy as np
 import awkward as ak
 
 from ..logger import _logger, warn_n_times
-from .eval_utils import _get_variable_names, _eval_expr
+from .eval_utils import _get_variable_names, _get_data_var_names, _eval_expr
 from .fileio import _read_files
 from .config import _strcat
 
@@ -99,14 +99,14 @@ class AutoStandardizer(object):
                 keep_branches.add(k)
                 load_branches.add(k)
         if self._data_config.selection:
-            load_branches.update(_get_variable_names(self._data_config.selection))
+            load_branches.update(_get_data_var_names(self._data_config.selection))
 
         func_vars = set(self._data_config.var_funcs.keys())
         while load_branches & func_vars:
             for k in load_branches & func_vars:
                 aux_branches.add(k)
                 load_branches.remove(k)
-                load_branches.update(_get_variable_names(self._data_config.var_funcs[k]))
+                load_branches.update(_get_data_var_names(self._data_config.var_funcs[k]))
 
         _logger.debug("[AutoStandardizer] keep_branches:\n  %s", ",".join(keep_branches))
         _logger.debug("[AutoStandardizer] aux_branches:\n  %s", ",".join(aux_branches))
@@ -185,14 +185,14 @@ class WeightMaker(object):
         aux_branches = set()
         load_branches = keep_branches.copy()
         if self._data_config.selection:
-            load_branches.update(_get_variable_names(self._data_config.selection))
+            load_branches.update(_get_data_var_names(self._data_config.selection))
 
         func_vars = set(self._data_config.var_funcs.keys())
         while load_branches & func_vars:
             for k in load_branches & func_vars:
                 aux_branches.add(k)
                 load_branches.remove(k)
-                load_branches.update(_get_variable_names(self._data_config.var_funcs[k]))
+                load_branches.update(_get_data_var_names(self._data_config.var_funcs[k]))
 
         _logger.debug("[WeightMaker] keep_branches:\n  %s", ",".join(keep_branches))
         _logger.debug("[WeightMaker] aux_branches:\n  %s", ",".join(aux_branches))
