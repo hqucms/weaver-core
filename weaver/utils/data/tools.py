@@ -120,18 +120,16 @@ def _repeat_pad(a, maxlen, dtype="float32"):
         _repeat_pad_jagged_kernel(content.astype(dtype), offsets, out)
         return out
     # fallback for complex layouts
-    counts = ak.num(a)
-    a_padded = ak.pad_none(a, maxlen, clip=True)
-    nrows = len(a_padded)
+    counts = np.asarray(ak.num(a))
+    nrows = len(counts)
     out = np.zeros((nrows, maxlen), dtype=dtype)
+    idx = np.arange(maxlen)
     for i in range(nrows):
         n = int(counts[i])
         if n == 0:
-            out[i] = 0
-        else:
-            row = np.asarray(a[i][:n], dtype=dtype)
-            for j in range(maxlen):
-                out[i, j] = row[j % n]
+            continue
+        row = np.asarray(a[i], dtype=dtype)
+        out[i] = row[idx % n]
     return out
 
 
@@ -287,7 +285,7 @@ def _fused_pad_and_stack(table, var_names, preprocess_params, dtype="float32"):
         if result is None or len(result[1]) != len(shared_offsets):
             return None
         content, offsets = result
-        if offsets[-1] != shared_offsets[-1]:
+        if not np.array_equal(offsets, shared_offsets):
             return None
 
         p = preprocess_params[vn]

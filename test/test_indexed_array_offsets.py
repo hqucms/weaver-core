@@ -149,6 +149,30 @@ class TestFusedPadAndStackAfterSelection(unittest.TestCase):
             if n < self.padlen:
                 np.testing.assert_array_equal(result[i, :, n:], 0.0)
 
+    def test_fused_stack_rejects_different_offsets_with_same_total_content(self):
+        # Same row count and total flattened content, but different row lengths.
+        # The fused kernel uses one shared offset array for every variable, so
+        # accepting this would mix values across rows for the mismatched var.
+        table = {
+            "a": _make_jagged([1, 3, 2], self.rng),
+            "b": _make_jagged([2, 1, 3], self.rng),
+        }
+        preprocess_params = {
+            k: {
+                "length": self.padlen,
+                "pad_mode": "constant",
+                "center": None,
+                "scale": 1.0,
+                "min": -5.0,
+                "max": 5.0,
+                "pad_value": 0.0,
+            }
+            for k in table
+        }
+
+        result = _fused_pad_and_stack(table, ["a", "b"], preprocess_params)
+        self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()

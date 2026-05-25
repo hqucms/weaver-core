@@ -1,5 +1,5 @@
-import os
 import math
+import os
 import awkward as ak
 import tqdm
 import traceback
@@ -27,7 +27,9 @@ def _read_root(filepath, branches, load_range=None, treename=None, branch_magic=
 
     with uproot.open(filepath) as f:
         if treename is None:
-            treenames = set([k.split(";")[0] for k, v in f.items() if getattr(v, "classname", "") == "TTree"])
+            treenames = set(
+                [k.split(";")[0] for k, v in f.items() if getattr(v, "classname", "") == "TTree"]
+            )
             if len(treenames) == 1:
                 treename = treenames.pop()
             else:
@@ -49,7 +51,11 @@ def _read_root(filepath, branches, load_range=None, treename=None, branch_magic=
                     if src in decoded_name:
                         decoded_name = decoded_name.replace(src, tgt)
                 branch_dict[name] = decoded_name
-            outputs = tree.arrays(filter_name=list(branch_dict.values()), entry_start=start, entry_stop=stop)
+            outputs = tree.arrays(
+                filter_name=list(branch_dict.values()),
+                entry_start=start,
+                entry_stop=stop,
+            )
             for name, decoded_name in branch_dict.items():
                 if name != decoded_name:
                     outputs[name] = outputs[decoded_name]
@@ -110,8 +116,17 @@ def _read_parquet(filepath, branches, load_range=None):
     return outputs
 
 
-def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, file_magic=None, **kwargs):
+def _read_files(
+    filelist,
+    branches,
+    load_ranges=None,
+    show_progressbar=False,
+    file_magic=None,
+    **kwargs,
+):
     branches = list(branches)
+    table = []
+    iterable = tqdm.tqdm(filelist) if show_progressbar else filelist
 
     # check `load_ranges`:
     #  - None: load all entries for all files
@@ -126,36 +141,40 @@ def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, fi
             load_ranges = (load_ranges,) * len(filelist)
     assert all(r is None or (len(r) == 2 and 0 <= r[0] < r[1] <= 1) for r in load_ranges)
 
-    table = []
-    iterable = tqdm.tqdm(filelist) if show_progressbar else filelist
     for filepath, load_range in zip(iterable, load_ranges):
         if load_range is not None and load_range[0] >= load_range[1]:
             continue
         ext = os.path.splitext(filepath)[1]
-        if ext not in ('.h5', '.root', '.awkd', '.parquet'):
-            raise RuntimeError('File %s of type `%s` is not supported!' % (filepath, ext))
+        if ext not in (".h5", ".root", ".awkd", ".parquet"):
+            raise RuntimeError("File %s of type `%s` is not supported!" % (filepath, ext))
         try:
-            if ext == '.h5':
+            if ext == ".h5":
                 a = _read_hdf5(filepath, branches, load_range=load_range)
-            elif ext == '.root':
-                a = _read_root(filepath, branches, load_range=load_range,
-                               treename=kwargs.get('treename', None),
-                               branch_magic=kwargs.get('branch_magic', None))
-            elif ext == '.awkd':
+            elif ext == ".root":
+                a = _read_root(
+                    filepath,
+                    branches,
+                    load_range=load_range,
+                    treename=kwargs.get("treename", None),
+                    branch_magic=kwargs.get("branch_magic", None),
+                )
+            elif ext == ".awkd":
                 a = _read_awkd(filepath, branches, load_range=load_range)
-            elif ext == '.parquet':
+            elif ext == ".parquet":
                 a = _read_parquet(filepath, branches, load_range=load_range)
         except Exception as e:
             a = None
-            _logger.error('When reading file %s:', filepath)
+            _logger.error("When reading file %s:", filepath)
             _logger.error(traceback.format_exc())
         if a is not None and file_magic is not None:
             import re
+
             for var, value_dict in file_magic.items():
                 if var in a.fields:
                     warn_n_times(
-                        f'Var `{var}` already defined in the arrays '
-                        f'but will be OVERWRITTEN by file_magic {value_dict}.')
+                        f"Var `{var}` already defined in the arrays "
+                        f"but will be OVERWRITTEN by file_magic {value_dict}."
+                    )
                 a[var] = 0
                 for fn_pattern, value in value_dict.items():
                     if re.search(fn_pattern, filepath):
@@ -163,10 +182,12 @@ def _read_files(filelist, branches, load_ranges=None, show_progressbar=False, fi
                         break
         if a is not None:
             table.append(a)
-    table = _concat(table)
+    table = _concat(table)  # ak.Array
 
     if len(table) == 0:
-        raise RuntimeError(f'Zero entries loaded when reading files {filelist} with `load_ranges`={load_ranges}.')
+        raise RuntimeError(
+            f"Zero entries loaded when reading files {filelist} with `load_ranges`={load_ranges}."
+        )
     return table
 
 

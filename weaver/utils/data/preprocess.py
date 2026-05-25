@@ -5,7 +5,7 @@ import numpy as np
 import awkward as ak
 
 from ..logger import _logger, warn_n_times
-from .eval_utils import _get_variable_names, _get_data_var_names, _eval_expr
+from .eval_utils import _get_data_var_names, _eval_expr
 from .fileio import _read_files
 from .config import _strcat
 
@@ -14,7 +14,7 @@ def _apply_selection(table, selection, funcs=None):
     if selection is None:
         return table
     if funcs:
-        new_vars = {k: funcs[k] for k in _get_variable_names(selection) if k not in table.fields and k in funcs}
+        new_vars = {k: funcs[k] for k in _get_data_var_names(selection) if k not in table.fields and k in funcs}
         _build_new_variables(table, new_vars)
     selected = ak.values_astype(_eval_expr(selection, table), "bool")
     return table[selected]
