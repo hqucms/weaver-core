@@ -59,8 +59,15 @@ def _get_content_and_offsets(a):
     """Extract flat content and offsets from a 1-level jagged awkward array. Returns None if not applicable."""
     try:
         layout = a.layout
-        # unwrap wrappers that don't have offsets (e.g. VirtualArray, IndexedArray)
+        # IndexedArray reorders/filters its content (e.g., after `table[selected]`),
+        # so naively unwrapping it would yield the underlying array's offsets and silently
+        # drop the index. Materialize via ak.to_packed to get a true ListOffsetArray.
+        if isinstance(layout, (ak.contents.IndexedArray, ak.contents.IndexedOptionArray)):
+            layout = ak.to_packed(a).layout
+        # unwrap remaining wrappers that don't have offsets (e.g. VirtualArray)
         while not hasattr(layout, "offsets"):
+            if isinstance(layout, (ak.contents.IndexedArray, ak.contents.IndexedOptionArray)):
+                return None
             if hasattr(layout, "content"):
                 layout = layout.content
             else:
