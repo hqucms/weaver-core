@@ -112,10 +112,26 @@ def _repeat_pad(a, maxlen, dtype="float32"):
     assert isinstance(a, ak.Array)
     if a.ndim == 1:
         a = ak.unflatten(a, 1)
-    content, offsets = _get_content_and_offsets(a)
-    nrows = len(offsets) - 1
+    result = _get_content_and_offsets(a)
+    if result is not None:
+        content, offsets = result
+        nrows = len(offsets) - 1
+        out = np.empty((nrows, maxlen), dtype=dtype)
+        _repeat_pad_jagged_kernel(content.astype(dtype), offsets, out)
+        return out
+    # fallback for complex layouts
+    counts = ak.num(a)
+    a_padded = ak.pad_none(a, maxlen, clip=True)
+    nrows = len(a_padded)
     out = np.empty((nrows, maxlen), dtype=dtype)
-    _repeat_pad_jagged_kernel(content.astype(dtype), offsets, out)
+    for i in range(nrows):
+        n = int(counts[i])
+        if n == 0:
+            out[i] = 0
+        else:
+            row = np.asarray(a[i][:n], dtype=dtype)
+            for j in range(maxlen):
+                out[i, j] = row[j % n]
     return out
 
 
