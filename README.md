@@ -183,7 +183,8 @@ Note:
 When you are satisfied with the trained model, you could export it from PyTorch to ONNX format for inference (e.g., using [ONNXRuntime](https://github.com/microsoft/onnxruntime)):
 
 ```bash
-weaver -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py -m /path/to/models/prefix_best_epoch_state.pt --export-onnx model.onnx
+weaver -c data/ak15_points_pf_sv.yaml -n networks/particle_net_pf_sv.py \
+ -m /path/to/models/prefix_best_epoch_state.pt --export-onnx model.onnx
 ```
 
 ## More about data loading and processing
