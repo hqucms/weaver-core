@@ -116,14 +116,14 @@ def _repeat_pad(a, maxlen, dtype="float32"):
     if result is not None:
         content, offsets = result
         nrows = len(offsets) - 1
-        out = np.empty((nrows, maxlen), dtype=dtype)
+        out = np.zeros((nrows, maxlen), dtype=dtype)
         _repeat_pad_jagged_kernel(content.astype(dtype), offsets, out)
         return out
     # fallback for complex layouts
     counts = ak.num(a)
     a_padded = ak.pad_none(a, maxlen, clip=True)
     nrows = len(a_padded)
-    out = np.empty((nrows, maxlen), dtype=dtype)
+    out = np.zeros((nrows, maxlen), dtype=dtype)
     for i in range(nrows):
         n = int(counts[i])
         if n == 0:
@@ -275,12 +275,12 @@ def _fused_pad_and_stack(table, var_names, preprocess_params, dtype="float32"):
     pad_mode = preprocess_params[var_names[0]]["pad_mode"]
 
     content_arrays = []
-    param_centers = np.empty(n_vars, dtype=np.float32)
-    param_scales = np.empty(n_vars, dtype=np.float32)
-    param_los = np.empty(n_vars, dtype=np.float32)
-    param_his = np.empty(n_vars, dtype=np.float32)
-    param_do_centers = np.empty(n_vars, dtype=np.bool_)
-    param_pad_values = np.empty(n_vars, dtype=np.float32)
+    param_centers = np.zeros(n_vars, dtype=np.float32)
+    param_scales = np.zeros(n_vars, dtype=np.float32)
+    param_los = np.zeros(n_vars, dtype=np.float32)
+    param_his = np.zeros(n_vars, dtype=np.float32)
+    param_do_centers = np.zeros(n_vars, dtype=np.bool_)
+    param_pad_values = np.zeros(n_vars, dtype=np.float32)
 
     for vi, vn in enumerate(var_names):
         result = _get_content_and_offsets(table[vn])
@@ -302,14 +302,14 @@ def _fused_pad_and_stack(table, var_names, preprocess_params, dtype="float32"):
         content_arrays.append(content_f32)
 
     content_len = int(shared_offsets[-1])
-    all_content = np.empty(n_vars * content_len, dtype=np.float32)
-    content_starts = np.empty(n_vars, dtype=np.int64)
+    all_content = np.zeros(n_vars * content_len, dtype=np.float32)
+    content_starts = np.zeros(n_vars, dtype=np.int64)
     for vi in range(n_vars):
         start = vi * content_len
         content_starts[vi] = start
         all_content[start:start + content_len] = content_arrays[vi]
 
-    out = np.zeros((nrows, n_vars, padlen), dtype=dtype) if pad_mode != "wrap" else np.empty((nrows, n_vars, padlen), dtype=dtype)
+    out = np.zeros((nrows, n_vars, padlen), dtype=dtype)
 
     if pad_mode == "wrap":
         _batched_fused_repeat_pad(all_content, content_starts, shared_offsets,
