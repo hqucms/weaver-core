@@ -195,6 +195,25 @@ def _load_next(data_config, filelist, load_ranges, options):
     return table, indices
 
 
+def _split_load_range(load_range, fetch_step):
+    """Split a fractional load range without producing roundoff-sized chunks."""
+    start_pos, end_pos = load_range
+    if fetch_step <= 0:
+        return [(start_pos, end_pos)]
+
+    tolerance = 8 * math.ulp(max(abs(start_pos), abs(end_pos), abs(fetch_step), 1.0))
+    ranges = []
+    while end_pos - start_pos > tolerance:
+        remaining = end_pos - start_pos
+        if remaining <= fetch_step + tolerance:
+            next_pos = end_pos
+        else:
+            next_pos = start_pos + fetch_step
+        ranges.append((start_pos, next_pos))
+        start_pos = next_pos
+    return ranges
+
+
 class _SimpleIter(object):
     r"""_SimpleIter
 
@@ -278,11 +297,8 @@ class _SimpleIter(object):
                 # [[0, 0, 0, 0, 0], [1, 2/3, 0, 0, 0], [1, 1, 1, 1/3, 0], [1, 1, 1, 1, 1]]
                 return np.array([[np.clip(n * di / d - ni, 0, 1) for ni in range(n)] for di in range(d + 1)])
 
-            for i_load in range(math.ceil((self.load_range[1] - self.load_range[0]) / self._fetch_step)):
-                # current iteration: load files from start_pos to start_pos + delta
-                start_pos = self.load_range[0] + i_load * self._fetch_step
-                delta = min(self._fetch_step, self.load_range[1] - start_pos)
-
+            for start_pos, end_pos in _split_load_range(self.load_range, self._fetch_step):
+                delta = end_pos - start_pos
                 _load_filelist_and_ranges = [([], []) for _ in range(self.split_num)]
                 for _, files in self.file_dict.items():
                     n_files = len(files)
