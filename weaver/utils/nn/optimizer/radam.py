@@ -2,6 +2,17 @@ import math
 import torch
 from torch.optim.optimizer import Optimizer, required
 
+
+def _scalar_lr(lr):
+    """Return ``lr`` as a Python scalar.
+
+    The LR may be a Tensor (e.g. when pairing the optimizer with ``torch.compile``, where a Tensor lr is
+    required so that LR-scheduler updates do not trigger recompilation). The in-place update ops below take
+    the learning rate via the ``alpha=`` / ``value=`` keyword arguments, which only accept Python numbers, so
+    a Tensor lr must be read out as a scalar first. This is a no-op for a plain ``float``.
+    """
+    return lr.item() if isinstance(lr, torch.Tensor) else lr
+
 # https://github.com/LiyuanLucasLiu/RAdam/blob/688cb1ec99944d52690c1034f6dcfe830b24d3fd/radam/radam.py
 class RAdam(Optimizer):
 
@@ -33,6 +44,7 @@ class RAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            lr = _scalar_lr(group['lr'])
 
             for p in group['params']:
                 if p.grad is None:
@@ -82,14 +94,14 @@ class RAdam(Optimizer):
                 # more conservative since it's an approximated value
                 if N_sma >= 5:
                     if group['weight_decay'] != 0:
-                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * group['lr'])
+                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * lr)
                     denom = exp_avg_sq.sqrt().add_(group['eps'])
-                    p_data_fp32.addcdiv_(exp_avg, denom, value=-step_size * group['lr'])
+                    p_data_fp32.addcdiv_(exp_avg, denom, value=-step_size * lr)
                     p.data.copy_(p_data_fp32)
                 elif step_size > 0:
                     if group['weight_decay'] != 0:
-                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * group['lr'])
-                    p_data_fp32.add_(exp_avg, alpha=-step_size * group['lr'])
+                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * lr)
+                    p_data_fp32.add_(exp_avg, alpha=-step_size * lr)
                     p.data.copy_(p_data_fp32)
 
         return loss
@@ -121,6 +133,7 @@ class PlainRAdam(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            lr = _scalar_lr(group['lr'])
 
             for p in group['params']:
                 if p.grad is None:
@@ -156,15 +169,15 @@ class PlainRAdam(Optimizer):
                 # more conservative since it's an approximated value
                 if N_sma >= 5:
                     if group['weight_decay'] != 0:
-                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * group['lr'])
-                    step_size = group['lr'] * math.sqrt((1 - beta2_t) * (N_sma - 4) / (N_sma_max - 4) * (N_sma - 2) / N_sma * N_sma_max / (N_sma_max - 2)) / (1 - beta1 ** state['step'])
+                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * lr)
+                    step_size = lr * math.sqrt((1 - beta2_t) * (N_sma - 4) / (N_sma_max - 4) * (N_sma - 2) / N_sma * N_sma_max / (N_sma_max - 2)) / (1 - beta1 ** state['step'])
                     denom = exp_avg_sq.sqrt().add_(group['eps'])
                     p_data_fp32.addcdiv_(exp_avg, denom, value=-step_size)
                     p.data.copy_(p_data_fp32)
                 elif self.degenerated_to_sgd:
                     if group['weight_decay'] != 0:
-                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * group['lr'])
-                    step_size = group['lr'] / (1 - beta1 ** state['step'])
+                        p_data_fp32.add_(p_data_fp32, alpha=-group['weight_decay'] * lr)
+                    step_size = lr / (1 - beta1 ** state['step'])
                     p_data_fp32.add_(exp_avg, alpha=-step_size)
                     p.data.copy_(p_data_fp32)
 
@@ -196,6 +209,7 @@ class AdamW(Optimizer):
             loss = closure()
 
         for group in self.param_groups:
+            lr = _scalar_lr(group['lr'])
 
             for p in group['params']:
                 if p.grad is None:
@@ -229,9 +243,9 @@ class AdamW(Optimizer):
                 bias_correction2 = 1 - beta2 ** state['step']
                 
                 if group['warmup'] > state['step']:
-                    scheduled_lr = 1e-8 + state['step'] * group['lr'] / group['warmup']
+                    scheduled_lr = 1e-8 + state['step'] * lr / group['warmup']
                 else:
-                    scheduled_lr = group['lr']
+                    scheduled_lr = lr
 
                 step_size = scheduled_lr * math.sqrt(bias_correction2) / bias_correction1
                 
