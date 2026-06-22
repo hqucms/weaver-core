@@ -56,12 +56,17 @@ def _make_args(workdir, version):
     )
 
 
-def _physical_inputs(data_config, batch=1, seed=1):
-    """Realistic inputs: non-zero (wrap-like) 4-vectors to avoid atan2(0, 0) NaNs."""
+def _physical_inputs(data_config, batch=1, seq_len=None, seed=1):
+    """Realistic inputs: non-zero (wrap-like) 4-vectors to avoid atan2(0, 0) NaNs.
+
+    `batch` and `seq_len` may differ from the configured shapes to exercise the
+    exported model's dynamic axes.
+    """
     g = torch.Generator().manual_seed(seed)
-    shapes = {k: (batch,) + s[1:] for k, s in data_config.input_shapes.items()}
+    if seq_len is None:
+        seq_len = data_config.input_shapes["pf_mask"][2]
+    shapes = {k: (batch, s[1], seq_len) for k, s in data_config.input_shapes.items()}
     inp = {k: torch.randn(*shp, generator=g) for k, shp in shapes.items()}
-    seq_len = shapes["pf_mask"][2]
     mask = torch.zeros(batch, 1, seq_len)
     for i in range(batch):
         mask[i, 0, : min(seq_len, 4 + 3 * i)] = 1
@@ -93,20 +98,22 @@ class OnnxExportTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(args.export_onnx))
             self.assertTrue(os.path.isfile(os.path.join(workdir, "preprocess.json")))
 
-            # reference output from the (native-RMSNorm) PyTorch model
-            inp = _physical_inputs(data_config, batch=1)
-            with torch.no_grad():
-                logits = train_model(*[inp[k] for k in data_config.input_names])
-                ref = torch.softmax(logits, dim=1).numpy()
-
             sess = ort.InferenceSession(args.export_onnx, providers=["CPUExecutionProvider"])
-            feed = {i.name: inp[i.name].numpy().astype(np.float32) for i in sess.get_inputs()}
-            out = sess.run(None, feed)[0]
-
-        self.assertFalse(np.isnan(out).any(), msg=f"v{version}: ONNX output contains NaNs")
-        np.testing.assert_allclose(
-            out, ref, rtol=1e-3, atol=1e-4, err_msg=f"v{version}: ONNX output differs from PyTorch"
-        )
+            seq_len = data_config.input_shapes["pf_mask"][2]
+            # exercise the declared-dynamic axes: vary both batch size and
+            # sequence length away from the configured (1, seq_len) export shape
+            for batch, plen in [(1, seq_len), (4, seq_len), (1, seq_len // 2), (3, seq_len // 2)]:
+                with self.subTest(version=version, batch=batch, seq_len=plen):
+                    inp = _physical_inputs(data_config, batch=batch, seq_len=plen)
+                    with torch.no_grad():
+                        logits = train_model(*[inp[k] for k in data_config.input_names])
+                        ref = torch.softmax(logits, dim=1).numpy()
+                    feed = {i.name: inp[i.name].numpy().astype(np.float32) for i in sess.get_inputs()}
+                    out = sess.run(None, feed)[0]
+                    self.assertFalse(np.isnan(out).any(), msg=f"v{version}: ONNX output contains NaNs")
+                    np.testing.assert_allclose(
+                        out, ref, rtol=1e-3, atol=1e-4, err_msg=f"v{version}: ONNX output differs from PyTorch"
+                    )
 
     def test_export_v1(self):
         self._check_version(1)
