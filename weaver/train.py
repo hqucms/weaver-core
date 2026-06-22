@@ -433,11 +433,34 @@ def onnx(args):
     if not os.path.dirname(args.export_onnx):
         args.export_onnx = os.path.join(os.path.dirname(model_path), args.export_onnx)
     os.makedirs(os.path.dirname(args.export_onnx), exist_ok=True)
-    inputs = tuple(torch.ones(model_info["input_shapes"][k], dtype=torch.float32) for k in model_info["input_names"])
+
+    # Build the dummy inputs used to trace the model. Tracing through an axis of
+    # size 1 makes the exporter specialize/bake that dimension into the graph,
+    # even when it is declared dynamic -- so the exported model would then only
+    # accept that exact size. To keep declared-dynamic axes truly dynamic, trace
+    # with size 2 for any dynamic axis whose configured size is 1 (e.g. the batch
+    # dimension, which is typically 1 in the network config's `input_shapes`).
+    dynamic_axes = model_info.get("dynamic_axes", None)
+
+    def _trace_shape(name, shape):
+        shape = list(shape)
+        axes = (dynamic_axes or {}).get(name, None)
+        if axes is not None:
+            # `dynamic_axes` entries may be a dict {axis: name} or a list [axis, ...]
+            axis_indices = axes.keys() if isinstance(axes, dict) else axes
+            for ax in axis_indices:
+                if shape[ax] == 1:
+                    shape[ax] = 2
+        return shape
+
+    inputs = tuple(
+        torch.ones(_trace_shape(k, model_info["input_shapes"][k]), dtype=torch.float32)
+        for k in model_info["input_names"]
+    )
     export_kwargs = dict(
         input_names=model_info["input_names"],
         output_names=model_info["output_names"],
-        dynamic_axes=model_info.get("dynamic_axes", None),
+        dynamic_axes=dynamic_axes,
         opset_version=args.onnx_opset,
     )
     # Use the legacy TorchScript-based exporter: the models' ONNX code paths
