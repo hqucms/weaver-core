@@ -6,6 +6,7 @@ Paper: "Particle Transformer for Jet Tagging" - https://arxiv.org/abs/2202.03772
 import math
 
 import copy
+import numbers
 from functools import partial
 from typing import Optional, Tuple, Any, Callable
 
@@ -304,6 +305,49 @@ class SequenceTrimmer(nn.Module):
                         v = v[0]
 
         return x, v, mask, uu
+
+
+class RMSNorm(nn.Module):
+    """Root-mean-square layer normalization, exportable to ONNX.
+
+    This is an ONNX-export-only stand-in for ``torch.nn.RMSNorm``. The native
+    ``nn.RMSNorm`` lowers to ``aten::rms_norm``, for which the TorchScript-based
+    ONNX exporter has no symbolic (it fails for every opset), so models using it
+    (ParticleTransformer ``version >= 3``) cannot be exported. This manual
+    implementation decomposes into primitive ops that export cleanly.
+
+    It mirrors ``nn.RMSNorm`` numerically (same ``eps`` default of the input
+    dtype's epsilon) and is state-dict compatible (single ``weight`` parameter),
+    so a model trained with ``nn.RMSNorm`` can be loaded into one built with this
+    class for export. ``nn.RMSNorm`` is kept for training (fused kernel), see
+    ``ParticleTransformer``/``Block`` which select the implementation based on
+    ``for_inference``.
+    """
+
+    def __init__(self, normalized_shape, eps=None, elementwise_affine=True, device=None, dtype=None):
+        super().__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (int(normalized_shape),)
+        self.normalized_shape = tuple(normalized_shape)
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        # dims over which to compute the RMS (the trailing `normalized_shape` dims)
+        self._dims = tuple(range(-len(self.normalized_shape), 0))
+        if self.elementwise_affine:
+            self.weight = nn.Parameter(torch.ones(self.normalized_shape, device=device, dtype=dtype))
+        else:
+            self.register_parameter("weight", None)
+
+    def forward(self, x):
+        eps = self.eps if self.eps is not None else torch.finfo(x.dtype).eps
+        variance = x.pow(2).mean(dim=self._dims, keepdim=True)
+        x_normed = x * torch.rsqrt(variance + eps)
+        if self.weight is not None:
+            x_normed = x_normed * self.weight
+        return x_normed
+
+    def extra_repr(self):
+        return f"{self.normalized_shape}, eps={self.eps}, elementwise_affine={self.elementwise_affine}"
 
 
 class SwiGLUFFN(nn.Module):
@@ -778,6 +822,7 @@ class Block(nn.Module):
         scale_fc=True,
         scale_heads=True,
         scale_resids=True,
+        for_inference=False,
     ):
         super().__init__()
 
@@ -786,7 +831,9 @@ class Block(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.ffn_dim = embed_dim * ffn_ratio
 
-        norm_layer = nn.RMSNorm if use_rmsnorm else nn.LayerNorm
+        # use the ONNX-exportable `RMSNorm` only for inference/export; keep the
+        # native (fused) `nn.RMSNorm` for training performance
+        norm_layer = (RMSNorm if for_inference else nn.RMSNorm) if use_rmsnorm else nn.LayerNorm
         self.pre_attn_norm = norm_layer(embed_dim)
         self.attn = Attention(
             embed_dim,
@@ -947,6 +994,7 @@ class ParticleTransformer(nn.Module):
             scale_attn=True,
             scale_heads=True,
             scale_resids=True,
+            for_inference=for_inference,
         )
         if version > 1:
             default_cfg.update(
@@ -978,7 +1026,9 @@ class ParticleTransformer(nn.Module):
                 )
                 include_global_token = True
                 num_cls_layers = 0
-        norm_layer = nn.RMSNorm if default_cfg["use_rmsnorm"] else nn.LayerNorm
+        # use the ONNX-exportable `RMSNorm` only for inference/export; keep the
+        # native (fused) `nn.RMSNorm` for training performance
+        norm_layer = (RMSNorm if for_inference else nn.RMSNorm) if default_cfg["use_rmsnorm"] else nn.LayerNorm
 
         cfg_block = copy.deepcopy(default_cfg)
         if block_params is not None:

@@ -434,15 +434,23 @@ def onnx(args):
         args.export_onnx = os.path.join(os.path.dirname(model_path), args.export_onnx)
     os.makedirs(os.path.dirname(args.export_onnx), exist_ok=True)
     inputs = tuple(torch.ones(model_info["input_shapes"][k], dtype=torch.float32) for k in model_info["input_names"])
-    torch.onnx.export(
-        model,
-        inputs,
-        args.export_onnx,
+    export_kwargs = dict(
         input_names=model_info["input_names"],
         output_names=model_info["output_names"],
         dynamic_axes=model_info.get("dynamic_axes", None),
         opset_version=args.onnx_opset,
     )
+    # Use the legacy TorchScript-based exporter: the models' ONNX code paths
+    # (e.g. `for_onnx` pairwise embedding, manual attention masks) are written
+    # for tracing, and the newer TorchDynamo exporter (the default since recent
+    # PyTorch versions) cannot handle their data-dependent shapes and adds an
+    # `onnxscript` dependency. The `dynamo` kwarg only exists on newer PyTorch,
+    # so set it conditionally for backward compatibility.
+    import inspect
+
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+    torch.onnx.export(model, inputs, args.export_onnx, **export_kwargs)
     _logger.info("ONNX model saved to %s", args.export_onnx)
 
     preprocessing_json = os.path.join(os.path.dirname(args.export_onnx), "preprocess.json")
