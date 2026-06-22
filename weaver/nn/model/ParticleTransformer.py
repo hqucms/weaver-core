@@ -252,6 +252,7 @@ class SequenceTrimmer(nn.Module):
         self.num_extra_tokens = num_extra_tokens
         self.register_buffer("_counter", torch.LongTensor([0]), persistent=False)
 
+    @torch._dynamo.disable
     def forward(self, x, v=None, mask=None, uu=None):
         # x: (N, C, P)
         # v: (N, 4, P) [px,py,pz,energy]
@@ -432,7 +433,7 @@ class PairEmbed(nn.Module):
         use_bias=True,
         eps=1e-8,
         for_onnx=False,
-        sparse_eval=None,
+        sparse_eval=(True, True),
     ):
         super().__init__()
 
@@ -440,7 +441,7 @@ class PairEmbed(nn.Module):
         self.pairwise_input_dim = pairwise_input_dim
         self.remove_self_pair = remove_self_pair
         self.for_onnx = for_onnx
-        self.sparse_eval = (not for_onnx) if sparse_eval is None else sparse_eval
+        self.sparse_eval = (False, False) if for_onnx else sparse_eval  # flags are for (train, inference)
         self.tril_indices_fn = tril_indices if self.for_onnx else torch.tril_indices
         self.out_dim = dims[-1]
 
@@ -578,7 +579,8 @@ class PairEmbed(nn.Module):
         return y
 
     def forward(self, x, uu=None, mask=None):
-        if self.sparse_eval and mask is not None:
+        sparse_eval = self.sparse_eval[0 if self.training else 1]
+        if sparse_eval and mask is not None:
             return self._forward_sparse(x, uu=uu, mask=mask)
         else:
             return self._forward_dense(x, uu=uu, mask=mask)
@@ -945,6 +947,7 @@ class ParticleTransformer(nn.Module):
         use_conv_embed=False,
         embed_dims=(128, 512, 128),
         pair_embed_dims=(64, 64, 64),
+        pair_embed_sparse_eval=None,
         num_heads=8,
         num_layers=8,
         block_params=None,
@@ -1074,6 +1077,8 @@ class ParticleTransformer(nn.Module):
                 use_pre_activation_pair=use_pre_activation_pair,
                 use_bias=default_cfg["use_bias"],
                 for_onnx=for_inference,
+                sparse_eval=((False, True) if compile_model else (True, True))
+                if pair_embed_sparse_eval is None else pair_embed_sparse_eval,
             )
             if pair_embed_dims is not None and pair_input_dim + pair_extra_dim > 0
             else None
