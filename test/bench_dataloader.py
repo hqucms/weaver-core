@@ -12,6 +12,7 @@ import torch  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 
 from weaver.utils.dataset import SimpleIterDataset
+from weaver.train import to_filelist
 
 
 def build_loader(
@@ -24,13 +25,14 @@ def build_loader(
     batch_size,
     num_workers,
     prefetch_factor,
+    data_split_num,
 ):
     ds = SimpleIterDataset(
         file_dict,
         data_config,
         batch_size=batch_size,
         for_training=for_training,
-        load_range_and_fraction=((0, 1), 1.0, 1),
+        load_range_and_fraction=((0, 1), 1.0, data_split_num),
         fetch_by_files=fetch_by_files,
         fetch_step=fetch_step,
         name="train" if for_training else "test",
@@ -68,7 +70,12 @@ def parse_list(s, typ):
 def main():
     parser = argparse.ArgumentParser(description="Dataloader benchmark")
     parser.add_argument("--data-config", type=str, default="test/data/JetClass_full.yaml")
-    parser.add_argument("--data-dir", type=str, default="/data/hqu/datasets/JetClass/Pythia/val_5M")
+    parser.add_argument("-i", "--data-train", nargs="*", default=[],
+                        help="training files; supported syntax:"
+                             " (a) plain list, `--data-train /path/to/a/* /path/to/b/*`;"
+                             " (b) (named) groups [Recommended], `--data-train a:/path/to/a/* b:/path/to/b/*`,"
+                             " the file splitting (for each dataloader worker) will be performed per group,"
+                             " and then mixed together, to ensure a uniform mixing from all groups for each worker.")
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--max-batches", type=int, default=200,
@@ -81,12 +88,17 @@ def main():
                         help="Comma-separated fetch steps for train mode (default: 0.05)")
     parser.add_argument("--fetch-by-files", action="store_true", default=None,
                         help="Use fetch_by_files=True in train mode (default: False)")
+    parser.add_argument("--data-split-num", type=int, default=1,
+                        help="for each dataloader worker, split its dataset further into N parts when loading a "
+                             "certain fraction of each file. Setting N > 1 can reduce the workers' memory usage.")
     args = parser.parse_args()
 
-    files = sorted(glob.glob(f"{args.data_dir}/*.root")) + sorted(glob.glob(f"{args.data_dir}/*.parquet"))
+    # `to_filelist` (reused from weaver.train) expects these attributes
+    args.local_rank = None
+    args.copy_inputs = False
+    file_dict, files = to_filelist(args, "train")
     if not files:
-        raise RuntimeError(f"No .root or .parquet files found in {args.data_dir}")
-    file_dict = {"_": files}
+        raise RuntimeError("No files found; check --data-train")
     max_batches = args.max_batches or None
 
     batch_sizes = parse_list(args.batch_size, int)
@@ -139,6 +151,7 @@ def main():
             args.data_config,
             num_workers=args.num_workers,
             prefetch_factor=args.prefetch_factor,
+            data_split_num=args.data_split_num,
             **s,
         )
         n_batches, n_samples, batch_times = run_one(loader, max_batches)
