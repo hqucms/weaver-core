@@ -156,6 +156,8 @@ parser.add_argument('--predict-gpus', type=str, default=None,
                     help='device for the testing; to use CPU, set to empty string (""); to use multiple gpu, set it as a comma separated list, e.g., `1,2,3,4`; if not set, use the same as `--gpus`')
 parser.add_argument('--num-workers', type=int, default=1,
                     help='number of threads to load the dataset; memory consumption and disk access load increases (~linearly) with this numbers')
+parser.add_argument('--num-workers-val', type=int, default=None,
+                    help='number of threads to load the dataset for validation; memory consumption and disk access load increases (~linearly) with this numbers')
 parser.add_argument('--prefetch-factor', type=int, default=None,
                     help='number of batches loaded in advance by each DataLoader worker; increase for I/O-bound workloads')
 parser.add_argument('--predict', action=argparse.BooleanOptionalAction, default=False,
@@ -326,8 +328,10 @@ def train_load(args):
         in_memory=args.in_memory_val,
         name="val" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
-    num_workers_train = min(args.num_workers, max(1, int(len(train_files) * args.file_fraction)))
-    num_workers_val = min(args.num_workers, max(1, int(len(val_files) * args.file_fraction)))
+    num_workers_train = min(args.num_workers, max(
+        1, int(len(train_files) // len(train_file_dict) * args.file_fraction)))
+    num_workers_val = min(args.num_workers_val if args.num_workers_val is not None else args.num_workers, max(
+        1, int(len(val_files) // len(val_file_dict) * args.file_fraction)))
     train_loader = DataLoader(
         train_data,
         batch_size=args.batch_size,
