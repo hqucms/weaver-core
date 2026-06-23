@@ -27,6 +27,7 @@ def get_model(data_config, **kwargs):
     cfg = dict(
         input_dim=len(data_config.input_dicts["pf_features"]),
         num_classes=len(data_config.label_value),
+        version=3,
     )
     cfg.update(**kwargs)
     model = ParticleTransformerWrapper(**cfg)
