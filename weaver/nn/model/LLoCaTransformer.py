@@ -23,8 +23,12 @@ Differences with respect to the upstream implementation:
    weaver; the equivectors edge convolution is a masked dense reimplementation of the
    upstream torch_geometric ``MessagePassing`` module (mathematically equivalent on the
    valid tokens), so there is no torch_geometric dependency.
- - The attention backend is fixed to the native
-   ``torch.nn.functional.scaled_dot_product_attention`` (boolean key-padding mask).
+ - The default attention backend is the native
+   ``torch.nn.functional.scaled_dot_product_attention`` (boolean key-padding mask);
+   ``attention_backend="varlen"`` or ``"flash"`` instead drop the padding and run
+   block-diagonal flash attention over the packed tokens (see
+   :class:`weaver.nn.model.LGATrSlim` for the backend implementations). The frames-net
+   stays dense in all cases.
  - The edge-attribute standardization of the frames-net is initialized lazily from the
    first batch (as in the upstream PELICAN-lite wrapper) instead of via an external
    ``init_standardization`` hook; the resulting statistics are stored in buffers and
@@ -43,7 +47,16 @@ from functools import partial
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
-from weaver.nn.model.LGATrSlim import _movedim, get_spurion, minimum_autocast_precision
+from weaver.nn.model.LGATrSlim import (
+    ATTENTION_BACKENDS,
+    _movedim,
+    dense_to_sparse,
+    get_sparse_attention_kwargs,
+    get_spurion,
+    insert_global_tokens,
+    minimum_autocast_precision,
+    scaled_dot_product_attention,
+)
 from weaver.nn.model.ParticleTransformer import SequenceTrimmer
 from weaver.utils.logger import _logger
 
@@ -903,8 +916,10 @@ class LLoCaAttention(nn.Module):
         dtype = torch.promote_types(p_ref.dtype, torch.float32)
         L = frames.matrices.to(dtype)
         p_ref = p_ref.to(dtype)
-        # dense layout: one reference momentum per event, broadcast over the token axis
-        p_ref = p_ref.unsqueeze(-2).expand(*L.shape[:-2], 4)
+        if p_ref.shape[:-1] != L.shape[:-2]:
+            # dense layout: one reference momentum per event, broadcast over the token
+            # axis; the packed layout passes token-resolved reference momenta instead
+            p_ref = p_ref.unsqueeze(-2).expand(*L.shape[:-2], 4)
         m_ref = torch.sqrt(self.variance_eps**2 + lorentz_squarednorm(p_ref).clamp(min=0))
         # only row 0 of (L @ p_ref) is needed: gamma = (Lambda p_ref)^0 / m_ref
         gamma = (L[..., 0, :] * p_ref).sum(dim=-1) / m_ref
@@ -997,18 +1012,18 @@ class LLoCaAttention(nn.Module):
         """
         if self.frames.is_global:
             # fallback to standard attention for global frames
-            return F.scaled_dot_product_attention(q_local, k_local, v_local, **attn_kwargs)
+            return scaled_dot_product_attention(q_local, k_local, v_local, **attn_kwargs)
 
         q_global, k_global, v_global = self._local_to_global(q_local, k_local, v_local)
 
-        # (B, H, N, C) format required for scaled_dot_product_attention
+        # (B, H, N, C) format required by the attention backends
         shape_q, shape_k = q_global.shape, k_global.shape
         q_global = q_global.reshape(-1, *shape_q[-3:])
         k_global = k_global.reshape(-1, *shape_k[-3:])
         v_global = v_global.reshape(-1, *shape_k[-3:])
 
-        # attention (in global frame); fixed to the native torch backend
-        out_global = F.scaled_dot_product_attention(q_global, k_global, v_global, **attn_kwargs)
+        # attention (in global frame); backend selected by the attention kwargs
+        out_global = scaled_dot_product_attention(q_global, k_global, v_global, **attn_kwargs)
 
         out_global = out_global.view(*shape_q)  # (..., H, N, C)
 
@@ -1731,6 +1746,15 @@ class LLoCaTransformerTagger(nn.Module):
         features, as in the tagging-guide wrapper.
     mean_aggregation
         If True, aggregate with a masked mean over tokens instead of a class token.
+    attention_backend
+        ``"native"`` (default) runs the transformer on the dense zero-padded layout
+        through ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"``
+        (torch's native flash-attention varlen kernel, torch >= 2.10) and ``"flash"``
+        (the flash-attn package, FlashAttention-3 interface preferred) drop the padding
+        and run block-diagonal attention over the packed tokens instead (the frames-net
+        stays dense). Both varlen backends require CUDA; on CPU the packed layout falls
+        back to a materialized block-diagonal SDPA mask. ONNX export requires
+        ``"native"``.
     momentum_float64
         Whether to run the frames-net and local-frame feature computation in float64
         (the tagging-guide default).
@@ -1786,6 +1810,8 @@ class LLoCaTransformerTagger(nn.Module):
         auxiliary_scalars: str | None = "all",
         mean_aggregation: bool = False,
         momentum_float64: bool = True,
+        # attention
+        attention_backend: str = "native",
         # misc
         compile_model: bool = False,
         compile_kwargs: dict | None = None,
@@ -1798,9 +1824,15 @@ class LLoCaTransformerTagger(nn.Module):
 
         _logger.info("LLoCaTransformerTagger init-ed: %s", locals())
 
+        if attention_backend not in ATTENTION_BACKENDS:
+            raise ValueError(
+                f"Unsupported attention_backend: {attention_backend}. "
+                f"Supported backends: {ATTENTION_BACKENDS}."
+            )
         self.mean_aggregation = mean_aggregation
         self.momentum_float64 = momentum_float64
         self.auxiliary_scalars = auxiliary_scalars
+        self.attention_backend = attention_backend
         self.use_amp = use_amp
         self.for_inference = for_inference
 
@@ -1960,6 +1992,9 @@ class LLoCaTransformerTagger(nn.Module):
         frames.to(dtype=scalars.dtype)
         jet = jet.squeeze(1).to(scalars.dtype)  # (N, 4) reference momentum
 
+        if self.attention_backend != "native":
+            return self._forward_packed(features, frames, mask, jet)
+
         # handle global token: identity frame, one-hot flag in an extra scalar channel
         if not self.mean_aggregation:
             new_features = features.new_zeros(
@@ -2001,6 +2036,87 @@ class LLoCaTransformerTagger(nn.Module):
             output = outputs.sum(dim=-2) / mask.sum(dim=-1, keepdim=True)
         else:
             output = outputs[:, 0]
+
+        if self.for_inference:
+            output = torch.softmax(output, dim=1)
+        return output
+
+    def _forward_packed(self, features, frames, mask, jet):
+        """Packed (sparse) forward path: drop the padding and run block-diagonal varlen
+        attention over the concatenated tokens (port of the tagging-guide
+        ``TransformerWrapper._forward_sparse``); the frames-net stays dense.
+
+        Parameters
+        ----------
+        features : torch.Tensor
+            Local-frame features of shape (B, P, C), zeroed on padding.
+        frames : Frames
+            Per-particle local frames of shape (B, P, 4, 4).
+        mask : torch.BoolTensor
+            Valid-particle mask of shape (B, P).
+        jet : torch.Tensor
+            Per-event reference (jet) momenta of shape (B, 4), energy-first.
+        """
+        # any upper bound on the per-event sequence lengths works; using the dense width
+        # avoids a device-to-host sync
+        maxlen = mask.size(1)
+        [features, matrices, det, inv], batch, ptr = dense_to_sparse(
+            [features, frames.matrices, frames.det, frames.inv], mask
+        )
+
+        if not self.mean_aggregation:
+            # prepend a global token per event: identity frame, one-hot flag in an extra
+            # scalar channel
+            maxlen = maxlen + 1
+            global_idxs, nonglobal_idxs, ptr, batch, num_total = insert_global_tokens(
+                ptr, batch, features.shape[0]
+            )
+            new_features = features.new_zeros(num_total, features.shape[-1] + 1)
+            new_features[nonglobal_idxs, :-1] = features
+            new_features[:, -1].index_fill_(0, global_idxs, 1.0)
+            features = new_features
+
+            eye = torch.eye(4, device=matrices.device, dtype=matrices.dtype)
+            matrices_new = eye.unsqueeze(0).expand(num_total, -1, -1).clone()
+            matrices_new[nonglobal_idxs] = matrices
+            inv_new = eye.unsqueeze(0).expand(num_total, -1, -1).clone()
+            inv_new[nonglobal_idxs] = inv
+            det_new = det.new_ones(num_total)
+            det_new[nonglobal_idxs] = det
+            matrices, det, inv = matrices_new, det_new, inv_new
+
+        frames = Frames(
+            matrices=matrices.unsqueeze(0),
+            is_global=frames.is_global,
+            det=det.unsqueeze(0),
+            inv=inv.unsqueeze(0),
+            is_identity=frames.is_identity,
+        )
+        # token-resolved reference momenta (global tokens use their event's jet)
+        p_ref = jet.index_select(0, batch).unsqueeze(0)  # (1, tokens, 4)
+
+        attn_kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen, self.attention_backend)
+
+        features = features.unsqueeze(0)  # (1, tokens, C)
+        with torch.autocast(features.device.type, enabled=self.use_amp):
+            outputs = self.net(
+                inputs=features,
+                frames=frames,
+                p_ref=p_ref,
+                **attn_kwargs,
+            )
+        outputs = outputs.squeeze(0)  # (tokens, num_classes)
+
+        # aggregation
+        if self.mean_aggregation:
+            batch_size = ptr.numel() - 1
+            counts = (ptr[1:] - ptr[:-1]).unsqueeze(-1).to(outputs.dtype)
+            output = (
+                outputs.new_zeros(batch_size, outputs.shape[-1]).index_add_(0, batch, outputs)
+                / counts
+            )
+        else:
+            output = outputs.index_select(0, global_idxs)
 
         if self.for_inference:
             output = torch.softmax(output, dim=1)

@@ -23,7 +23,18 @@ except ImportError:
 from weaver import train as weaver_train
 from weaver.utils.dataset import DataConfig
 from weaver.utils.import_tools import import_module
-from weaver.nn.model.LGATrSlim import LGATrSlimTagger
+from weaver.nn.model.LGATrSlim import (
+    LGATrSlimTagger,
+    _run_varlen_kernel,
+    get_sparse_attention_kwargs,
+)
+
+try:
+    import flash_attn  # noqa: F401
+
+    _HAS_FLASH_ATTN = True
+except ImportError:
+    _HAS_FLASH_ATTN = False
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DATA_CONFIG = os.path.join(_HERE, "data", "JetClass_full.yaml")
@@ -114,6 +125,147 @@ class LGATrSlimTaggerTest(unittest.TestCase):
         grads = [p.grad for p in model.parameters() if p.requires_grad]
         self.assertTrue(all(g is not None for g in grads))
         self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
+
+
+class LGATrSlimPackedAttentionTest(unittest.TestCase):
+    """Packed (sparse) attention path tests.
+
+    On CPU the varlen backends fall back to a materialized block-diagonal SDPA mask, so
+    these tests exercise the full packed layout (padding removal, per-event global
+    tokens, block-diagonal attention, segment-wise readout) without a GPU.
+    """
+
+    def _make_pair(self, backend, **kwargs):
+        cfg = dict(input_dim=17, num_classes=10, trim=False, **_SMALL_NET)
+        cfg.update(kwargs)
+        torch.manual_seed(0)
+        dense = LGATrSlimTagger(**cfg)
+        dense.eval()
+        packed = LGATrSlimTagger(**cfg, attention_backend=backend)
+        packed.load_state_dict(dense.state_dict())
+        packed.eval()
+        return dense, packed
+
+    def test_invalid_backend(self):
+        with self.assertRaises(ValueError):
+            LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="xformers")
+
+    def test_packed_matches_dense(self):
+        for mean_aggregation in [False, True]:
+            with self.subTest(mean_aggregation=mean_aggregation):
+                dense, packed = self._make_pair("varlen", mean_aggregation=mean_aggregation)
+                x, v, mask = _make_inputs()
+                with torch.no_grad():
+                    out_dense = dense(x, v, mask)
+                    out_packed = packed(x, v, mask)
+                torch.testing.assert_close(out_dense, out_packed, rtol=1e-4, atol=1e-5)
+
+    def test_packed_backward(self):
+        _, packed = self._make_pair("varlen")
+        packed.train()
+        x, v, mask = _make_inputs()
+        out = packed(x, v, mask)
+        loss = torch.nn.functional.cross_entropy(out, torch.randint(0, 10, (x.size(0),)))
+        loss.backward()
+        grads = [p.grad for p in packed.parameters() if p.requires_grad]
+        self.assertTrue(all(g is not None for g in grads))
+        self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
+
+    def test_varlen_kernel_wrapper(self):
+        """Check the kernel wrapper (packing reshape, head-dim padding, dtype casting)
+        against a reference block-diagonal SDPA, using a stub varlen kernel."""
+
+        channels = 6  # head dim deliberately not a multiple of 8
+
+        def stub_kernel(q, k, v, cu_seq_q=None, cu_seq_k=None, max_q=None, max_k=None, scale=None):
+            # emulate a varlen kernel on CPU: per-segment SDPA on (tokens, heads, C)
+            self.assertEqual(cu_seq_q.dtype, torch.int32)
+            self.assertLessEqual(int((cu_seq_q[1:] - cu_seq_q[:-1]).max()), max_q)
+            self.assertEqual(q.shape[-1] % 8, 0)  # head dim padded to a multiple of 8
+            self.assertIn(q.dtype, (torch.float16, torch.bfloat16))
+            # the softmax scale must correspond to the un-padded head dim
+            self.assertAlmostEqual(scale, channels**-0.5)
+            out = torch.empty_like(q)
+            for a, b in zip(cu_seq_q[:-1].tolist(), cu_seq_q[1:].tolist()):
+                seg = torch.nn.functional.scaled_dot_product_attention(
+                    q[a:b].transpose(0, 1),
+                    k[a:b].transpose(0, 1),
+                    v[a:b].transpose(0, 1),
+                    scale=scale,
+                )
+                out[a:b] = seg.transpose(0, 1)
+            return out
+
+        torch.manual_seed(0)
+        heads = 2
+        seqlens = [4, 7, 1]
+        total = sum(seqlens)
+        cu = torch.tensor([0] + list(np.cumsum(seqlens)), dtype=torch.int32)
+        q, k, v = (torch.randn(1, heads, total, channels) for _ in range(3))
+
+        out = _run_varlen_kernel(
+            stub_kernel, q, k, v,
+            dict(cu_seq_q=cu, cu_seq_k=cu, max_q=max(seqlens), max_k=max(seqlens)),
+        )
+        self.assertEqual(out.shape, q.shape)
+        self.assertEqual(out.dtype, q.dtype)
+
+        batch = torch.arange(len(seqlens)).repeat_interleave(torch.tensor(seqlens))
+        attn_mask = batch.unsqueeze(0) == batch.unsqueeze(1)
+        ref = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        # the stub runs in bf16/fp16 inside the wrapper, hence the loose tolerance
+        torch.testing.assert_close(out, ref, rtol=0.05, atol=0.05)
+
+    def test_sparse_attention_kwargs(self):
+        # CPU: materialized block-diagonal mask fallback
+        ptr = torch.tensor([0, 3, 5])
+        batch = torch.tensor([0, 0, 0, 1, 1])
+        kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen=3, attention_backend="varlen")
+        expected = batch.unsqueeze(0) == batch.unsqueeze(1)
+        self.assertEqual(list(kwargs), ["attn_mask"])
+        self.assertTrue(torch.equal(kwargs["attn_mask"], expected))
+
+        # non-CPU: cu_seqlens kwargs of the requested kernel (meta device stands in for CUDA)
+        ptr_meta = ptr.to("meta")
+        for backend, keys in [
+            ("varlen", ["cu_seq_q", "cu_seq_k", "max_q", "max_k"]),
+            ("flash", ["cu_seqlens_q", "cu_seqlens_k", "max_seqlen_q", "max_seqlen_k"]),
+        ]:
+            with self.subTest(backend=backend):
+                kwargs = get_sparse_attention_kwargs(
+                    ptr_meta, batch.to("meta"), maxlen=3, attention_backend=backend
+                )
+                self.assertEqual(sorted(kwargs), sorted(keys))
+                self.assertEqual(kwargs[keys[0]].dtype, torch.int32)
+                self.assertEqual(kwargs[keys[2]], 3)
+        with self.assertRaises(ValueError):
+            get_sparse_attention_kwargs(
+                ptr_meta, batch.to("meta"), maxlen=3, attention_backend="native"
+            )
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for the varlen kernel")
+    def test_varlen_backend_cuda(self):
+        dense, packed = self._make_pair("varlen")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        # the varlen kernel runs in half precision
+        torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and _HAS_FLASH_ATTN,
+        "CUDA and flash-attn are required for the flash backend",
+    )
+    def test_flash_backend_cuda(self):
+        dense, packed = self._make_pair("flash")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
 
 
 @unittest.skipUnless(_HAS_ORT, "onnxruntime is required for ONNX export tests")

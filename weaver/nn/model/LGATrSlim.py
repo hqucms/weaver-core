@@ -13,8 +13,12 @@ Ported from the `lgatr` package v2.0.0 (https://github.com/heidelberg-hepml/lgat
 ``lgatr/nets/slim.py`` and ``lgatr/layers/slim_layers.py``) and the tagging wrapper of
 https://github.com/heidelberg-hepml/tagging-guide (``experiments/tagging/wrappers.py``
 and ``experiments/tagging/embedding.py``). The tagging setup uses identity frames, so
-none of the LLoCa frames machinery is required. The attention backend is fixed to the
-native ``torch.nn.functional.scaled_dot_product_attention`` (dense zero-padded path).
+none of the LLoCa frames machinery is required. The default attention backend is the
+native ``torch.nn.functional.scaled_dot_product_attention`` on the dense zero-padded
+layout; ``attention_backend="varlen"`` (torch >= 2.10 native flash-attention varlen
+kernel) or ``"flash"`` (the flash-attn package) instead drop the padding and run
+block-diagonal flash attention over the packed tokens, as in the tagging-guide sparse
+path.
 """
 
 from __future__ import annotations
@@ -224,9 +228,226 @@ def _post_attention_reshape(
     return h_v, h_s
 
 
+# ------------------------------------------------------------------------------------
+# Attention backends (ported from the lgatr/lloca ``attention_backends`` packages and
+# tagging-guide ``experiments/misc.py``): the backend is selected dynamically from the
+# attention kwargs, so the same network code serves the dense zero-padded layout (SDPA
+# with an ``attn_mask``) and the packed variable-length layout (flash-attention varlen
+# kernels with ``cu_seqlens``).
+# ------------------------------------------------------------------------------------
+
+ATTENTION_BACKENDS = ("native", "varlen", "flash")
+
+# kwargs that select the varlen kernels, following the upstream argument naming of
+# torch.nn.attention.varlen.varlen_attn and flash_attn.flash_attn_varlen_func
+_VARLEN_KWARGS = ("cu_seq_q", "cu_seq_k", "max_q", "max_k")
+_FLASH_KWARGS = ("cu_seqlens_q", "cu_seqlens_k", "max_seqlen_q", "max_seqlen_k")
+
+_flash_attn_varlen_func = None
+
+
+def _get_flash_attn_varlen_func():
+    """Import flash-attn's varlen kernel, preferring the FlashAttention-3 interface."""
+    global _flash_attn_varlen_func
+    if _flash_attn_varlen_func is None:
+        try:
+            # FlashAttention-3 (Hopper); falls back to the FlashAttention-2 package
+            from flash_attn_interface import flash_attn_varlen_func
+        except ImportError:
+            try:
+                from flash_attn import flash_attn_varlen_func
+            except ImportError as err:
+                raise ImportError(
+                    "attention_backend='flash' requires the flash-attn package "
+                    "(pip install flash-attn, or flash-attn-3 on Hopper GPUs)."
+                ) from err
+        _flash_attn_varlen_func = flash_attn_varlen_func
+    return _flash_attn_varlen_func
+
+
+def _run_varlen_kernel(
+    kernel, query, key, value, kernel_kwargs: dict, scale_kwarg: str = "scale"
+) -> torch.Tensor:
+    """Run a flash-attention varlen kernel on (1, heads, tokens, channels) tensors.
+
+    The kernels expect packed (tokens, heads, channels) inputs in fp16/bf16; fp32 inputs
+    are cast to the autocast dtype and back (flash attention only supports half
+    precision), and the head dim is zero-padded to a multiple of 8 (zero padding leaves
+    the attention logits and the retained output channels unchanged; the softmax scale
+    is passed explicitly via ``scale_kwarg`` so it keeps the un-padded 1/sqrt(channels)).
+    """
+    assert query.dim() == 4 and query.shape[0] == 1, (
+        "varlen attention requires the packed (batch=1, heads, tokens, channels) layout."
+    )
+
+    in_dtype = None
+    if query.dtype not in (torch.float16, torch.bfloat16):
+        in_dtype = query.dtype
+        dtype = torch.get_autocast_dtype(query.device.type)
+        if dtype not in (torch.float16, torch.bfloat16):
+            dtype = torch.float16
+        query, key, value = query.to(dtype), key.to(dtype), value.to(dtype)
+
+    def reshape(x):
+        # (1, heads, tokens, channels) -> (tokens, heads, channels)
+        return x.squeeze(0).transpose(0, 1).contiguous()
+
+    query, key, value = reshape(query), reshape(key), reshape(value)
+    channels = query.shape[-1]
+    pad = (-channels) % 8
+    if pad:
+        query, key, value = (F.pad(t, (0, pad)) for t in (query, key, value))
+
+    out = kernel(query, key, value, **kernel_kwargs, **{scale_kwarg: channels**-0.5})
+    if isinstance(out, tuple):
+        # some flash-attn versions also return the logsumexp
+        out = out[0]
+    if pad:
+        out = out[..., :channels]
+    out = out.transpose(0, 1).unsqueeze(0).contiguous()
+
+    if in_dtype is not None:
+        out = out.to(in_dtype)
+    return out
+
+
+@torch.compiler.disable()
+def _flash_attention(
+    query, key, value, cu_seqlens_q=None, cu_seqlens_k=None, max_seqlen_q=None, max_seqlen_k=None
+):
+    """Block-diagonal attention via flash-attn's ``flash_attn_varlen_func``."""
+    kernel = _get_flash_attn_varlen_func()
+    kernel_kwargs = dict(
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_k=max_seqlen_k,
+    )
+    return _run_varlen_kernel(kernel, query, key, value, kernel_kwargs, scale_kwarg="softmax_scale")
+
+
+def _varlen_attention(query, key, value, cu_seq_q=None, cu_seq_k=None, max_q=None, max_k=None):
+    """Block-diagonal attention via torch's native ``varlen_attn`` (torch >= 2.10)."""
+    try:
+        from torch.nn.attention.varlen import varlen_attn
+    except ImportError as err:
+        raise ImportError(
+            "attention_backend='varlen' requires torch>=2.10 "
+            "(torch.nn.attention.varlen.varlen_attn)."
+        ) from err
+    kernel_kwargs = dict(cu_seq_q=cu_seq_q, cu_seq_k=cu_seq_k, max_q=max_q, max_k=max_k)
+    return _run_varlen_kernel(varlen_attn, query, key, value, kernel_kwargs, scale_kwarg="scale")
+
+
 @minimum_autocast_precision(torch.float32, output="high")
-def _call_attention(*args, **kwargs):
+def _sdpa_attention(*args, **kwargs):
     return F.scaled_dot_product_attention(*args, **kwargs)
+
+
+def _dispatch_attention(query, key, value, native_fn, **attn_kwargs):
+    if any(attn_kwargs.get(key_) is not None for key_ in _FLASH_KWARGS):
+        return _flash_attention(query, key, value, **attn_kwargs)
+    if any(attn_kwargs.get(key_) is not None for key_ in _VARLEN_KWARGS):
+        return _varlen_attention(query, key, value, **attn_kwargs)
+    return native_fn(query, key, value, **attn_kwargs)
+
+
+def _call_attention(query, key, value, **attn_kwargs):
+    """Attention with the backend selected by the given kwargs; the native (SDPA) path is
+    pinned to fp32 under autocast, as in the lgatr package."""
+    return _dispatch_attention(query, key, value, _sdpa_attention, **attn_kwargs)
+
+
+def scaled_dot_product_attention(query, key, value, **attn_kwargs):
+    """Attention with the backend selected by the given kwargs; the native path is plain
+    SDPA (no fp32 pinning), as in the lloca package."""
+    return _dispatch_attention(query, key, value, F.scaled_dot_product_attention, **attn_kwargs)
+
+
+# ------------------------------------------------------------------------------------
+# Packed (sparse) sequence utilities (ported from tagging-guide
+# ``experiments/tagging/embedding.py`` and ``experiments/misc.py`` / lloca utils)
+# ------------------------------------------------------------------------------------
+
+
+def get_batch_from_ptr(ptr: torch.Tensor, num_items: int | None = None) -> torch.Tensor:
+    """Per-token event indices from the (B+1,) cumulative-lengths pointer.
+
+    Passing ``num_items`` (the total token count) avoids a device-to-host sync.
+    """
+    counts = ptr[1:] - ptr[:-1]
+    return torch.arange(ptr.numel() - 1, device=ptr.device).repeat_interleave(
+        counts, output_size=num_items
+    )
+
+
+def dense_to_sparse(dense_tensors: list[torch.Tensor], mask: torch.Tensor):
+    """Pack dense zero-padded (B, P, ...) tensors into packed (tokens, ...) layout.
+
+    Returns the packed tensors plus the per-token event index ``batch`` (tokens,) and the
+    cumulative-lengths pointer ``ptr`` (B+1,), i.e. the ``cu_seqlens`` of the packed layout.
+    """
+    num_particles = mask.sum(dim=-1)
+    ptr = torch.zeros(len(num_particles) + 1, device=mask.device, dtype=torch.long)
+    ptr[1:] = torch.cumsum(num_particles, dim=0)
+    idxs = mask.flatten().nonzero().squeeze(-1)
+    batch = get_batch_from_ptr(ptr, num_items=idxs.shape[0])
+
+    sparse_tensors = [t.flatten(0, 1).index_select(0, idxs) for t in dense_tensors]
+    return sparse_tensors, batch, ptr
+
+
+def insert_global_tokens(ptr: torch.Tensor, batch: torch.Tensor, num_tokens: int):
+    """Index bookkeeping for prepending one global token per event in the packed layout.
+
+    Returns ``(global_idxs, nonglobal_idxs, ptr, batch, num_total)``: the positions of the
+    global tokens and of the original tokens in the extended packed layout, plus the
+    updated pointer / event indices for the ``num_total = num_tokens + B`` tokens.
+    """
+    batchsize = ptr.numel() - 1
+    num_total = num_tokens + batchsize
+    global_idxs = ptr[:-1] + torch.arange(batchsize, device=ptr.device)
+    nonglobal_idxs = torch.arange(num_tokens, device=ptr.device) + batch + 1
+    ptr = ptr + torch.arange(batchsize + 1, device=ptr.device)
+    batch = get_batch_from_ptr(ptr, num_items=num_total)
+    return global_idxs, nonglobal_idxs, ptr, batch, num_total
+
+
+def get_sparse_attention_kwargs(
+    ptr: torch.Tensor,
+    batch: torch.Tensor,
+    maxlen: int,
+    attention_backend: str,
+) -> dict:
+    """Attention kwargs for block-diagonal attention over the packed layout.
+
+    On CUDA this returns the ``cu_seqlens`` kwargs of the requested varlen kernel
+    (``maxlen`` may be any upper bound on the sequence lengths, so no device-to-host
+    sync is needed). On CPU, where the flash-attention kernels are unavailable, it falls
+    back to a materialized block-diagonal SDPA mask (as in tagging-guide).
+    """
+    if ptr.device.type == "cpu":
+        attn_mask = batch.unsqueeze(0) == batch.unsqueeze(1)
+        return {"attn_mask": attn_mask}
+    cu_seqlens = ptr.to(torch.int32)
+    if attention_backend == "flash":
+        return {
+            "cu_seqlens_q": cu_seqlens,
+            "cu_seqlens_k": cu_seqlens,
+            "max_seqlen_q": maxlen,
+            "max_seqlen_k": maxlen,
+        }
+    elif attention_backend == "varlen":
+        return {
+            "cu_seq_q": cu_seqlens,
+            "cu_seq_k": cu_seqlens,
+            "max_q": maxlen,
+            "max_k": maxlen,
+        }
+    raise ValueError(
+        f"Unsupported attention backend for the packed layout: {attention_backend}. "
+        f"Supported backends: {ATTENTION_BACKENDS}."
+    )
 
 
 def _freeze_dead_tail(
@@ -892,6 +1113,14 @@ class LGATrSlimTagger(nn.Module):
     vector_units
         The four-momenta are divided by this scale (e.g. 20.0 to convert GeV to units of 20 GeV);
         spurions are not rescaled.
+    attention_backend
+        ``"native"`` (default) runs the dense zero-padded layout through
+        ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"`` (torch's native
+        flash-attention varlen kernel, torch >= 2.10) and ``"flash"`` (the flash-attn
+        package, FlashAttention-3 interface preferred) drop the padding and run
+        block-diagonal attention over the packed tokens instead. Both varlen backends
+        require CUDA; on CPU the packed layout falls back to a materialized
+        block-diagonal SDPA mask. ONNX export requires ``"native"``.
     trim
         Whether to enable sequence trimming during training.
     use_amp
@@ -924,6 +1153,8 @@ class LGATrSlimTagger(nn.Module):
         # aggregation and scaling
         mean_aggregation: bool = False,
         vector_units: float = 1.0,
+        # attention
+        attention_backend: str = "native",
         # misc
         checkpoint_blocks: bool = False,
         naive_amp: bool = False,
@@ -938,8 +1169,14 @@ class LGATrSlimTagger(nn.Module):
 
         _logger.info("LGATrSlimTagger init-ed: %s", locals())
 
+        if attention_backend not in ATTENTION_BACKENDS:
+            raise ValueError(
+                f"Unsupported attention_backend: {attention_backend}. "
+                f"Supported backends: {ATTENTION_BACKENDS}."
+            )
         self.mean_aggregation = mean_aggregation
         self.vector_units = vector_units
+        self.attention_backend = attention_backend
         self.use_amp = use_amp
         self.for_inference = for_inference
 
@@ -998,6 +1235,9 @@ class LGATrSlimTagger(nn.Module):
             [mask.new_ones(batch_size, spurions.size(1)), mask], dim=1
         )
 
+        if self.attention_backend != "native":
+            return self._forward_packed(vectors, scalars, mask)
+
         if not self.mean_aggregation:
             # prepend a global class token: zero vector, one-hot flag in an extra scalar channel
             vectors = torch.cat([torch.zeros_like(vectors[:, :1]), vectors], dim=1)
@@ -1019,6 +1259,49 @@ class LGATrSlimTagger(nn.Module):
             output = out.sum(dim=-2) / mask.sum(dim=-1, keepdim=True)
         else:
             output = out[:, 0]
+
+        if self.for_inference:
+            output = torch.softmax(output, dim=1)
+        return output
+
+    def _forward_packed(self, vectors, scalars, mask):
+        """Packed (sparse) forward path: drop the padding and run block-diagonal varlen
+        attention over the concatenated tokens (port of the tagging-guide
+        ``LGATrWrapper._forward_sparse``)."""
+        # any upper bound on the per-event sequence lengths works; using the dense width
+        # avoids a device-to-host sync
+        maxlen = mask.size(1)
+        [vectors, scalars], batch, ptr = dense_to_sparse([vectors, scalars], mask)
+
+        if not self.mean_aggregation:
+            # prepend a global class token per event: zero vector, one-hot flag in an
+            # extra scalar channel
+            maxlen = maxlen + 1
+            global_idxs, nonglobal_idxs, ptr, batch, num_total = insert_global_tokens(
+                ptr, batch, vectors.shape[0]
+            )
+            new_v = vectors.new_zeros(num_total, vectors.shape[-1])
+            new_v[nonglobal_idxs] = vectors
+            vectors = new_v
+            new_s = scalars.new_zeros(num_total, scalars.shape[-1] + 1)
+            new_s[nonglobal_idxs, :-1] = scalars
+            new_s[:, -1].index_fill_(0, global_idxs, 1.0)
+            scalars = new_s
+
+        attn_kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen, self.attention_backend)
+
+        vectors = vectors.unsqueeze(0).unsqueeze(-2)  # (1, tokens, 1, 4)
+        scalars = scalars.unsqueeze(0)  # (1, tokens, C)
+        with torch.autocast(vectors.device.type, enabled=self.use_amp):
+            _, out = self.net(vectors, scalars, **attn_kwargs)
+        out = out.squeeze(0)  # (tokens, num_classes)
+
+        if self.mean_aggregation:
+            batch_size = ptr.numel() - 1
+            counts = (ptr[1:] - ptr[:-1]).unsqueeze(-1).to(out.dtype)
+            output = out.new_zeros(batch_size, out.shape[-1]).index_add_(0, batch, out) / counts
+        else:
+            output = out.index_select(0, global_idxs)
 
         if self.for_inference:
             output = torch.softmax(output, dim=1)

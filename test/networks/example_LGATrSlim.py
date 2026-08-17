@@ -5,6 +5,11 @@ It follows the standard weaver network-config interface (``get_model`` / ``get_l
 The kinematic scalar features (log pt, log E, ...) are taken from ``pf_features`` as defined
 in the data config; the four-momenta come from ``pf_vectors`` (px, py, pz, energy).
 
+On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
+varlen kernel) or ``-o attention_backend flash`` (flash-attn package) to drop the
+padding and run block-diagonal flash attention over the packed tokens. ONNX export
+requires the default ``native`` backend.
+
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """
 

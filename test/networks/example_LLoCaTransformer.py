@@ -7,8 +7,13 @@ in the data config; the four-momenta come from ``pf_vectors`` (px, py, pz, energ
 seven kinematic tagging features (log pt, log E, ...) are computed inside the model, in
 each particle's local frame, so they must NOT be included in ``pf_features``.
 
+On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
+varlen kernel) or ``-o attention_backend flash`` (flash-attn package) to drop the
+padding and run block-diagonal flash attention over the packed tokens.
+
 For ONNX export, pass ``-o momentum_float64 False -o ortho_use_float64 False``:
-onnxruntime lacks float64 kernels for some of the involved ops.
+onnxruntime lacks float64 kernels for some of the involved ops. ONNX export also
+requires the default ``native`` attention backend.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """

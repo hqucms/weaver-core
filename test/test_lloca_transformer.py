@@ -219,6 +219,63 @@ class LLoCaTransformerTaggerTest(unittest.TestCase):
         self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
 
 
+class LLoCaPackedAttentionTest(unittest.TestCase):
+    """Packed (sparse) attention path tests.
+
+    On CPU the varlen backends fall back to a materialized block-diagonal SDPA mask, so
+    these tests exercise the full packed layout (padding removal, per-event global
+    tokens with identity frames, token-resolved reference momenta, block-diagonal
+    attention, segment-wise readout) without a GPU.
+    """
+
+    def _make_pair(self, backend, **kwargs):
+        cfg = dict(input_dim=17, num_classes=10, trim=False, **_SMALL_NET)
+        cfg.update(kwargs)
+        torch.manual_seed(0)
+        dense = LLoCaTransformerTagger(**cfg)
+        dense.eval()
+        packed = LLoCaTransformerTagger(**cfg, attention_backend=backend)
+        packed.load_state_dict(dense.state_dict())
+        packed.eval()
+        return dense, packed
+
+    def test_invalid_backend(self):
+        with self.assertRaises(ValueError):
+            LLoCaTransformerTagger(input_dim=17, num_classes=10, attention_backend="xformers")
+
+    def test_packed_matches_dense(self):
+        for mean_aggregation in [False, True]:
+            with self.subTest(mean_aggregation=mean_aggregation):
+                dense, packed = self._make_pair("varlen", mean_aggregation=mean_aggregation)
+                x, v, mask = _make_inputs()
+                with torch.no_grad():
+                    out_dense = dense(x, v, mask)
+                    out_packed = packed(x, v, mask)
+                torch.testing.assert_close(out_dense, out_packed, rtol=1e-4, atol=1e-5)
+
+    def test_packed_backward(self):
+        _, packed = self._make_pair("varlen")
+        packed.train()
+        x, v, mask = _make_inputs()
+        out = packed(x, v, mask)
+        loss = torch.nn.functional.cross_entropy(out, torch.randint(0, 10, (x.size(0),)))
+        loss.backward()
+        grads = [p.grad for p in packed.parameters() if p.requires_grad]
+        self.assertTrue(all(g is not None for g in grads))
+        self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for the varlen kernel")
+    def test_varlen_backend_cuda(self):
+        dense, packed = self._make_pair("varlen")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        # the varlen kernel runs in half precision
+        torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
+
+
 @unittest.skipUnless(_HAS_LLOCA, "the upstream lloca package is required for cross-checks")
 class UpstreamCrossCheckTest(unittest.TestCase):
     """Compare the dense masked reimplementation against the upstream sparse lloca code."""
