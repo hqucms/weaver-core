@@ -2,8 +2,13 @@
 
 It follows the standard weaver network-config interface (``get_model`` / ``get_loss``).
 
-The kinematic scalar features (log pt, log E, ...) are taken from ``pf_features`` as defined
-in the data config; the four-momenta come from ``pf_vectors`` (px, py, pz, energy).
+The kinematic scalar features (log pt, log E, ...) are by default taken from
+``pf_features`` as defined in the data config; the four-momenta come from ``pf_vectors``
+(px, py, pz, energy). Pass ``-o auxiliary_scalars all`` to instead compute the seven
+standardized tagging features inside the model from ``pf_vectors`` and prepend them to
+``pf_features``; they must then NOT also be listed in ``pf_features``, and ONNX export
+additionally requires ``-o momentum_float64 False`` (onnxruntime lacks float64 kernels
+for some of the ops used by the kinematic features).
 
 On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
 varlen kernel), ``-o attention_backend flash`` (flash-attn package), or

@@ -2,19 +2,21 @@
 
 It follows the standard weaver network-config interface (``get_model`` / ``get_loss``).
 
-The extra particle features are taken from ``pf_features`` as defined in the data
-config; the four-momenta come from ``pf_vectors`` (px, py, pz, energy). The seven
-kinematic tagging features (log pt, log E, ...) are computed inside the model, so they
-must NOT be included in ``pf_features``.
+The particle features are taken from ``pf_features`` as defined in the data config; the
+four-momenta come from ``pf_vectors`` (px, py, pz, energy). By default the kinematic
+scalar features (log pt, log E, ...) come from ``pf_features`` like any other feature
+(as for ParticleTransformer), and ``pf_vectors`` is unused. Pass
+``-o auxiliary_scalars all`` to instead compute the seven standardized tagging features
+inside the model from ``pf_vectors``; they must then NOT be listed in ``pf_features``.
 
 On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
 varlen kernel), ``-o attention_backend flash`` (flash-attn package), or
 ``-o attention_backend xformers`` (xformers memory-efficient attention) to drop the
 padding and run block-diagonal attention over the packed tokens.
 
-For ONNX export, pass ``-o momentum_float64 False``: onnxruntime lacks float64 kernels
-for some of the involved ops. ONNX export also requires the default ``native``
-attention backend.
+For ONNX export with ``-o auxiliary_scalars all``, also pass ``-o momentum_float64
+False``: onnxruntime lacks float64 kernels for some of the involved ops. ONNX export
+requires the default ``native`` attention backend.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """

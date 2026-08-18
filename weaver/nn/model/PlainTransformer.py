@@ -17,6 +17,9 @@ shortcut of ``experiments/tagging/wrappers.py::TransformerWrapper`` and the embe
 :mod:`weaver.nn.model.LLoCaTransformer` port (``lloca/backbone/transformer_v2.py``).
 
 Differences with respect to the upstream implementation:
+ - The kinematic tagging features default to coming from the weaver data config
+   (``auxiliary_scalars=None``, as for ParticleTransformer); ``auxiliary_scalars="all"``
+   computes them inside the model from ``pf_vectors``, as upstream.
  - Everything runs on the dense zero-padded (batch, particles, channels) layout used by
    weaver; ``attention_backend="varlen"``, ``"flash"``, or ``"xformers"`` instead drop
    the padding and run block-diagonal attention over the packed tokens (see
@@ -26,8 +29,9 @@ Differences with respect to the upstream implementation:
    in the identity-frames path they survive as featureless (all-zero) valid tokens. They
    are reproduced here as ``num_register_tokens`` zero-feature tokens (the tagging-guide
    default ``beam_reference=all`` plus time reference gives 4).
- - ONNX export requires ``momentum_float64=False`` (onnxruntime lacks float64 kernels
-   for some of the involved ops, e.g. Atan) and the ``"native"`` attention backend.
+ - ONNX export requires the ``"native"`` attention backend, and (with the kinematic
+   features enabled) ``momentum_float64=False``: onnxruntime lacks float64 kernels for
+   some of the involved ops, e.g. Atan.
 """
 
 from __future__ import annotations
@@ -44,6 +48,8 @@ from weaver.nn.model.LGATrSlim import (
 from weaver.nn.model.LLoCaTransformer import (
     Frames,
     LLoCaTransformer,
+)
+from weaver.nn.model.kinematics import (
     get_auxiliary_scalars,
     get_num_auxiliary_scalars,
 )
@@ -55,15 +61,16 @@ class PlainTransformerTagger(nn.Module):
     """Weaver-facing plain-transformer jet tagger (tagging-guide ``tr`` baseline).
 
     Dense (zero-padded) port of the identity-frames path of the tagging-guide
-    ``TransformerWrapper``: the seven standardized kinematic tagging features (log pt,
-    log E, log pt_rel, log E_rel, dphi, deta, dr) are computed internally from the
-    four-momenta, concatenated with the extra scalar features, and fed through a
-    pre-norm RMSNorm/GLU transformer. The per-jet logits are read off a global class
-    token (or a masked mean over tokens when ``mean_aggregation=True``).
+    ``TransformerWrapper``: the particle features are fed through a pre-norm RMSNorm/GLU
+    transformer, and the per-jet logits are read off a global class token (or a masked
+    mean over tokens when ``mean_aggregation=True``).
 
-    The weaver data config only needs to provide the extra particle features via
-    ``pf_features`` and the four-momenta via ``pf_vectors``; the kinematic features
-    must NOT be included in ``pf_features``.
+    By default (``auxiliary_scalars=None``) the kinematic scalar features (log pt, log E,
+    ...) are expected to be provided as part of ``pf_features`` via the weaver data config
+    (as for ParticleTransformer), and ``pf_vectors`` is not needed at all. Set
+    ``auxiliary_scalars='all'`` to instead compute the seven standardized tagging features
+    (log pt, log E, log pt_rel, log E_rel, dphi, deta, dr) internally from the four-momenta
+    in ``pf_vectors``, as upstream; they must then NOT also be listed in ``pf_features``.
 
     Parameters
     ----------
@@ -84,13 +91,16 @@ class PlainTransformerTagger(nn.Module):
         (``beam_reference=all`` + time reference), which act as exactly such tokens in
         the identity-frames path; set to 0 to disable.
     auxiliary_scalars
-        Which kinematic features to compute: 'all', 'zinvariant', 'so3invariant', or
-        None.
+        Which kinematic features to compute from the four-momenta and prepend to the
+        input scalars: 'all' (the seven standardized tagging features, the upstream
+        behaviour), 'zinvariant', 'so3invariant', or None (default) to compute none of
+        them. With None the four-momenta are never touched (``v`` may be omitted) and
+        only the ``pf_features`` scalars are fed to the transformer.
     mean_aggregation
         If True, aggregate with a masked mean over tokens instead of a class token.
     momentum_float64
         Whether to compute the kinematic features in float64 (the tagging-guide
-        default).
+        default). Unused when ``auxiliary_scalars=None``.
     attention_backend
         ``"native"`` (default) runs on the dense zero-padded layout through
         ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"`` (torch's
@@ -123,7 +133,7 @@ class PlainTransformerTagger(nn.Module):
         checkpoint_blocks: bool = False,
         # embedding / aggregation
         num_register_tokens: int = 4,
-        auxiliary_scalars: str | None = "all",
+        auxiliary_scalars: str | None = None,
         mean_aggregation: bool = False,
         momentum_float64: bool = True,
         # attention
@@ -193,7 +203,7 @@ class PlainTransformerTagger(nn.Module):
 
     def forward(self, x, v=None, mask=None):
         # x: (N, C, P) -- extra scalar features
-        # v: (N, 4, P) [px,py,pz,energy]
+        # v: (N, 4, P) [px,py,pz,energy]; unused if auxiliary_scalars is None
         # mask: (N, 1, P) -- real particle = 1, padded = 0
         with torch.no_grad():
             x, v, mask, _ = self.trimmer(x, v, mask)
@@ -201,19 +211,26 @@ class PlainTransformerTagger(nn.Module):
         batch_size = x.size(0)
 
         scalars = x.transpose(1, 2)  # (N, P, C)
-        # (E, px, py, pz) convention
-        fourmomenta = v.transpose(1, 2)[..., [3, 0, 1, 2]]
-        if self.momentum_float64:
-            fourmomenta = fourmomenta.to(torch.float64)
         # zero out padded entries (data configs may pad by wrapping real particles)
-        fourmomenta = fourmomenta * mask.unsqueeze(-1)
         scalars = scalars * mask.unsqueeze(-1)
 
-        # global-frame kinematic features; zeroed on padding
-        jet = fourmomenta.sum(dim=1, keepdim=True)  # (N, 1, 4)
-        aux = get_auxiliary_scalars(fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars)
-        aux = aux.to(scalars.dtype) * mask.unsqueeze(-1)
-        features = torch.cat([aux, scalars], dim=-1)
+        if self.auxiliary_scalars is None:
+            # kinematic features disabled: the four-momenta are not used at all
+            features = scalars
+        else:
+            # (E, px, py, pz) convention
+            fourmomenta = v.transpose(1, 2)[..., [3, 0, 1, 2]]
+            if self.momentum_float64:
+                fourmomenta = fourmomenta.to(torch.float64)
+            fourmomenta = fourmomenta * mask.unsqueeze(-1)
+
+            # global-frame kinematic features; zeroed on padding
+            jet = fourmomenta.sum(dim=1, keepdim=True)  # (N, 1, 4)
+            aux = get_auxiliary_scalars(
+                fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars
+            )
+            aux = aux.to(scalars.dtype) * mask.unsqueeze(-1)
+            features = torch.cat([aux, scalars], dim=-1)
 
         # prepend featureless register tokens (the spurion positions in tagging-guide)
         if self.num_register_tokens:

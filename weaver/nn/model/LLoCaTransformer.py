@@ -57,6 +57,10 @@ from weaver.nn.model.LGATrSlim import (
     minimum_autocast_precision,
     scaled_dot_product_attention,
 )
+from weaver.nn.model.kinematics import (
+    get_auxiliary_scalars,
+    get_num_auxiliary_scalars,
+)
 from weaver.nn.model.ParticleTransformer import SequenceTrimmer
 from weaver.utils.logger import _logger
 
@@ -85,123 +89,6 @@ def lorentz_eye(dims, device=None, dtype=torch.float32) -> torch.Tensor:
     base_eye = torch.eye(4, dtype=dtype, device=device)
     return base_eye.view((1,) * len(dims) + (4, 4)).expand(*dims, 4, 4)
 
-
-# ------------------------------------------------------------------------------------
-# Kinematic helper features (ported from tagging-guide experiments/{hep,tagging/embedding}.py)
-# ------------------------------------------------------------------------------------
-
-_EPS_HEP = 1e-10
-
-# weaver defaults for tagging features standardization (mean, factor); the features are
-# standardized as (feature - mean) * factor
-AUXILIARY_SCALARS_PREPROCESSING = [
-    [1.7, 0.7],  # log_pt
-    [2.0, 0.7],  # log_energy
-    [-4.7, 0.7],  # log_pt_rel
-    [-4.7, 0.7],  # log_energy_rel
-    [0, 1],  # dphi
-    [0, 1],  # deta
-    [0.2, 4],  # dr
-]
-
-
-def stable_arctanh(x: torch.Tensor, eps: float = _EPS_HEP) -> torch.Tensor:
-    # implementation of arctanh that avoids log(0) issues
-    return 0.5 * (torch.log((1 + x).clamp(min=eps)) - torch.log((1 - x).clamp(min=eps)))
-
-
-def avoid_zero(x: torch.Tensor, eps: float = _EPS_HEP) -> torch.Tensor:
-    # set small-abs values to eps for numerical stability
-    return torch.where(x.abs() < eps, eps, x)
-
-
-def get_pt(p: torch.Tensor) -> torch.Tensor:
-    # transverse momentum of a (..., 4) tensor in (E, px, py, pz)
-    return torch.sqrt((p[..., 1] ** 2 + p[..., 2] ** 2).clamp(min=_EPS_HEP))
-
-
-def get_phi(p: torch.Tensor) -> torch.Tensor:
-    # azimuthal angle
-    return torch.arctan2(avoid_zero(p[..., 2]), avoid_zero(p[..., 1]))
-
-
-def get_eta(p: torch.Tensor) -> torch.Tensor:
-    # pseudo-rapidity
-    p_abs = torch.sqrt(torch.sum(p[..., 1:] ** 2, dim=-1).clamp(min=_EPS_HEP))
-    return stable_arctanh(p[..., 3] / p_abs)
-
-
-def get_auxiliary_scalars(fourmomenta, jet, auxiliary_scalars="all", eps=1e-10):
-    """Compute the standardized kinematic features typically used in jet tagging.
-
-    Parameters
-    ----------
-    fourmomenta : torch.Tensor
-        Particle four-momenta of shape (..., 4) in (E, px, py, pz).
-    jet : torch.Tensor
-        Jet four-momenta broadcastable against ``fourmomenta``.
-    auxiliary_scalars : str or None
-        Which features to include: 'all', 'zinvariant', 'so3invariant', or None.
-
-    Returns
-    -------
-    torch.Tensor
-        Features of shape (..., n_features); for 'all' these are
-        (log_pt, log_energy, log_pt_rel, log_energy_rel, dphi, deta, dr).
-    """
-    log_pt = get_pt(fourmomenta).unsqueeze(-1).log()
-    log_energy = fourmomenta[..., 0].unsqueeze(-1).clamp(min=eps).log()
-
-    log_pt_rel = (get_pt(fourmomenta).log() - get_pt(jet).log()).unsqueeze(-1)
-    log_energy_rel = (
-        fourmomenta[..., 0].clamp(min=eps).log() - jet[..., 0].clamp(min=eps).log()
-    ).unsqueeze(-1)
-    phi_4, phi_jet = get_phi(fourmomenta), get_phi(jet)
-    dphi = ((phi_4 - phi_jet + torch.pi) % (2 * torch.pi) - torch.pi).unsqueeze(-1)
-    eta_4, eta_jet = get_eta(fourmomenta), get_eta(jet)
-    deta = -(eta_4 - eta_jet).unsqueeze(-1)
-    dr = torch.sqrt((dphi**2 + deta**2).clamp(min=eps))
-    features = [
-        log_pt,
-        log_energy,
-        log_pt_rel,
-        log_energy_rel,
-        dphi,
-        deta,
-        dr,
-    ]
-    for i, feature in enumerate(features):
-        mean, factor = AUXILIARY_SCALARS_PREPROCESSING[i]
-        features[i] = (feature - mean) * factor
-    if auxiliary_scalars == "zinvariant":
-        # exclude energy, because it is not invariant under z-boosts
-        idx = [0, 2, 4, 5, 6]
-    elif auxiliary_scalars == "so3invariant":
-        # exclude everything except energy, because it is not invariant under SO(3) rotations
-        idx = [1, 3]
-    elif auxiliary_scalars is None:
-        return torch.zeros(
-            *features[0].shape[:-1], 0, device=fourmomenta.device, dtype=fourmomenta.dtype
-        )
-    elif auxiliary_scalars == "all":
-        idx = list(range(len(features)))
-    else:
-        raise ValueError(f"auxiliary_scalars={auxiliary_scalars} not implemented")
-    features = [features[i] for i in idx]
-    return torch.cat(features, dim=-1)
-
-
-def get_num_auxiliary_scalars(auxiliary_scalars="all") -> int:
-    if auxiliary_scalars == "all":
-        return 7
-    elif auxiliary_scalars == "zinvariant":
-        return 5
-    elif auxiliary_scalars == "so3invariant":
-        return 2
-    elif auxiliary_scalars is None:
-        return 0
-    else:
-        raise ValueError(f"auxiliary_scalars={auxiliary_scalars} not implemented")
 
 
 # ------------------------------------------------------------------------------------
@@ -1714,7 +1601,8 @@ class LLoCaTransformerTagger(nn.Module):
     The seven kinematic features (log pt, log E, log pt_rel, log E_rel, dphi, deta, dr)
     are computed internally, in the local frames; the weaver data config only needs to
     provide the extra (frame-independent) particle features via ``pf_features`` and the
-    four-momenta via ``pf_vectors``.
+    four-momenta via ``pf_vectors``. They can be reduced or switched off entirely via
+    ``local_auxiliary_scalars``.
 
     Parameters
     ----------
@@ -1741,9 +1629,14 @@ class LLoCaTransformerTagger(nn.Module):
     beam_reference / two_beams / add_time_reference / spurion_scale
         Spurion configuration (defaults follow the tagging-guide ``tagging`` config).
     auxiliary_scalars
-        Which kinematic features enter the frames-net scalars: 'all', 'zinvariant',
-        'so3invariant', or None. The transformer always uses all seven (local-frame)
-        features, as in the tagging-guide wrapper.
+        Which (global-frame) kinematic features enter the frames-net scalars: 'all',
+        'zinvariant', 'so3invariant', or None to disable them entirely (the frames-net
+        then only sees the extra scalar features).
+    local_auxiliary_scalars
+        Which local-frame kinematic features enter the transformer: 'all' (the
+        tagging-guide behaviour), 'zinvariant', 'so3invariant', or None to disable them
+        entirely (the transformer then only sees the extra scalar features, and the
+        local-frame four-momenta are never computed).
     mean_aggregation
         If True, aggregate with a masked mean over tokens instead of a class token.
     attention_backend
@@ -1809,6 +1702,7 @@ class LLoCaTransformerTagger(nn.Module):
         spurion_scale: float = 1.0,
         # embedding / aggregation
         auxiliary_scalars: str | None = "all",
+        local_auxiliary_scalars: str | None = "all",
         mean_aggregation: bool = False,
         momentum_float64: bool = True,
         # attention
@@ -1833,6 +1727,7 @@ class LLoCaTransformerTagger(nn.Module):
         self.mean_aggregation = mean_aggregation
         self.momentum_float64 = momentum_float64
         self.auxiliary_scalars = auxiliary_scalars
+        self.local_auxiliary_scalars = local_auxiliary_scalars
         self.attention_backend = attention_backend
         self.use_amp = use_amp
         self.for_inference = for_inference
@@ -1875,9 +1770,13 @@ class LLoCaTransformerTagger(nn.Module):
         )
         self.trafo_fourmomenta = TensorRepsTransform(TensorReps("1x1n"))
 
-        # the transformer sees the seven local-frame kinematic features, the extra
-        # scalars, and (unless mean-aggregating) the global-token flag channel
-        in_channels = 7 + input_dim + (0 if mean_aggregation else 1)
+        # the transformer sees the local-frame kinematic features, the extra scalars,
+        # and (unless mean-aggregating) the global-token flag channel
+        in_channels = (
+            get_num_auxiliary_scalars(local_auxiliary_scalars)
+            + input_dim
+            + (0 if mean_aggregation else 1)
+        )
         self.net = LLoCaTransformer(
             in_channels=in_channels,
             attn_reps=attn_reps,
@@ -1956,18 +1855,27 @@ class LLoCaTransformerTagger(nn.Module):
             fourmomenta, scalars, mask
         )
 
-        # global-frame kinematic features; zeroed on spurions and padding
         jet = fourmomenta[:, n_spurions:].sum(dim=1, keepdim=True)  # (N, 1, 4)
-        aux = get_auxiliary_scalars(fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars)
-        if n_spurions:
-            aux = torch.cat([torch.zeros_like(aux[:, :n_spurions]), aux[:, n_spurions:]], dim=1)
-        aux = aux * mask_spurions.unsqueeze(-1)
-        aux = aux.to(scalars.dtype)
+
+        # global-frame kinematic features; zeroed on spurions and padding
+        if self.auxiliary_scalars is None:
+            framesnet_scalars = scalars_spurions
+        else:
+            aux = get_auxiliary_scalars(
+                fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars
+            )
+            if n_spurions:
+                aux = torch.cat(
+                    [torch.zeros_like(aux[:, :n_spurions]), aux[:, n_spurions:]], dim=1
+                )
+            aux = aux * mask_spurions.unsqueeze(-1)
+            aux = aux.to(scalars.dtype)
+            framesnet_scalars = torch.cat([aux, scalars_spurions], dim=-1)
 
         # frames-net forward pass; spurions take part in the frames prediction
         frames_spurions, _tracker = self.framesnet(
             fourmomenta,
-            scalars=torch.cat([aux, scalars_spurions], dim=-1),
+            scalars=framesnet_scalars,
             mask=mask_spurions,
             return_tracker=True,
         )
@@ -1983,12 +1891,17 @@ class LLoCaTransformerTagger(nn.Module):
         fourmomenta = fourmomenta[:, n_spurions:]
 
         # transform features into the local frames
-        fourmomenta_local = self.trafo_fourmomenta(fourmomenta, frames)
-        jet_local = self.trafo_fourmomenta(jet.expand_as(fourmomenta), frames)
-        local_aux = get_auxiliary_scalars(fourmomenta_local, jet_local, auxiliary_scalars="all")
-
-        # change dtype (see momentum_float64 option) and zero the padded entries
-        features = torch.cat([local_aux.to(scalars.dtype), scalars], dim=-1)
+        if self.local_auxiliary_scalars is None:
+            # local-frame kinematic features disabled: no need to transform anything
+            features = scalars
+        else:
+            fourmomenta_local = self.trafo_fourmomenta(fourmomenta, frames)
+            jet_local = self.trafo_fourmomenta(jet.expand_as(fourmomenta), frames)
+            local_aux = get_auxiliary_scalars(
+                fourmomenta_local, jet_local, auxiliary_scalars=self.local_auxiliary_scalars
+            )
+            # change dtype (see momentum_float64 option)
+            features = torch.cat([local_aux.to(scalars.dtype), scalars], dim=-1)
         features = features * mask.unsqueeze(-1)
         frames.to(dtype=scalars.dtype)
         jet = jet.squeeze(1).to(scalars.dtype)  # (N, 4) reference momentum

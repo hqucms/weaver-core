@@ -122,6 +122,31 @@ class LGATrSlimTaggerTest(unittest.TestCase):
         self.assertEqual(out.shape, (3, 10))
         self.assertFalse(torch.isnan(out).any())
 
+    def test_auxiliary_scalars(self):
+        # by default no kinematic features are computed; they can be switched on
+        x, v, mask = _make_inputs()
+        for aux, num_aux in [(None, 0), ("all", 7), ("zinvariant", 5), ("so3invariant", 2)]:
+            with self.subTest(auxiliary_scalars=aux):
+                model = self._make_tagger(auxiliary_scalars=aux)
+                self.assertEqual(
+                    model.net.linear_in.linear_s.in_features, num_aux + 17 + 1
+                )
+                with torch.no_grad():
+                    out = model(x, v, mask)
+                self.assertEqual(out.shape, (3, 10))
+                self.assertFalse(torch.isnan(out).any())
+
+    def test_auxiliary_scalars_padding_invariance(self):
+        model = self._make_tagger(auxiliary_scalars="all")
+        x, v, mask = _make_inputs()
+        m = mask.squeeze(1).bool().unsqueeze(1)
+        x2 = torch.where(m, x, torch.full_like(x, 123.0))
+        v2 = torch.where(m, v, torch.full_like(v, -77.0))
+        with torch.no_grad():
+            out = model(x, v, mask)
+            out2 = model(x2, v2, mask)
+        torch.testing.assert_close(out, out2, rtol=0, atol=1e-5)
+
     def test_backward(self):
         model = self._make_tagger()
         model.train()
@@ -299,7 +324,7 @@ class LGATrSlimOnnxExportTest(unittest.TestCase):
             args = argparse.Namespace(
                 data_config=_DATA_CONFIG,
                 network_config=_NETWORK_CONFIG,
-                network_option=[[k, str(val)] for k, val in _SMALL_NET.items()],
+                network_option=[[k, repr(val)] for k, val in _SMALL_NET.items()],
                 model_prefix=os.path.join(workdir, "net.pt"),
                 export_onnx=os.path.join(workdir, "model.onnx"),
                 onnx_opset=15,

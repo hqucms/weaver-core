@@ -46,8 +46,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _DATA_CONFIG = os.path.join(_HERE, "data", "JetClass_full.yaml")
 _NETWORK_CONFIG = os.path.join(_HERE, "networks", "example_PlainTransformer.py")
 
-# small config for fast tests
-_SMALL_NET = dict(embed_dim=32, num_heads=2, num_blocks=2)
+# small config for fast tests; `auxiliary_scalars` is not the default here so that the
+# internal kinematic-feature path stays covered
+_SMALL_NET = dict(embed_dim=32, num_heads=2, num_blocks=2, auxiliary_scalars="all")
 # onnxruntime has no float64 kernels for some ops (e.g. Atan), so ONNX export requires
 # the float32 path
 _ONNX_NET = dict(_SMALL_NET, momentum_float64=False)
@@ -131,6 +132,26 @@ class PlainTransformerTaggerTest(unittest.TestCase):
             out = model(x, v, mask)
         self.assertEqual(out.shape, (3, 10))
         self.assertFalse(torch.isnan(out).any())
+
+    def test_auxiliary_scalars(self):
+        x, v, mask = _make_inputs()
+        for aux, num_aux in [("all", 7), ("zinvariant", 5), ("so3invariant", 2), (None, 0)]:
+            with self.subTest(auxiliary_scalars=aux):
+                model = self._make_tagger(auxiliary_scalars=aux)
+                self.assertEqual(model.net.linear_in.in_features, num_aux + 17 + 1)
+                with torch.no_grad():
+                    out = model(x, v, mask)
+                self.assertEqual(out.shape, (3, 10))
+                self.assertFalse(torch.isnan(out).any())
+
+    def test_no_auxiliary_scalars_ignores_vectors(self):
+        # the default (None) never touches the four-momenta, so `v` is optional
+        model = self._make_tagger(auxiliary_scalars=None)
+        x, v, mask = _make_inputs()
+        with torch.no_grad():
+            out = model(x, v, mask)
+            out_no_v = model(x, None, mask)
+        torch.testing.assert_close(out, out_no_v, rtol=0, atol=0)
 
     def test_momentum_float32(self):
         model = self._make_tagger(momentum_float64=False)

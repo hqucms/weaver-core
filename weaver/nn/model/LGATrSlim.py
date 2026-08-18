@@ -35,6 +35,10 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+from weaver.nn.model.kinematics import (
+    get_auxiliary_scalars,
+    get_num_auxiliary_scalars,
+)
 from weaver.nn.model.ParticleTransformer import SequenceTrimmer
 from weaver.utils.logger import _logger
 
@@ -1164,8 +1168,12 @@ class LGATrSlimTagger(nn.Module):
     and (optionally) a global class token are prepended, and the per-jet logits are read off
     the class token's scalar output (or a masked mean when ``mean_aggregation=True``).
 
-    Kinematic scalar features (log pt, log E, ...) are expected to be provided as part of the
-    input features via the weaver data config (as for ParticleTransformer), not computed here.
+    By default (``auxiliary_scalars=None``) the kinematic scalar features (log pt, log E,
+    ...) are expected to be provided as part of the input features via the weaver data
+    config (as for ParticleTransformer). Set ``auxiliary_scalars='all'`` to instead compute
+    the seven standardized tagging features (log pt, log E, log pt_rel, log E_rel, dphi,
+    deta, dr) internally from the four-momenta and prepend them to the input scalars; they
+    must then NOT also be listed in ``pf_features``.
 
     Parameters
     ----------
@@ -1179,6 +1187,15 @@ class LGATrSlimTagger(nn.Module):
         Forwarded to :class:`LGATrSlim` (defaults follow the tagging-guide ``tag_slim`` config).
     beam_reference / two_beams / add_time_reference / spurion_scale
         Spurion configuration (defaults follow the tagging-guide ``tagging`` config).
+    auxiliary_scalars
+        Which kinematic features to compute from the four-momenta and prepend to the input
+        scalars: 'all' (the seven standardized tagging features), 'zinvariant',
+        'so3invariant', or None (default) to compute none of them, in which case the
+        four-momenta are only used as Lorentz-vector inputs.
+    momentum_float64
+        Whether to compute the kinematic features in float64 (the tagging-guide default).
+        Unused when ``auxiliary_scalars=None``. ONNX export requires ``False``
+        (onnxruntime lacks float64 kernels for some of the involved ops, e.g. Atan).
     mean_aggregation
         If ``True``, aggregate with a masked mean over tokens instead of a class token.
     vector_units
@@ -1222,7 +1239,9 @@ class LGATrSlimTagger(nn.Module):
         two_beams: bool = True,
         add_time_reference: bool = True,
         spurion_scale: float = 1.0,
-        # aggregation and scaling
+        # embedding, aggregation and scaling
+        auxiliary_scalars: str | None = None,
+        momentum_float64: bool = True,
         mean_aggregation: bool = False,
         vector_units: float = 1.0,
         # attention
@@ -1246,6 +1265,8 @@ class LGATrSlimTagger(nn.Module):
                 f"Unsupported attention_backend: {attention_backend}. "
                 f"Supported backends: {ATTENTION_BACKENDS}."
             )
+        self.auxiliary_scalars = auxiliary_scalars
+        self.momentum_float64 = momentum_float64
         self.mean_aggregation = mean_aggregation
         self.vector_units = vector_units
         self.attention_backend = attention_backend
@@ -1255,8 +1276,13 @@ class LGATrSlimTagger(nn.Module):
         spurions = get_spurion(beam_reference, add_time_reference, two_beams) * spurion_scale
         self.register_buffer("spurions", spurions, persistent=False)
 
-        # one extra scalar channel flags the global class token
-        in_s_channels = input_dim + (0 if mean_aggregation else 1)
+        # the network sees the kinematic features, the extra scalars, and (unless
+        # mean-aggregating) one extra channel flagging the global class token
+        in_s_channels = (
+            get_num_auxiliary_scalars(auxiliary_scalars)
+            + input_dim
+            + (0 if mean_aggregation else 1)
+        )
         self.net = LGATrSlim(
             num_blocks=num_blocks,
             in_v_channels=1,
@@ -1291,10 +1317,23 @@ class LGATrSlimTagger(nn.Module):
 
         scalars = x.transpose(1, 2)  # (N, P, C)
         # (E, px, py, pz) convention, in units of `vector_units`
-        vectors = v.transpose(1, 2)[..., [3, 0, 1, 2]].to(scalars.dtype) / self.vector_units
+        fourmomenta = v.transpose(1, 2)[..., [3, 0, 1, 2]]
+        vectors = fourmomenta.to(scalars.dtype) / self.vector_units
         # zero out padded entries (data configs may pad by wrapping real particles)
         vectors = vectors * mask.unsqueeze(-1)
         scalars = scalars * mask.unsqueeze(-1)
+
+        if self.auxiliary_scalars is not None:
+            # kinematic features, computed in the original (unscaled) momentum units
+            if self.momentum_float64:
+                fourmomenta = fourmomenta.to(torch.float64)
+            fourmomenta = fourmomenta * mask.unsqueeze(-1)
+            jet = fourmomenta.sum(dim=1, keepdim=True)  # (N, 1, 4)
+            aux = get_auxiliary_scalars(
+                fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars
+            )
+            aux = aux.to(scalars.dtype) * mask.unsqueeze(-1)
+            scalars = torch.cat([aux, scalars], dim=-1)
 
         batch_size = x.size(0)
         # prepend spurions (zero scalar features, valid mask)
