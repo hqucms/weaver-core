@@ -16,9 +16,10 @@ and ``experiments/tagging/embedding.py``). The tagging setup uses identity frame
 none of the LLoCa frames machinery is required. The default attention backend is the
 native ``torch.nn.functional.scaled_dot_product_attention`` on the dense zero-padded
 layout; ``attention_backend="varlen"`` (torch >= 2.10 native flash-attention varlen
-kernel) or ``"flash"`` (the flash-attn package) instead drop the padding and run
-block-diagonal flash attention over the packed tokens, as in the tagging-guide sparse
-path.
+kernel), ``"flash"`` (the flash-attn package), or ``"xformers"``
+(``xformers.ops.memory_efficient_attention`` with a block-diagonal mask) instead drop
+the padding and run block-diagonal attention over the packed tokens, as in the
+tagging-guide sparse path.
 """
 
 from __future__ import annotations
@@ -233,17 +234,37 @@ def _post_attention_reshape(
 # tagging-guide ``experiments/misc.py``): the backend is selected dynamically from the
 # attention kwargs, so the same network code serves the dense zero-padded layout (SDPA
 # with an ``attn_mask``) and the packed variable-length layout (flash-attention varlen
-# kernels with ``cu_seqlens``).
+# kernels with ``cu_seqlens``, or xformers memory-efficient attention with a
+# block-diagonal ``attn_bias``).
 # ------------------------------------------------------------------------------------
 
-ATTENTION_BACKENDS = ("native", "varlen", "flash")
+ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers")
 
 # kwargs that select the varlen kernels, following the upstream argument naming of
-# torch.nn.attention.varlen.varlen_attn and flash_attn.flash_attn_varlen_func
+# torch.nn.attention.varlen.varlen_attn and flash_attn.flash_attn_varlen_func;
+# ``attn_bias`` selects xformers.ops.memory_efficient_attention
 _VARLEN_KWARGS = ("cu_seq_q", "cu_seq_k", "max_q", "max_k")
 _FLASH_KWARGS = ("cu_seqlens_q", "cu_seqlens_k", "max_seqlen_q", "max_seqlen_k")
+_XFORMERS_KWARGS = ("attn_bias",)
 
 _flash_attn_varlen_func = None
+_xformers_ops = None
+
+
+def _get_xformers_ops():
+    """Import xformers' attention op and block-diagonal mask type."""
+    global _xformers_ops
+    if _xformers_ops is None:
+        try:
+            from xformers.ops import memory_efficient_attention
+            from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+        except ImportError as err:
+            raise ImportError(
+                "attention_backend='xformers' requires the xformers package "
+                "(pip install xformers)."
+            ) from err
+        _xformers_ops = (memory_efficient_attention, BlockDiagonalMask)
+    return _xformers_ops
 
 
 def _get_flash_attn_varlen_func():
@@ -339,6 +360,47 @@ def _varlen_attention(query, key, value, cu_seq_q=None, cu_seq_k=None, max_q=Non
     return _run_varlen_kernel(varlen_attn, query, key, value, kernel_kwargs, scale_kwarg="scale")
 
 
+@torch.compiler.disable()
+def _xformers_attention(query, key, value, attn_bias=None):
+    """Block-diagonal attention via ``xformers.ops.memory_efficient_attention``.
+
+    The inputs are (batch, heads, items, channels), as for SDPA; xformers expects
+    (batch, items, heads, channels). As for the varlen kernels, fp32 inputs are cast
+    to the autocast dtype and back (xformers' fp32 cutlass kernel is unavailable on
+    recent GPU architectures, e.g. sm_120, where only the fp16/bf16 flash-attention
+    kernels remain), and the head dim is zero-padded to a multiple of 8 with the
+    softmax scale pinned to the un-padded 1/sqrt(channels).
+    """
+    memory_efficient_attention, _ = _get_xformers_ops()
+
+    in_dtype = None
+    if query.dtype not in (torch.float16, torch.bfloat16):
+        in_dtype = query.dtype
+        dtype = torch.get_autocast_dtype(query.device.type)
+        if dtype not in (torch.float16, torch.bfloat16):
+            dtype = torch.float16
+        query, key, value = query.to(dtype), key.to(dtype), value.to(dtype)
+
+    channels = query.shape[-1]
+    pad = (-channels) % 8
+    if pad:
+        query, key, value = (F.pad(t, (0, pad)) for t in (query, key, value))
+
+    query = query.transpose(1, 2).contiguous()
+    key = key.transpose(1, 2).contiguous()
+    value = value.transpose(1, 2).contiguous()
+    out = memory_efficient_attention(
+        query, key, value, attn_bias=attn_bias, scale=channels**-0.5
+    )
+    out = out.transpose(1, 2).contiguous()
+
+    if pad:
+        out = out[..., :channels]
+    if in_dtype is not None:
+        out = out.to(in_dtype)
+    return out
+
+
 @minimum_autocast_precision(torch.float32, output="high")
 def _sdpa_attention(*args, **kwargs):
     return F.scaled_dot_product_attention(*args, **kwargs)
@@ -349,6 +411,8 @@ def _dispatch_attention(query, key, value, native_fn, **attn_kwargs):
         return _flash_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _VARLEN_KWARGS):
         return _varlen_attention(query, key, value, **attn_kwargs)
+    if any(attn_kwargs.get(key_) is not None for key_ in _XFORMERS_KWARGS):
+        return _xformers_attention(query, key, value, **attn_kwargs)
     return native_fn(query, key, value, **attn_kwargs)
 
 
@@ -423,12 +487,19 @@ def get_sparse_attention_kwargs(
 
     On CUDA this returns the ``cu_seqlens`` kwargs of the requested varlen kernel
     (``maxlen`` may be any upper bound on the sequence lengths, so no device-to-host
-    sync is needed). On CPU, where the flash-attention kernels are unavailable, it falls
-    back to a materialized block-diagonal SDPA mask (as in tagging-guide).
+    sync is needed), or the ``attn_bias`` kwarg for the xformers backend (whose
+    ``BlockDiagonalMask`` is built from host-side sequence lengths, so this backend
+    incurs a device-to-host sync). On CPU, where the fused attention kernels are
+    unavailable, it falls back to a materialized block-diagonal SDPA mask (as in
+    tagging-guide).
     """
     if ptr.device.type == "cpu":
         attn_mask = batch.unsqueeze(0) == batch.unsqueeze(1)
         return {"attn_mask": attn_mask}
+    if attention_backend == "xformers":
+        _, BlockDiagonalMask = _get_xformers_ops()
+        seqlens = (ptr[1:] - ptr[:-1]).tolist()
+        return {"attn_bias": BlockDiagonalMask.from_seqlens(seqlens)}
     cu_seqlens = ptr.to(torch.int32)
     if attention_backend == "flash":
         return {
@@ -1116,11 +1187,12 @@ class LGATrSlimTagger(nn.Module):
     attention_backend
         ``"native"`` (default) runs the dense zero-padded layout through
         ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"`` (torch's native
-        flash-attention varlen kernel, torch >= 2.10) and ``"flash"`` (the flash-attn
-        package, FlashAttention-3 interface preferred) drop the padding and run
-        block-diagonal attention over the packed tokens instead. Both varlen backends
-        require CUDA; on CPU the packed layout falls back to a materialized
-        block-diagonal SDPA mask. ONNX export requires ``"native"``.
+        flash-attention varlen kernel, torch >= 2.10), ``"flash"`` (the flash-attn
+        package, FlashAttention-3 interface preferred), and ``"xformers"``
+        (``xformers.ops.memory_efficient_attention`` with a block-diagonal mask) drop
+        the padding and run block-diagonal attention over the packed tokens instead.
+        These packed backends require CUDA; on CPU the packed layout falls back to a
+        materialized block-diagonal SDPA mask. ONNX export requires ``"native"``.
     trim
         Whether to enable sequence trimming during training.
     use_amp

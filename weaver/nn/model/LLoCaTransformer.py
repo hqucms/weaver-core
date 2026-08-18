@@ -25,8 +25,8 @@ Differences with respect to the upstream implementation:
    valid tokens), so there is no torch_geometric dependency.
  - The default attention backend is the native
    ``torch.nn.functional.scaled_dot_product_attention`` (boolean key-padding mask);
-   ``attention_backend="varlen"`` or ``"flash"`` instead drop the padding and run
-   block-diagonal flash attention over the packed tokens (see
+   ``attention_backend="varlen"``, ``"flash"``, or ``"xformers"`` instead drop the
+   padding and run block-diagonal attention over the packed tokens (see
    :class:`weaver.nn.model.LGATrSlim` for the backend implementations). The frames-net
    stays dense in all cases.
  - The edge-attribute standardization of the frames-net is initialized lazily from the
@@ -1749,12 +1749,13 @@ class LLoCaTransformerTagger(nn.Module):
     attention_backend
         ``"native"`` (default) runs the transformer on the dense zero-padded layout
         through ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"``
-        (torch's native flash-attention varlen kernel, torch >= 2.10) and ``"flash"``
-        (the flash-attn package, FlashAttention-3 interface preferred) drop the padding
-        and run block-diagonal attention over the packed tokens instead (the frames-net
-        stays dense). Both varlen backends require CUDA; on CPU the packed layout falls
-        back to a materialized block-diagonal SDPA mask. ONNX export requires
-        ``"native"``.
+        (torch's native flash-attention varlen kernel, torch >= 2.10), ``"flash"``
+        (the flash-attn package, FlashAttention-3 interface preferred), and
+        ``"xformers"`` (``xformers.ops.memory_efficient_attention`` with a
+        block-diagonal mask) drop the padding and run block-diagonal attention over the
+        packed tokens instead (the frames-net stays dense). These packed backends
+        require CUDA; on CPU the packed layout falls back to a materialized
+        block-diagonal SDPA mask. ONNX export requires ``"native"``.
     momentum_float64
         Whether to run the frames-net and local-frame feature computation in float64
         (the tagging-guide default).

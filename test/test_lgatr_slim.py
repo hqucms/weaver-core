@@ -36,6 +36,13 @@ try:
 except ImportError:
     _HAS_FLASH_ATTN = False
 
+try:
+    import xformers.ops  # noqa: F401
+
+    _HAS_XFORMERS = True
+except ImportError:
+    _HAS_XFORMERS = False
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DATA_CONFIG = os.path.join(_HERE, "data", "JetClass_full.yaml")
 _NETWORK_CONFIG = os.path.join(_HERE, "networks", "example_LGATrSlim.py")
@@ -148,7 +155,7 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
 
     def test_invalid_backend(self):
         with self.assertRaises(ValueError):
-            LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="xformers")
+            LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="flex")
 
     def test_packed_matches_dense(self):
         for mean_aggregation in [False, True]:
@@ -265,6 +272,20 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
         with torch.no_grad():
             out_dense = dense(x, v, mask)
             out_packed = packed(x, v, mask)
+        torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and _HAS_XFORMERS,
+        "CUDA and xformers are required for the xformers backend",
+    )
+    def test_xformers_backend_cuda(self):
+        dense, packed = self._make_pair("xformers")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        # the xformers kernel runs in half precision
         torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
 
 

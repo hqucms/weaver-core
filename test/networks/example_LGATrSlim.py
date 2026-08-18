@@ -6,8 +6,9 @@ The kinematic scalar features (log pt, log E, ...) are taken from ``pf_features`
 in the data config; the four-momenta come from ``pf_vectors`` (px, py, pz, energy).
 
 On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
-varlen kernel) or ``-o attention_backend flash`` (flash-attn package) to drop the
-padding and run block-diagonal flash attention over the packed tokens. ONNX export
+varlen kernel), ``-o attention_backend flash`` (flash-attn package), or
+``-o attention_backend xformers`` (xformers memory-efficient attention) to drop the
+padding and run block-diagonal attention over the packed tokens. ONNX export
 requires the default ``native`` backend.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.

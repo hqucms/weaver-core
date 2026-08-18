@@ -29,6 +29,13 @@ try:
 except ImportError:
     _HAS_LLOCA = False
 
+try:
+    import xformers.ops  # noqa: F401
+
+    _HAS_XFORMERS = True
+except ImportError:
+    _HAS_XFORMERS = False
+
 from weaver import train as weaver_train
 from weaver.utils.dataset import DataConfig
 from weaver.utils.import_tools import import_module
@@ -241,7 +248,7 @@ class LLoCaPackedAttentionTest(unittest.TestCase):
 
     def test_invalid_backend(self):
         with self.assertRaises(ValueError):
-            LLoCaTransformerTagger(input_dim=17, num_classes=10, attention_backend="xformers")
+            LLoCaTransformerTagger(input_dim=17, num_classes=10, attention_backend="flex")
 
     def test_packed_matches_dense(self):
         for mean_aggregation in [False, True]:
@@ -273,6 +280,20 @@ class LLoCaPackedAttentionTest(unittest.TestCase):
             out_dense = dense(x, v, mask)
             out_packed = packed(x, v, mask)
         # the varlen kernel runs in half precision
+        torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
+
+    @unittest.skipUnless(
+        torch.cuda.is_available() and _HAS_XFORMERS,
+        "CUDA and xformers are required for the xformers backend",
+    )
+    def test_xformers_backend_cuda(self):
+        dense, packed = self._make_pair("xformers")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        # the xformers kernel runs in half precision
         torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
 
 
