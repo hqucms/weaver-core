@@ -38,12 +38,12 @@ _NETWORK_CONFIG = os.path.join(_HERE, "networks", "example_ParT.py")
 _NATIVE_RMSNORM = getattr(nn, "RMSNorm", None)
 
 
-def _make_args(workdir, version):
+def _make_args(workdir, version, extra_options=None):
     """Minimal args namespace accepted by ``weaver.train.onnx`` / ``model_setup``."""
     return argparse.Namespace(
         data_config=_DATA_CONFIG,
         network_config=_NETWORK_CONFIG,
-        network_option=[["version", str(version)]],
+        network_option=[["version", str(version)]] + [[k, repr(v)] for k, v in (extra_options or {}).items()],
         model_prefix=os.path.join(workdir, "net.pt"),
         export_onnx=os.path.join(workdir, "model.onnx"),
         onnx_opset=15,
@@ -79,16 +79,16 @@ def _physical_inputs(data_config, batch=1, seq_len=None, seed=1):
 
 @unittest.skipUnless(_HAS_ORT, "onnxruntime is required for ONNX export tests")
 class OnnxExportTest(unittest.TestCase):
-    def _check_version(self, version):
+    def _check_version(self, version, extra_options=None):
         data_config = DataConfig.load(_DATA_CONFIG, load_observers=False, load_reweight_info=False)
         net = import_module(_NETWORK_CONFIG, name="_onnx_test_net")
 
         with tempfile.TemporaryDirectory() as workdir:
-            args = _make_args(workdir, version)
+            args = _make_args(workdir, version, extra_options)
 
             # build a training-mode model (uses native nn.RMSNorm for v3) and
             # save it as the checkpoint that `train.onnx` will load and export
-            train_model, _ = net.get_model(data_config, version=version)
+            train_model, _ = net.get_model(data_config, version=version, **(extra_options or {}))
             train_model.eval()
             torch.save(train_model.state_dict(), args.model_prefix)
 
@@ -123,6 +123,12 @@ class OnnxExportTest(unittest.TestCase):
 
     def test_export_v3(self):
         self._check_version(3)
+
+    def test_export_v3_plain_embed(self):
+        # `use_plain_embed` drops the input BatchNorm, so `Embed.forward` takes a
+        # different branch -- make sure the (N, C, P) -> (N, P, C) transpose still
+        # happens and the graph exports and matches PyTorch
+        self._check_version(3, extra_options={"use_plain_embed": True})
 
     @unittest.skipUnless(_NATIVE_RMSNORM is not None, "torch.nn.RMSNorm is unavailable")
     def test_v3_rmsnorm_implementation_depends_on_for_inference(self):

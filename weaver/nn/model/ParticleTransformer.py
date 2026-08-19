@@ -376,13 +376,30 @@ class SwiGLUFFN(nn.Module):
 
 
 class Embed(nn.Module):
-    def __init__(self, input_dim, dims, normalize_input=True, activation="gelu", use_conv_embed=False):
+    """Per-particle input embedding.
+
+    By default each entry of `dims` adds a `LayerNorm` + `Linear` + activation, on top of an
+    input `BatchNorm1d`. `use_plain_embed` instead builds a bare stack of `Linear` layers with
+    no input BatchNorm, no LayerNorm and no activation, reproducing the single `linear_in` of
+    `weaver.nn.model.PlainTransformer.PlainTransformerTagger`; it overrides `normalize_input`
+    and is meant to be used with a single-entry `dims` (a plain stack of >1 linear layers is
+    mathematically equivalent to one, just with more parameters).
+    """
+
+    def __init__(
+        self, input_dim, dims, normalize_input=True, activation="gelu", use_conv_embed=False, use_plain_embed=False
+    ):
         super().__init__()
 
-        self.input_bn = nn.BatchNorm1d(input_dim) if normalize_input else None
+        if use_plain_embed and len(dims) > 1:
+            _logger.warning(
+                "Embed: use_plain_embed=True with embed_dims=%s -- a stack of plain linear layers "
+                "collapses to a single one; consider a single-entry embed_dims." % str(list(dims))
+            )
+        self.input_bn = nn.BatchNorm1d(input_dim) if normalize_input and not use_plain_embed else None
         self.use_conv_embed = bool(use_conv_embed)
         if self.use_conv_embed:
-            assert normalize_input == True
+            assert normalize_input == True and not use_plain_embed
             module_list = []
             for dim in dims:
                 module_list.extend(
@@ -398,23 +415,27 @@ class Embed(nn.Module):
         else:
             module_list = []
             for dim in dims:
-                module_list.extend(
-                    [
-                        nn.LayerNorm(input_dim),
-                        nn.Linear(input_dim, dim),
-                        nn.GELU() if activation == "gelu" else nn.ReLU(),
-                    ]
-                )
+                if use_plain_embed:
+                    module_list.append(nn.Linear(input_dim, dim))
+                else:
+                    module_list.extend(
+                        [
+                            nn.LayerNorm(input_dim),
+                            nn.Linear(input_dim, dim),
+                            nn.GELU() if activation == "gelu" else nn.ReLU(),
+                        ]
+                    )
                 input_dim = dim
             self.conv_embed = nn.Identity()
             self.embed = nn.Sequential(*module_list)
 
     def forward(self, x):
+        # x: (batch, input_dim, seq_len)
         if self.input_bn is not None:
-            # x: (batch, embed_dim, seq_len)
             x = self.input_bn(x)
-            x = self.conv_embed(x)
-            x = x.transpose(1, 2).contiguous()
+        # `conv_embed` is `Identity` unless `use_conv_embed`, which requires `normalize_input`
+        x = self.conv_embed(x)
+        x = x.transpose(1, 2).contiguous()
         # x: (batch, seq_len, embed_dim)
         return self.embed(x)
 
@@ -945,6 +966,7 @@ class ParticleTransformer(nn.Module):
         remove_self_pair=False,
         use_pre_activation_pair=True,
         use_conv_embed=False,
+        use_plain_embed=False,
         embed_dims=(128, 512, 128),
         pair_embed_dims=(64, 64, 64),
         pair_embed_sparse_eval=None,
@@ -1054,7 +1076,13 @@ class ParticleTransformer(nn.Module):
         _logger.info("block w/ attn_mask: %s" % str(self.block_ids_with_attn_mask))
 
         self.embed = (
-            Embed(input_dim, embed_dims, activation=activation, use_conv_embed=use_conv_embed)
+            Embed(
+                input_dim,
+                embed_dims,
+                activation=activation,
+                use_conv_embed=use_conv_embed,
+                use_plain_embed=use_plain_embed,
+            )
             if len(embed_dims) > 0
             else nn.Identity()
         )
@@ -1262,6 +1290,7 @@ class ParticleTransformerTagger(nn.Module):
         pair_extra_dim=0,
         remove_self_pair=False,
         use_pre_activation_pair=True,
+        use_plain_embed=False,
         embed_dims=(128, 512, 128),
         pair_embed_dims=(64, 64, 64),
         num_heads=8,
@@ -1289,8 +1318,8 @@ class ParticleTransformerTagger(nn.Module):
         self.pf_trimmer = SequenceTrimmer(enabled=trim and not for_inference)
         self.sv_trimmer = SequenceTrimmer(enabled=trim and not for_inference)
 
-        self.pf_embed = Embed(pf_input_dim, embed_dims, activation=activation)
-        self.sv_embed = Embed(sv_input_dim, embed_dims, activation=activation)
+        self.pf_embed = Embed(pf_input_dim, embed_dims, activation=activation, use_plain_embed=use_plain_embed)
+        self.sv_embed = Embed(sv_input_dim, embed_dims, activation=activation, use_plain_embed=use_plain_embed)
 
         self.part = ParticleTransformer(
             input_dim=embed_dims[-1],
@@ -1356,6 +1385,7 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
         pair_extra_dim=0,
         remove_self_pair=False,
         use_pre_activation_pair=True,
+        use_plain_embed=False,
         embed_dims=(128, 512, 128),
         pair_embed_dims=(64, 64, 64),
         num_heads=8,
@@ -1384,8 +1414,8 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
         self.pf_trimmer = SequenceTrimmer(enabled=trim and not for_inference)
         self.sv_trimmer = SequenceTrimmer(enabled=trim and not for_inference)
 
-        self.pf_embed = Embed(pf_input_dim, embed_dims, activation=activation)
-        self.sv_embed = Embed(sv_input_dim, embed_dims, activation=activation)
+        self.pf_embed = Embed(pf_input_dim, embed_dims, activation=activation, use_plain_embed=use_plain_embed)
+        self.sv_embed = Embed(sv_input_dim, embed_dims, activation=activation, use_plain_embed=use_plain_embed)
 
         self.part = ParticleTransformer(
             input_dim=embed_dims[-1],
