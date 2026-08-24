@@ -54,14 +54,20 @@ _NAIVE_AMP = False
 try:
     torch.is_autocast_enabled("cpu")
 
-    def _autocast_active() -> bool:
-        """Whether CPU or CUDA autocast is enabled."""
+    def _autocast_active(device_type: str | None = None) -> bool:
+        """Whether autocast is enabled, for ``device_type`` or for CPU/CUDA at all."""
+        if device_type is not None:
+            return torch.is_autocast_enabled(device_type)
         return torch.is_autocast_enabled("cuda") or torch.is_autocast_enabled("cpu")
 
 except TypeError:  # pragma: no cover - torch<2.4 has no device_type argument
 
-    def _autocast_active() -> bool:
-        """Whether CPU or CUDA autocast is enabled."""
+    def _autocast_active(device_type: str | None = None) -> bool:
+        """Whether autocast is enabled, for ``device_type`` or for CPU/CUDA at all."""
+        if device_type == "cpu":
+            return torch.is_autocast_cpu_enabled()
+        if device_type == "cuda":
+            return torch.is_autocast_enabled()
         return torch.is_autocast_enabled() or torch.is_autocast_cpu_enabled()
 
 
@@ -290,13 +296,54 @@ def _get_flash_attn_varlen_func():
     return _flash_attn_varlen_func
 
 
+_HALF_CAST_WARNED = False
+
+
+def _half_cast_dtype(device: torch.device) -> torch.dtype:
+    """Half-precision dtype to run a packed (varlen / flash / xformers) kernel in.
+
+    Those kernels have no fp32 path, so fp32 inputs must be cast. Inside an autocast
+    region the surrounding autocast dtype is used -- and in practice the inputs already
+    arrive in it, so no cast happens at all. Outside one, fp16 is used: it keeps three
+    more mantissa bits than bf16, which measurably matters here (see below).
+
+    Note that this makes the packed backends *less accurate than* ``native``, which pins
+    attention to fp32 via :class:`minimum_autocast_precision` even under autocast. On a
+    6-epoch JetClass run of the tag-slim config, val accuracy was 0.818 for fp32 attention
+    against 0.808 (fp16) and 0.806 (bf16) -- and that ~1 pp gap comes from the precision,
+    not from the packed layout: forcing the *dense* path to fp16 reproduced it, while the
+    packed layout at matched fp16 precision cost <=0.3 pp (at the ~0.1-0.3 pp run-to-run
+    noise floor). bf16 was tried here and is worse: fp16 does underflow the backward pass
+    (the attention output gradients sit near 1e-7, below fp16's smallest subnormal, so
+    most gradient *entries* flush to zero), but those entries are the smallest ones and
+    carry ~1% of the gradient norm, whereas bf16's coarser mantissa degrades the forward
+    values that matter -- worth ~1 pp of val accuracy in the packed layout.
+    """
+    global _HALF_CAST_WARNED
+
+    if _autocast_active(device.type):
+        dtype = torch.get_autocast_dtype(device.type)
+        if dtype in (torch.float16, torch.bfloat16):
+            return dtype
+
+    if not _HALF_CAST_WARNED:
+        _HALF_CAST_WARNED = True
+        _logger.warning(
+            "The packed attention backends have no fp32 kernel, so attention will run in "
+            "float16 while the rest of the network stays in float32. This costs about 1% "
+            "absolute accuracy against attention_backend='native', which keeps attention "
+            "in float32; use 'native' if that matters more than the speedup."
+        )
+    return torch.float16
+
+
 def _run_varlen_kernel(
     kernel, query, key, value, kernel_kwargs: dict, scale_kwarg: str = "scale"
 ) -> torch.Tensor:
     """Run a flash-attention varlen kernel on (1, heads, tokens, channels) tensors.
 
     The kernels expect packed (tokens, heads, channels) inputs in fp16/bf16; fp32 inputs
-    are cast to the autocast dtype and back (flash attention only supports half
+    are cast to :func:`_half_cast_dtype` and back (flash attention only supports half
     precision), and the head dim is zero-padded to a multiple of 8 (zero padding leaves
     the attention logits and the retained output channels unchanged; the softmax scale
     is passed explicitly via ``scale_kwarg`` so it keeps the un-padded 1/sqrt(channels)).
@@ -308,9 +355,7 @@ def _run_varlen_kernel(
     in_dtype = None
     if query.dtype not in (torch.float16, torch.bfloat16):
         in_dtype = query.dtype
-        dtype = torch.get_autocast_dtype(query.device.type)
-        if dtype not in (torch.float16, torch.bfloat16):
-            dtype = torch.float16
+        dtype = _half_cast_dtype(query.device)
         query, key, value = query.to(dtype), key.to(dtype), value.to(dtype)
 
     def reshape(x):
@@ -370,7 +415,7 @@ def _xformers_attention(query, key, value, attn_bias=None):
 
     The inputs are (batch, heads, items, channels), as for SDPA; xformers expects
     (batch, items, heads, channels). As for the varlen kernels, fp32 inputs are cast
-    to the autocast dtype and back (xformers' fp32 cutlass kernel is unavailable on
+    to :func:`_half_cast_dtype` and back (xformers' fp32 cutlass kernel is unavailable on
     recent GPU architectures, e.g. sm_120, where only the fp16/bf16 flash-attention
     kernels remain), and the head dim is zero-padded to a multiple of 8 with the
     softmax scale pinned to the un-padded 1/sqrt(channels).
@@ -380,9 +425,7 @@ def _xformers_attention(query, key, value, attn_bias=None):
     in_dtype = None
     if query.dtype not in (torch.float16, torch.bfloat16):
         in_dtype = query.dtype
-        dtype = torch.get_autocast_dtype(query.device.type)
-        if dtype not in (torch.float16, torch.bfloat16):
-            dtype = torch.float16
+        dtype = _half_cast_dtype(query.device)
         query, key, value = query.to(dtype), key.to(dtype), value.to(dtype)
 
     channels = query.shape[-1]

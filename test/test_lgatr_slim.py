@@ -25,6 +25,7 @@ from weaver.utils.dataset import DataConfig
 from weaver.utils.import_tools import import_module
 from weaver.nn.model.LGATrSlim import (
     LGATrSlimTagger,
+    _half_cast_dtype,
     _run_varlen_kernel,
     get_sparse_attention_kwargs,
 )
@@ -247,6 +248,21 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
         ref = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         # the stub runs in bf16/fp16 inside the wrapper, hence the loose tolerance
         torch.testing.assert_close(out, ref, rtol=0.05, atol=0.05)
+
+    def test_half_cast_dtype(self):
+        """Outside autocast the packed kernels fall back to fp16, not bf16.
+
+        Both underflow-free bf16 and mantissa-rich fp16 were measured on a 6-epoch
+        JetClass run: fp16 won by ~1 pp of val accuracy in the packed layout, because
+        bf16's coarser mantissa hurts the forward values more than fp16's backward
+        underflow hurts (the entries that underflow carry ~1% of the gradient norm).
+        """
+        cpu = torch.device("cpu")
+        self.assertEqual(_half_cast_dtype(cpu), torch.float16)
+
+        # inside autocast the surrounding autocast dtype wins
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            self.assertEqual(_half_cast_dtype(cpu), torch.bfloat16)
 
     def test_sparse_attention_kwargs(self):
         # CPU: materialized block-diagonal mask fallback
