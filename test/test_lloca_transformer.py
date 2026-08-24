@@ -248,7 +248,7 @@ class LLoCaPackedAttentionTest(unittest.TestCase):
 
     def test_invalid_backend(self):
         with self.assertRaises(ValueError):
-            LLoCaTransformerTagger(input_dim=17, num_classes=10, attention_backend="flex")
+            LLoCaTransformerTagger(input_dim=17, num_classes=10, attention_backend="nonesuch")
 
     def test_packed_matches_dense(self):
         for mean_aggregation in [False, True]:

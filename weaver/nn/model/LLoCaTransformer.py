@@ -1789,11 +1789,27 @@ class LLoCaTransformerTagger(nn.Module):
             dropout_prob=dropout_prob,
             preserve_variance=preserve_variance,
             elementwise_affine=elementwise_affine,
-            compile=compile_model,
-            compile_kwargs=compile_kwargs,
+            # NOT compile=compile_model: weaver's --compile already wraps the whole
+            # model (train.py), so self-compiling here would compile twice. The flag is
+            # kept as a signal that the model is being compiled externally.
+            compile=False,
         )
+        if compile_kwargs:
+            _logger.warning(
+                "compile_kwargs=%s is ignored: the model is compiled as a whole by "
+                "weaver's --compile; pass torch.compile options via --compiler-option.",
+                compile_kwargs,
+            )
 
-        self.trimmer = SequenceTrimmer(enabled=trim and not for_inference)
+        # See LGATrSlimTagger: reserve the prepended spurion / global tokens so the
+        # trimmed length is a multiple of 32 once they are added, keeping the compiled
+        # graph's sequence symbol clean.
+        num_extra_tokens = spurions.size(0) + (0 if mean_aggregation else 1)
+        self.trimmer = SequenceTrimmer(
+            enabled=trim and not for_inference,
+            round_to_32=compile_model,
+            num_extra_tokens=num_extra_tokens,
+        )
 
     def init_standardization(self, v, mask):
         """Initialize the frames-net edge standardization from a reference batch.
@@ -1985,10 +2001,20 @@ class LLoCaTransformerTagger(nn.Module):
             global_idxs, nonglobal_idxs, ptr, batch, num_total = insert_global_tokens(
                 ptr, batch, features.shape[0]
             )
-            new_features = features.new_zeros(num_total, features.shape[-1] + 1)
-            new_features[nonglobal_idxs, :-1] = features
-            new_features[:, -1].index_fill_(0, global_idxs, 1.0)
-            features = new_features
+            # Built column-wise and concatenated rather than by writing into a wider
+            # zero tensor: mutating a view in place (``new[:, -1].index_fill_(...)``)
+            # functionalizes to a ``copy_`` into an in-graph ``empty``, which Inductor
+            # asserts on, breaking end-to-end torch.compile of the packed path.
+            flag = features.new_zeros(num_total, 1).index_fill(0, global_idxs, 1.0)
+            features = torch.cat(
+                [
+                    features.new_zeros(num_total, features.shape[-1]).index_put(
+                        (nonglobal_idxs,), features
+                    ),
+                    flag,
+                ],
+                dim=-1,
+            )
 
             eye = torch.eye(4, device=matrices.device, dtype=matrices.dtype)
             matrices_new = eye.unsqueeze(0).expand(num_total, -1, -1).clone()

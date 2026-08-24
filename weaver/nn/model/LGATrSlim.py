@@ -479,6 +479,34 @@ def _get_flex_ops():
     return _flex_ops
 
 
+@torch.compiler.disable()
+def _build_flex_block_mask(batch: torch.Tensor, block_size: int):
+    """Build the block-diagonal ``BlockMask`` for the packed layout.
+
+    Hidden from the *enclosing* torch.compile (weaver's ``--compile`` wraps the whole
+    model): the mask's shapes are derived symbols like ``(tokens + k) // block_size``,
+    and Inductor's ``statically_known_multiple_of`` oracle cannot factor those, so they
+    reach the scheduler and raise ``CantSplit``. ``create_block_mask`` is compiled on its
+    own inside :func:`_get_flex_ops`, so nothing is lost by keeping it out of the graph.
+    """
+    _, create_block_mask = _get_flex_ops()
+    num_tokens = batch.numel()
+
+    def jagged_mask(b, h, q_idx, kv_idx):
+        # tokens attend only within their own event
+        return batch[q_idx] == batch[kv_idx]
+
+    return create_block_mask(
+        jagged_mask,
+        None,
+        None,
+        num_tokens,
+        num_tokens,
+        device=batch.device,
+        BLOCK_SIZE=block_size,
+    )
+
+
 @minimum_autocast_precision(torch.float32, output="high")
 def _flex_attention(query, key, value, block_mask=None):
     """Block-diagonal attention via torch's ``flex_attention``.
@@ -600,32 +628,13 @@ def get_sparse_attention_kwargs(
         seqlens = (ptr[1:] - ptr[:-1]).tolist()
         return {"attn_bias": BlockDiagonalMask.from_seqlens(seqlens)}
     if attention_backend == "flex":
-        _, create_block_mask = _get_flex_ops()
-        num_tokens = batch.numel()
-
-        def jagged_mask(b, h, q_idx, kv_idx):
-            # tokens attend only within their own event
-            return batch[q_idx] == batch[kv_idx]
-
         # flex's default 128-token tile is wider than a whole jet (JetClass averages ~70
         # constituents), so most of each diagonal tile would be masked-out work. Halving
         # the tile cut a compiled fwd+bwd step from 90 ms to 70 ms at batch 512 on an RTX
         # 5090, and 64 suits jet multiplicities generally (tens to low hundreds of
         # constituents). 32 is rejected by the kernel ("block size must be divisible by
         # BLOCK_M").
-        block_size = 64
-
-        return {
-            "block_mask": create_block_mask(
-                jagged_mask,
-                None,
-                None,
-                num_tokens,
-                num_tokens,
-                device=batch.device,
-                BLOCK_SIZE=block_size,
-            )
-        }
+        return {"block_mask": _build_flex_block_mask(batch, block_size=64)}
     cu_seqlens = ptr.to(torch.int32)
     if attention_backend == "flash":
         return {
@@ -1305,8 +1314,13 @@ class LGATrSlimTagger(nn.Module):
         Number of output classes.
     hidden_v_channels / hidden_s_channels / num_blocks / num_heads / mlp_ratio / attn_ratio /
     num_layers_mlp / nonlinearity / nonlinearity_v / dropout_prob / norm_elementwise_affine /
-    checkpoint_blocks / naive_amp / compile_model / compile_kwargs
+    checkpoint_blocks / naive_amp
         Forwarded to :class:`LGATrSlim` (defaults follow the tagging-guide ``tag_slim`` config).
+    compile_model / compile_kwargs
+        Accepted for interface compatibility but no longer used to self-compile: weaver's
+        ``--compile`` wraps the whole model, so compiling here too would compile twice.
+        Pass torch.compile options through weaver's ``--compiler-option`` instead.
+        ``compile_model`` still switches the trimmer to ``round_to_32``.
     beam_reference / two_beams / add_time_reference / spurion_scale
         Spurion configuration (defaults follow the tagging-guide ``tagging`` config).
     auxiliary_scalars
@@ -1341,7 +1355,7 @@ class LGATrSlimTagger(nn.Module):
         while ``"varlen"`` buys a further ~1.8x for that ~1 pp.
 
         One fwd+bwd step at batch 512 on an RTX 5090 (8 blocks, 128 particles), with
-        ``compile_model=True`` / without:
+        ``--compile`` / without:
 
         =========  ==================  ==================
         backend    compiled            eager
@@ -1441,11 +1455,29 @@ class LGATrSlimTagger(nn.Module):
             norm_elementwise_affine=norm_elementwise_affine,
             checkpoint_blocks=checkpoint_blocks,
             naive_amp=naive_amp,
-            compile=compile_model,
-            compile_kwargs=compile_kwargs,
+            # NOT compile=compile_model: weaver's --compile already wraps the whole
+            # model (train.py), so self-compiling here would compile twice. The flag is
+            # kept as a signal that the model is being compiled externally.
+            compile=False,
         )
+        if compile_kwargs:
+            _logger.warning(
+                "compile_kwargs=%s is ignored: the model is compiled as a whole by "
+                "weaver's --compile; pass torch.compile options via --compiler-option.",
+                compile_kwargs,
+            )
 
-        self.trimmer = SequenceTrimmer(enabled=trim and not for_inference)
+        # Reserve the tokens prepended in forward() (spurions, plus the global class
+        # token) so that under torch.compile the trimmer yields a sequence length that is
+        # a clean multiple of 32 *after* they are added. Without this the compiled graph
+        # sees a fresh derived symbol on every trimmed batch, which on torch 2.11 trips
+        # dynamic-shape bugs in Inductor. Mirrors ParticleTransformer.
+        num_extra_tokens = spurions.size(0) + (0 if mean_aggregation else 1)
+        self.trimmer = SequenceTrimmer(
+            enabled=trim and not for_inference,
+            round_to_32=compile_model,
+            num_extra_tokens=num_extra_tokens,
+        )
 
     def forward(self, x, v=None, mask=None):
         # x: (N, C, P) -- scalar features
@@ -1531,13 +1563,23 @@ class LGATrSlimTagger(nn.Module):
             global_idxs, nonglobal_idxs, ptr, batch, num_total = insert_global_tokens(
                 ptr, batch, vectors.shape[0]
             )
-            new_v = vectors.new_zeros(num_total, vectors.shape[-1])
-            new_v[nonglobal_idxs] = vectors
-            vectors = new_v
-            new_s = scalars.new_zeros(num_total, scalars.shape[-1] + 1)
-            new_s[nonglobal_idxs, :-1] = scalars
-            new_s[:, -1].index_fill_(0, global_idxs, 1.0)
-            scalars = new_s
+            vectors = vectors.new_zeros(num_total, vectors.shape[-1]).index_put(
+                (nonglobal_idxs,), vectors
+            )
+            # Built column-wise and concatenated rather than by writing into a wider
+            # zero tensor: mutating a view in place (``new_s[:, -1].index_fill_(...)``)
+            # functionalizes to a ``copy_`` into an in-graph ``empty``, which Inductor
+            # asserts on, so it broke end-to-end torch.compile of the packed path.
+            flag = scalars.new_zeros(num_total, 1).index_fill(0, global_idxs, 1.0)
+            scalars = torch.cat(
+                [
+                    scalars.new_zeros(num_total, scalars.shape[-1]).index_put(
+                        (nonglobal_idxs,), scalars
+                    ),
+                    flag,
+                ],
+                dim=-1,
+            )
 
         attn_kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen, self.attention_backend)
 
