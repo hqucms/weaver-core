@@ -16,10 +16,16 @@ and ``experiments/tagging/embedding.py``). The tagging setup uses identity frame
 none of the LLoCa frames machinery is required. The default attention backend is the
 native ``torch.nn.functional.scaled_dot_product_attention`` on the dense zero-padded
 layout; ``attention_backend="varlen"`` (torch >= 2.10 native flash-attention varlen
-kernel), ``"flash"`` (the flash-attn package), or ``"xformers"``
-(``xformers.ops.memory_efficient_attention`` with a block-diagonal mask) instead drop
+kernel), ``"flash"`` (the flash-attn package), ``"xformers"``
+(``xformers.ops.memory_efficient_attention`` with a block-diagonal mask), or ``"flex"``
+(``torch.nn.attention.flex_attention`` with a block-diagonal ``BlockMask``) instead drop
 the padding and run block-diagonal attention over the packed tokens, as in the
 tagging-guide sparse path.
+
+The three flash-derived packed backends have no fp32 kernel and therefore run attention
+in half precision, which costs ~1 pp of tagging accuracy against ``"native"``; ``"flex"``
+does have an fp32 path, so it keeps ``"native"``'s precision (and its results, to ~1e-6)
+while still skipping the padding. See :func:`_half_cast_dtype` and :func:`_flex_attention`.
 """
 
 from __future__ import annotations
@@ -248,7 +254,7 @@ def _post_attention_reshape(
 # block-diagonal ``attn_bias``).
 # ------------------------------------------------------------------------------------
 
-ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers")
+ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers", "flex")
 
 # kwargs that select the varlen kernels, following the upstream argument naming of
 # torch.nn.attention.varlen.varlen_attn and flash_attn.flash_attn_varlen_func;
@@ -256,9 +262,11 @@ ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers")
 _VARLEN_KWARGS = ("cu_seq_q", "cu_seq_k", "max_q", "max_k")
 _FLASH_KWARGS = ("cu_seqlens_q", "cu_seqlens_k", "max_seqlen_q", "max_seqlen_k")
 _XFORMERS_KWARGS = ("attn_bias",)
+_FLEX_KWARGS = ("block_mask",)
 
 _flash_attn_varlen_func = None
 _xformers_ops = None
+_flex_ops = None
 
 
 def _get_xformers_ops():
@@ -448,6 +456,47 @@ def _xformers_attention(query, key, value, attn_bias=None):
     return out
 
 
+def _get_flex_ops():
+    """Import ``flex_attention`` and ``create_block_mask`` (torch >= 2.5).
+
+    ``flex_attention`` is only fast once compiled, and the packed token count changes
+    from batch to batch, so it is compiled with ``dynamic=True`` to avoid recompiling on
+    every step.
+    """
+    global _flex_ops
+    if _flex_ops is None:
+        try:
+            from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+        except ImportError as err:
+            raise ImportError(
+                "attention_backend='flex' requires torch>=2.5 "
+                "(torch.nn.attention.flex_attention)."
+            ) from err
+        _flex_ops = (
+            torch.compile(flex_attention, dynamic=True),
+            torch.compile(create_block_mask, dynamic=True),
+        )
+    return _flex_ops
+
+
+@minimum_autocast_precision(torch.float32, output="high")
+def _flex_attention(query, key, value, block_mask=None):
+    """Block-diagonal attention via torch's ``flex_attention``.
+
+    Unlike the varlen / flash / xformers kernels, flex_attention has an fp32 path, so
+    this backend drops the padding *and* keeps the fp32 attention precision of
+    ``native`` -- worth ~1 pp of val accuracy over the half-precision packed backends
+    (see :func:`_half_cast_dtype`). It is pinned to fp32 under autocast exactly as
+    ``_sdpa_attention`` is, so ``flex`` and ``native`` share one precision policy.
+
+    The block mask makes this O(tokens x block) rather than the O(tokens^2) of a
+    materialized block-diagonal SDPA mask, which is why the fp32 packed layout is
+    tractable here at all.
+    """
+    flex_fn, _ = _get_flex_ops()
+    return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
+
+
 @minimum_autocast_precision(torch.float32, output="high")
 def _sdpa_attention(*args, **kwargs):
     return F.scaled_dot_product_attention(*args, **kwargs)
@@ -460,6 +509,8 @@ def _dispatch_attention(query, key, value, native_fn, **attn_kwargs):
         return _varlen_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _XFORMERS_KWARGS):
         return _xformers_attention(query, key, value, **attn_kwargs)
+    if any(attn_kwargs.get(key_) is not None for key_ in _FLEX_KWARGS):
+        return _flex_attention(query, key, value, **attn_kwargs)
     return native_fn(query, key, value, **attn_kwargs)
 
 
@@ -534,9 +585,10 @@ def get_sparse_attention_kwargs(
 
     On CUDA this returns the ``cu_seqlens`` kwargs of the requested varlen kernel
     (``maxlen`` may be any upper bound on the sequence lengths, so no device-to-host
-    sync is needed), or the ``attn_bias`` kwarg for the xformers backend (whose
+    sync is needed), the ``attn_bias`` kwarg for the xformers backend (whose
     ``BlockDiagonalMask`` is built from host-side sequence lengths, so this backend
-    incurs a device-to-host sync). On CPU, where the fused attention kernels are
+    incurs a device-to-host sync), or the ``block_mask`` kwarg for the flex backend
+    (built on device from ``batch``, no sync). On CPU, where the fused attention kernels are
     unavailable, it falls back to a materialized block-diagonal SDPA mask (as in
     tagging-guide).
     """
@@ -547,6 +599,33 @@ def get_sparse_attention_kwargs(
         _, BlockDiagonalMask = _get_xformers_ops()
         seqlens = (ptr[1:] - ptr[:-1]).tolist()
         return {"attn_bias": BlockDiagonalMask.from_seqlens(seqlens)}
+    if attention_backend == "flex":
+        _, create_block_mask = _get_flex_ops()
+        num_tokens = batch.numel()
+
+        def jagged_mask(b, h, q_idx, kv_idx):
+            # tokens attend only within their own event
+            return batch[q_idx] == batch[kv_idx]
+
+        # flex's default 128-token tile is wider than a whole jet (JetClass averages ~70
+        # constituents), so most of each diagonal tile would be masked-out work. Halving
+        # the tile cut a compiled fwd+bwd step from 90 ms to 70 ms at batch 512 on an RTX
+        # 5090, and 64 suits jet multiplicities generally (tens to low hundreds of
+        # constituents). 32 is rejected by the kernel ("block size must be divisible by
+        # BLOCK_M").
+        block_size = 64
+
+        return {
+            "block_mask": create_block_mask(
+                jagged_mask,
+                None,
+                None,
+                num_tokens,
+                num_tokens,
+                device=batch.device,
+                BLOCK_SIZE=block_size,
+            )
+        }
     cu_seqlens = ptr.to(torch.int32)
     if attention_backend == "flash":
         return {
@@ -1248,11 +1327,29 @@ class LGATrSlimTagger(nn.Module):
         ``"native"`` (default) runs the dense zero-padded layout through
         ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"`` (torch's native
         flash-attention varlen kernel, torch >= 2.10), ``"flash"`` (the flash-attn
-        package, FlashAttention-3 interface preferred), and ``"xformers"``
-        (``xformers.ops.memory_efficient_attention`` with a block-diagonal mask) drop
+        package, FlashAttention-3 interface preferred), ``"xformers"``
+        (``xformers.ops.memory_efficient_attention`` with a block-diagonal mask), and
+        ``"flex"`` (``torch.nn.attention.flex_attention``, torch >= 2.5) drop
         the padding and run block-diagonal attention over the packed tokens instead.
         These packed backends require CUDA; on CPU the packed layout falls back to a
         materialized block-diagonal SDPA mask. ONNX export requires ``"native"``.
+
+        The first three run attention in fp16/bf16 (their kernels have no fp32 path),
+        which costs ~1 pp of accuracy against ``"native"``; ``"flex"`` runs in fp32 and
+        matches ``"native"`` numerically (to ~1e-6 on logits and gradients), so it is
+        strictly better than ``"native"`` here -- faster and much lighter on memory --
+        while ``"varlen"`` buys a further ~1.8x for that ~1 pp.
+
+        One fwd+bwd step at batch 512 on an RTX 5090 (8 blocks, 128 particles), with
+        ``compile_model=True`` / without:
+
+        =========  ==================  ==================
+        backend    compiled            eager
+        =========  ==================  ==================
+        native      81 ms / 12.0 GiB   142 ms / 14.1 GiB
+        flex        70 ms /  5.8 GiB    88 ms /  6.9 GiB
+        varlen      39 ms /  5.2 GiB    66 ms /  6.3 GiB
+        =========  ==================  ==================
     trim
         Whether to enable sequence trimming during training.
     use_amp

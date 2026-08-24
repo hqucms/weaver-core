@@ -181,7 +181,7 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
 
     def test_invalid_backend(self):
         with self.assertRaises(ValueError):
-            LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="flex")
+            LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="nonesuch")
 
     def test_packed_matches_dense(self):
         for mean_aggregation in [False, True]:
@@ -314,6 +314,18 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
             out_dense = dense(x, v, mask)
             out_packed = packed(x, v, mask)
         torch.testing.assert_close(out_dense, out_packed, rtol=2e-2, atol=2e-2)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for flex_attention")
+    def test_flex_backend_cuda(self):
+        """flex_attention has an fp32 path, so unlike the flash-derived packed backends
+        it must reproduce the dense fp32 result to tight tolerance, not to 2e-2."""
+        dense, packed = self._make_pair("flex")
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        torch.testing.assert_close(out_dense, out_packed, rtol=1e-4, atol=1e-5)
 
     @unittest.skipUnless(
         torch.cuda.is_available() and _HAS_XFORMERS,

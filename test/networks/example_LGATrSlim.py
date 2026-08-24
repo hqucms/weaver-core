@@ -11,10 +11,12 @@ additionally requires ``-o momentum_float64 False`` (onnxruntime lacks float64 k
 for some of the ops used by the kinematic features).
 
 On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
-varlen kernel), ``-o attention_backend flash`` (flash-attn package), or
-``-o attention_backend xformers`` (xformers memory-efficient attention) to drop the
-padding and run block-diagonal attention over the packed tokens. ONNX export
-requires the default ``native`` backend.
+varlen kernel), ``-o attention_backend flash`` (flash-attn package),
+``-o attention_backend xformers`` (xformers memory-efficient attention), or
+``-o attention_backend flex`` (torch flex_attention) to drop the padding and run
+block-diagonal attention over the packed tokens. The first three have no fp32 kernel
+and run attention in half precision, costing ~1 pp of accuracy against ``native``;
+``flex`` keeps fp32 and matches ``native``. ONNX export requires ``native``.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """
