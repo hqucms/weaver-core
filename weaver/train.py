@@ -825,10 +825,7 @@ def model_setup(args, data_config, device="cpu"):
             "\n - ".join([name for name, p in model.named_parameters() if not p.requires_grad]),
         )
     # _logger.info(model)
-    try:
-        flops(model, model_info, device=device)
-    except Exception as e:
-        _logger.error("Error in flops: %s", str(e))
+    # note: the flops/params report is deferred to `_main`, see `report_flops` there
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
@@ -1045,6 +1042,29 @@ def _main(args):
     # so we do not convert it to nn.DataParallel now
     orig_model = model
 
+    def report_flops(device):
+        """Report flops/params of the *uncompiled* model, after torch.compile is set up.
+
+        Two reasons this runs here rather than in `model_setup`:
+
+        - it must count the plain module, not the `torch.compile`/DataParallel wrapper;
+        - `weaver.utils.flops_counter` monkeypatches `torch.mm` & co. with objects that
+          have no `__name__`, and Inductor captures those names at *import* time
+          (`torch/_inductor/kernel/mm.py`: `ExternKernelChoice(torch.mm, ...)`). If the
+          first `import torch._inductor` of the process lands inside that window it dies,
+          and Python rolls the half-built modules back out of `sys.modules` -- silently,
+          because the flops error is caught below. `torch._inductor.kernel.flex` has
+          finished by then and *stays* cached, so the retry re-runs `lowering.py` with a
+          fresh `lowerings` dict but skips the flex submodule, permanently losing the
+          flex_attention lowering; a later compile then fails with the very confusing
+          `InductorError: AssertionError: flex_attention is not an OpOverload`. Running
+          after `torch.compile` above means Inductor is already imported and safe.
+        """
+        try:
+            flops(orig_model, model_info, device=device)
+        except Exception as e:
+            _logger.error("Error in flops: %s", str(e))
+
     if training_mode:
         model = orig_model.to(dev)
 
@@ -1069,6 +1089,8 @@ def _main(args):
             compiler_options = {k: ast.literal_eval(v) for k, v in args.compiler_option}
             _logger.info("Use torch.compile with options: %s" % str(compiler_options))
             model = torch.compile(model, **compiler_options)
+
+        report_flops(dev)
 
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
@@ -1202,6 +1224,10 @@ def _main(args):
             if gpus is not None and len(gpus) > 1:
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             model = model.to(dev)
+
+        if not training_mode:
+            # in training runs this has already been reported before the training loop
+            report_flops(dev)
 
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()

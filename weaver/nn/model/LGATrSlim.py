@@ -267,6 +267,7 @@ _FLEX_KWARGS = ("block_mask",)
 _flash_attn_varlen_func = None
 _xformers_ops = None
 _flex_ops = None
+_compiled_flex_attention = None
 
 
 def _get_xformers_ops():
@@ -459,9 +460,12 @@ def _xformers_attention(query, key, value, attn_bias=None):
 def _get_flex_ops():
     """Import ``flex_attention`` and ``create_block_mask`` (torch >= 2.5).
 
-    ``flex_attention`` is only fast once compiled, and the packed token count changes
-    from batch to batch, so it is compiled with ``dynamic=True`` to avoid recompiling on
-    every step.
+    ``flex_attention`` is returned *uncompiled* -- see :func:`_flex_attention` for which
+    of the two forms is used where. ``create_block_mask`` is always compiled: uncompiled
+    it materializes a dense ``(tokens, tokens)`` mask before reducing it to blocks, which
+    is exactly the O(tokens^2) allocation the packed layout exists to avoid. It is
+    compiled with ``dynamic=True`` because the packed token count changes from batch to
+    batch, which would otherwise recompile on every step.
     """
     global _flex_ops
     if _flex_ops is None:
@@ -472,11 +476,24 @@ def _get_flex_ops():
                 "attention_backend='flex' requires torch>=2.5 "
                 "(torch.nn.attention.flex_attention)."
             ) from err
-        _flex_ops = (
-            torch.compile(flex_attention, dynamic=True),
-            torch.compile(create_block_mask, dynamic=True),
-        )
+        _flex_ops = (flex_attention, torch.compile(create_block_mask, dynamic=True))
     return _flex_ops
+
+
+def _get_compiled_flex_attention():
+    """``torch.compile``d ``flex_attention``, for calls that are *not* already compiled.
+
+    flex_attention only becomes a fused kernel once Inductor lowers its HOP; called from
+    plain eager it falls back to an unfused implementation that materializes the full
+    scores matrix, which the packed layout cannot afford. So the eager entry point
+    (weaver without ``--compile``, ONNX export, ``--predict``) compiles it here, with
+    ``dynamic=True`` for the batch-to-batch token count.
+    """
+    global _compiled_flex_attention
+    if _compiled_flex_attention is None:
+        flex_fn, _ = _get_flex_ops()
+        _compiled_flex_attention = torch.compile(flex_fn, dynamic=True)
+    return _compiled_flex_attention
 
 
 @torch.compiler.disable()
@@ -520,8 +537,17 @@ def _flex_attention(query, key, value, block_mask=None):
     The block mask makes this O(tokens x block) rather than the O(tokens^2) of a
     materialized block-diagonal SDPA mask, which is why the fp32 packed layout is
     tractable here at all.
+
+    Under an enclosing ``torch.compile`` (weaver's ``--compile``) this calls the plain
+    ``flex_attention``: Dynamo turns it into the ``flex_attention`` HOP and that same
+    graph's Inductor lowering fuses it, so pre-wrapping it in a second ``torch.compile``
+    would only nest one compile inside another. Outside a compiled region there is no
+    such graph, so the separately compiled form is used instead.
     """
-    flex_fn, _ = _get_flex_ops()
+    if torch.compiler.is_compiling():
+        flex_fn, _ = _get_flex_ops()
+    else:
+        flex_fn = _get_compiled_flex_attention()
     return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
 
 
