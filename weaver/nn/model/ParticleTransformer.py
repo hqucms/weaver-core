@@ -1112,6 +1112,15 @@ class ParticleTransformer(nn.Module):
             else None
         )
         self.blocks = nn.ModuleList([Block(**cfg_block) for _ in range(num_layers)])
+        # Which blocks can read the mask that `_forward_encoder` pre-merges the padding
+        # mask into: not one that scales the bias by `c_mask` (that would scale the padding
+        # `-inf` too), and not one excluded here, which gets no bias to merge into.
+        self._blocks_with_shared_attn_mask = [
+            with_attn_mask and block.c_mask is None
+            for with_attn_mask, block in zip(self.block_ids_with_attn_mask, self.blocks)
+        ]
+        # if that is every block taking the bias, nobody reads the un-merged bias any more
+        self._blocks_share_attn_mask = self._blocks_with_shared_attn_mask == self.block_ids_with_attn_mask
         self.cls_blocks = (
             nn.ModuleList([Block(**cfg_cls_block) for _ in range(num_cls_layers)]) if num_cls_layers > 0 else None
         )
@@ -1207,14 +1216,31 @@ class ParticleTransformer(nn.Module):
             if attn_mask is not None:
                 attn_mask = F.pad(attn_mask, (1, 0, 1, 0), mode="constant", value=0)
 
+        # Add the padding mask into the pair bias once, instead of letting every block's
+        # `Attention.forward` redo the same sum -- that allocated one
+        # (batch, num_heads, seq_len, seq_len) tensor per block and kept them all alive for
+        # the backward pass. Blocks that cannot use the shared mask keep the per-block path.
+        merged_mask = None
+        if attn_mask is not None and any(self._blocks_with_shared_attn_mask):
+            pad_bias = torch.zeros_like(padding_mask, dtype=attn_mask.dtype)
+            pad_bias = pad_bias.masked_fill(padding_mask, float("-inf"))
+            merged_mask = attn_mask + pad_bias.view(padding_mask.size(0), 1, 1, -1)
+            if self._blocks_share_attn_mask:
+                # free the un-merged bias now rather than holding it for the whole
+                # encoder; the add's backward does not need it
+                attn_mask = None
+
         # transform
         for idx, block in enumerate(self.blocks):
-            x = block(
-                x,
-                x_cls=None,
-                padding_mask=padding_mask,
-                attn_mask=attn_mask if self.block_ids_with_attn_mask[idx] else None,
-            )
+            if merged_mask is not None and self._blocks_with_shared_attn_mask[idx]:
+                x = block(x, x_cls=None, padding_mask=None, attn_mask=merged_mask)
+            else:
+                x = block(
+                    x,
+                    x_cls=None,
+                    padding_mask=padding_mask,
+                    attn_mask=attn_mask if self.block_ids_with_attn_mask[idx] else None,
+                )
 
         # x: (batch, seq_len, embed_dim)
         # padding_mask: (batch, seq_len)
