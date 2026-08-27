@@ -1794,6 +1794,11 @@ class LLoCaTransformerTagger(nn.Module):
             # kept as a signal that the model is being compiled externally.
             compile=False,
         )
+        # The flex backend sizes its block mask from the per-head attention dimension
+        # (see _flex_block_size in LGATrSlim.py).
+        attn = self.net.blocks[0].attention
+        self._flex_head_dim = attn.hidden_channels // attn.num_heads
+
         if compile_kwargs:
             _logger.warning(
                 "compile_kwargs=%s is ignored: the model is compiled as a whole by "
@@ -2035,7 +2040,13 @@ class LLoCaTransformerTagger(nn.Module):
         # token-resolved reference momenta (global tokens use their event's jet)
         p_ref = jet.index_select(0, batch).unsqueeze(0)  # (1, tokens, 4)
 
-        attn_kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen, self.attention_backend)
+        attn_kwargs = get_sparse_attention_kwargs(
+            ptr,
+            batch,
+            maxlen,
+            self.attention_backend,
+            flex_head_dim=self._flex_head_dim,
+        )
 
         features = features.unsqueeze(0)  # (1, tokens, C)
         with torch.autocast(features.device.type, enabled=self.use_amp):

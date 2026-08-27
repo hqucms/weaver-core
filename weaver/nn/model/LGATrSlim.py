@@ -268,6 +268,8 @@ _flash_attn_varlen_func = None
 _xformers_ops = None
 _flex_ops = None
 _compiled_flex_attention = None
+_flex_block_sizes: dict[tuple, tuple[int, int]] = {}
+_block_mask_builders: dict[tuple[int, int], Any] = {}
 
 
 def _get_xformers_ops():
@@ -458,14 +460,11 @@ def _xformers_attention(query, key, value, attn_bias=None):
 
 
 def _get_flex_ops():
-    """Import ``flex_attention`` and ``create_block_mask`` (torch >= 2.5).
+    """Import ``flex_attention`` and ``create_block_mask`` (torch >= 2.5), uncompiled.
 
-    ``flex_attention`` is returned *uncompiled* -- see :func:`_flex_attention` for which
-    of the two forms is used where. ``create_block_mask`` is always compiled: uncompiled
-    it materializes a dense ``(tokens, tokens)`` mask before reducing it to blocks, which
-    is exactly the O(tokens^2) allocation the packed layout exists to avoid. It is
-    compiled with ``dynamic=True`` because the packed token count changes from batch to
-    batch, which would otherwise recompile on every step.
+    Both are returned raw: see :func:`_flex_attention` for which of the two forms of
+    ``flex_attention`` is used where, and :func:`_get_block_mask_builder` for how
+    ``create_block_mask`` is compiled.
     """
     global _flex_ops
     if _flex_ops is None:
@@ -476,8 +475,51 @@ def _get_flex_ops():
                 "attention_backend='flex' requires torch>=2.5 "
                 "(torch.nn.attention.flex_attention)."
             ) from err
-        _flex_ops = (flex_attention, torch.compile(create_block_mask, dynamic=True))
+        _flex_ops = (flex_attention, create_block_mask)
     return _flex_ops
+
+
+def _get_block_mask_builder(block_size: tuple[int, int]):
+    """A ``torch.compile``d ``create_block_mask``, one builder cached per block size.
+
+    Compiling it is not optional: uncompiled, ``create_block_mask`` materializes a dense
+    ``(tokens, tokens)`` mask before reducing it to blocks -- the O(tokens^2) allocation
+    the packed layout exists to avoid.
+
+    The compile has to make the token count symbolic (it changes every batch) while
+    keeping the block size constant. The mask's shape is ``ceil(tokens / block)`` squared,
+    and a symbolic block makes that a ratio of two unknowns, which Inductor cannot factor
+    and reports as ``AssertionError: failed to set ranges``. Two things are needed to
+    split them apart, because ``dynamic=True`` would unspecialize both:
+
+    - the block size is closed over, not passed, and each builder is cached under it;
+    - the token count comes from ``batch.shape[0]``, a tensor dim the caller marks
+      dynamic (see :func:`_build_flex_block_mask`), so Dynamo never has to guess.
+
+    Explicit marking rather than automatic dynamic: automatic dynamic responds to guards
+    that keep failing, and after enough distinct token counts it unspecializes the block
+    size too, so the failure would reappear a few steps into training.
+    """
+    builder = _block_mask_builders.get(block_size)
+    if builder is not None:
+        return builder
+
+    _, create_block_mask = _get_flex_ops()
+
+    def build(batch: torch.Tensor):
+        def jagged_mask(b, h, q_idx, kv_idx):
+            # tokens attend only within their own event
+            return batch[q_idx] == batch[kv_idx]
+
+        num_tokens = batch.shape[0]
+        return create_block_mask(
+            jagged_mask, None, None, num_tokens, num_tokens, device=batch.device,
+            BLOCK_SIZE=block_size,
+        )
+
+    builder = torch.compile(build)
+    _block_mask_builders[block_size] = builder
+    return builder
 
 
 def _get_compiled_flex_attention():
@@ -496,32 +538,87 @@ def _get_compiled_flex_attention():
     return _compiled_flex_attention
 
 
+def _flex_block_size(
+    head_dim: int, device_type: str, dtypes: tuple[torch.dtype, ...]
+) -> tuple[int, int]:
+    """``(Q, KV)`` BlockMask tile that Inductor's flex_attention kernel will accept.
+
+    The tile must be a multiple of the ``BLOCK_M`` / ``BLOCK_N`` of the Triton config
+    Inductor picks, or the lowering fails with "Q and KV block size must be divisible by
+    BLOCK_M and BLOCK_N". Without ``max_autotune`` there is only one candidate config, so
+    a mismatch is fatal rather than just one lost choice.
+
+    That config comes from a table keyed on ``(device capability, dtype, head_dim)`` with
+    entries only at head_dim 64 / 128 / 192 / 256; any other head_dim gets a (64, 64)
+    default. So the round head dims are the awkward ones -- on sm_120, fp32 head_dim 64
+    asks for ``BLOCK_M=128``, which a fixed 64-token tile cannot satisfy.
+
+    Hence: read the config Inductor will use and mirror its tiling, which divides by
+    construction. Two alternatives are worse. A tile of 128, large enough for every table
+    entry, costs 33% of a compiled fwd+bwd step on the default config (45 -> 60 ms, batch
+    256, RTX 5090), because a coarser tile means more masked-out work. A square tile
+    wastes the asymmetry: at head_dim 64, (128, 32) beats (128, 128) by 19%.
+
+    ``dtypes`` is the precisions attention may run in, since the table is dtype-keyed and
+    disagrees -- head_dim 28 on sm_120 wants (64, 64) in fp32 but (128, 128) in bf16. The
+    flex backend pins fp32 (see :func:`_flex_attention`), so this is normally just
+    ``(float32,)``; under :class:`naive_amp` attention runs in the autocast dtype instead.
+
+    This reads ``torch._inductor``, which is private, so a breakage falls back to
+    (128, 128) -- coarse, but valid for every table shipped so far.
+    """
+    key = (head_dim, device_type, dtypes)
+    cached = _flex_block_sizes.get(key)
+    if cached is not None:
+        return cached
+
+    try:
+        from torch._inductor.virtualized import V
+
+        q_blocks, kv_blocks = [], []
+        for dtype in dtypes:
+            fwd = V.choices.get_flex_attention_fwd_configs(head_dim, dtype, device_type)
+            bwd = V.choices.get_flex_attention_bwd_configs(head_dim, dtype, device_type)
+            # With max_autotune these lists hold several configs, and ones that do not
+            # divide are simply skipped -- so matching any single config is enough. Pick
+            # the finest tiling. Without max_autotune each list holds one config anyway.
+            f = min(fwd, key=lambda c: c.block_m * c.block_n)
+            b = min(bwd, key=lambda c: max(c.block_m1, c.block_m2) * max(c.block_n1, c.block_n2))
+            # the backward kernel has two tile pairs, (m1, n1) and (m2, n2), and checks
+            # the mask against both
+            q_blocks.append(math.lcm(f.block_m, b.block_m1, b.block_m2))
+            kv_blocks.append(math.lcm(f.block_n, b.block_n1, b.block_n2))
+        block_size = (math.lcm(*q_blocks), math.lcm(*kv_blocks))
+    except Exception as err:  # noqa: BLE001 -- private API, any breakage falls back
+        _logger.warning(
+            "Could not read Inductor's flex_attention config for head_dim=%d (%s: %s); "
+            "falling back to a 128x128 block-mask tile, which is valid but coarser than "
+            "necessary for most head dims.",
+            head_dim,
+            type(err).__name__,
+            err,
+        )
+        block_size = (128, 128)
+
+    _flex_block_sizes[key] = block_size
+    return block_size
+
+
 @torch.compiler.disable()
-def _build_flex_block_mask(batch: torch.Tensor, block_size: int):
+def _build_flex_block_mask(batch: torch.Tensor, block_size: tuple[int, int]):
     """Build the block-diagonal ``BlockMask`` for the packed layout.
 
     Hidden from the *enclosing* torch.compile (weaver's ``--compile`` wraps the whole
     model): the mask's shapes are derived symbols like ``(tokens + k) // block_size``,
     and Inductor's ``statically_known_multiple_of`` oracle cannot factor those, so they
     reach the scheduler and raise ``CantSplit``. ``create_block_mask`` is compiled on its
-    own inside :func:`_get_flex_ops`, so nothing is lost by keeping it out of the graph.
+    own inside :func:`_get_block_mask_builder`, so nothing is lost by keeping it out of
+    the graph.
     """
-    _, create_block_mask = _get_flex_ops()
-    num_tokens = batch.numel()
-
-    def jagged_mask(b, h, q_idx, kv_idx):
-        # tokens attend only within their own event
-        return batch[q_idx] == batch[kv_idx]
-
-    return create_block_mask(
-        jagged_mask,
-        None,
-        None,
-        num_tokens,
-        num_tokens,
-        device=batch.device,
-        BLOCK_SIZE=block_size,
-    )
+    # the token count is the only thing that varies per batch; the block size must stay
+    # a compile-time constant (see _get_block_mask_builder)
+    torch._dynamo.mark_dynamic(batch, 0)
+    return _get_block_mask_builder(block_size)(batch)
 
 
 @minimum_autocast_precision(torch.float32, output="high")
@@ -634,6 +731,8 @@ def get_sparse_attention_kwargs(
     batch: torch.Tensor,
     maxlen: int,
     attention_backend: str,
+    flex_head_dim: int | None = None,
+    flex_dtypes: tuple[torch.dtype, ...] = (torch.float32,),
 ) -> dict:
     """Attention kwargs for block-diagonal attention over the packed layout.
 
@@ -645,6 +744,10 @@ def get_sparse_attention_kwargs(
     (built on device from ``batch``, no sync). On CPU, where the fused attention kernels are
     unavailable, it falls back to a materialized block-diagonal SDPA mask (as in
     tagging-guide).
+
+    ``flex_head_dim`` (the model's per-head attention dimension) and ``flex_dtypes`` (the
+    precisions attention may run in) are required by the flex backend only, to size its
+    block mask -- see :func:`_flex_block_size`.
     """
     if ptr.device.type == "cpu":
         attn_mask = batch.unsqueeze(0) == batch.unsqueeze(1)
@@ -654,13 +757,18 @@ def get_sparse_attention_kwargs(
         seqlens = (ptr[1:] - ptr[:-1]).tolist()
         return {"attn_bias": BlockDiagonalMask.from_seqlens(seqlens)}
     if attention_backend == "flex":
-        # flex's default 128-token tile is wider than a whole jet (JetClass averages ~70
-        # constituents), so most of each diagonal tile would be masked-out work. Halving
-        # the tile cut a compiled fwd+bwd step from 90 ms to 70 ms at batch 512 on an RTX
-        # 5090, and 64 suits jet multiplicities generally (tens to low hundreds of
-        # constituents). 32 is rejected by the kernel ("block size must be divisible by
-        # BLOCK_M").
-        return {"block_mask": _build_flex_block_mask(batch, block_size=64)}
+        # The tile wants to be small -- flex's 128-token default is wider than a whole
+        # jet (JetClass averages ~70 constituents), so most of each diagonal tile would
+        # be masked-out work; halving it cut a compiled fwd+bwd step from 90 ms to 70 ms
+        # at batch 512 on an RTX 5090. But it cannot be pinned small either: it has to
+        # divide the Triton config Inductor picks. _flex_block_size settles that.
+        if flex_head_dim is None:
+            raise ValueError(
+                "the flex backend needs flex_head_dim to size the block mask; "
+                "pass the per-head attention dimension of the model."
+            )
+        block_size = _flex_block_size(flex_head_dim, batch.device.type, flex_dtypes)
+        return {"block_mask": _build_flex_block_mask(batch, block_size=block_size)}
     cu_seqlens = ptr.to(torch.int32)
     if attention_backend == "flash":
         return {
@@ -1486,6 +1594,18 @@ class LGATrSlimTagger(nn.Module):
             # kept as a signal that the model is being compiled externally.
             compile=False,
         )
+        # The flex backend sizes its block mask from these two (see _flex_block_size).
+        # Head dim: q/k/v concatenate 4 components per hidden vector channel with the
+        # scalar channels, as in SlimSelfAttention._pre_attention_reshape.
+        attn = self.net.blocks[0].attention
+        self._flex_head_dim = 4 * attn.hidden_v_channels + attn.hidden_s_channels
+        # Attention runs in fp32, except under naive AMP, which makes
+        # minimum_autocast_precision a no-op and lets it run in the autocast dtype --
+        # either half type, and both want a different tile than fp32.
+        self._flex_dtypes = (
+            (torch.bfloat16, torch.float16) if (naive_amp and use_amp) else (torch.float32,)
+        )
+
         if compile_kwargs:
             _logger.warning(
                 "compile_kwargs=%s is ignored: the model is compiled as a whole by "
@@ -1607,7 +1727,14 @@ class LGATrSlimTagger(nn.Module):
                 dim=-1,
             )
 
-        attn_kwargs = get_sparse_attention_kwargs(ptr, batch, maxlen, self.attention_backend)
+        attn_kwargs = get_sparse_attention_kwargs(
+            ptr,
+            batch,
+            maxlen,
+            self.attention_backend,
+            flex_head_dim=self._flex_head_dim,
+            flex_dtypes=self._flex_dtypes,
+        )
 
         vectors = vectors.unsqueeze(0).unsqueeze(-2)  # (1, tokens, 1, 4)
         scalars = scalars.unsqueeze(0)  # (1, tokens, C)

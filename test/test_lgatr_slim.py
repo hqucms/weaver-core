@@ -25,6 +25,7 @@ from weaver.utils.dataset import DataConfig
 from weaver.utils.import_tools import import_module
 from weaver.nn.model.LGATrSlim import (
     LGATrSlimTagger,
+    _flex_block_size,
     _half_cast_dtype,
     _run_varlen_kernel,
     get_sparse_attention_kwargs,
@@ -326,6 +327,113 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
             out_dense = dense(x, v, mask)
             out_packed = packed(x, v, mask)
         torch.testing.assert_close(out_dense, out_packed, rtol=1e-4, atol=1e-5)
+
+    def test_flex_head_dim_matches_attention(self):
+        """``_flex_head_dim`` sizes the flex block mask but is computed at construction,
+        so it can drift from the head dimension attention actually sees. Check it against
+        the real q/k/v; a mismatch resurfaces as a block-size crash on GPU."""
+        for net in ({}, dict(hidden_v_channels=128, hidden_s_channels=512, num_heads=16)):
+            with self.subTest(net=net or "small"):
+                cfg = dict(input_dim=17, num_classes=10, trim=False, **{**_SMALL_NET, **net})
+                torch.manual_seed(0)
+                model = LGATrSlimTagger(**cfg)
+                model.eval()
+
+                seen = []
+                attention = model.net.blocks[0].attention
+                orig = attention._pre_attention_reshape
+
+                def spy(*args, **kwargs):
+                    q, k, v = orig(*args, **kwargs)
+                    seen.append(q.shape[-1])
+                    return q, k, v
+
+                attention._pre_attention_reshape = spy
+                with torch.no_grad():
+                    model(*_make_inputs())
+                self.assertEqual(seen[0], model._flex_head_dim)
+
+    def test_flex_block_size_divides_inductor_config(self):
+        """The tile must be a multiple of the BLOCK_M / BLOCK_N of the Triton config
+        Inductor picks, or the lowering raises "Q and KV block size must be divisible by
+        BLOCK_M and BLOCK_N". Only head dims 64 / 128 / 192 / 256 have tuned table
+        entries, so those are where a fixed tile breaks."""
+        try:
+            from torch._inductor.virtualized import V
+        except ImportError:
+            self.skipTest("torch._inductor.virtualized.V is unavailable")
+
+        device_type = "cuda" if torch.cuda.is_available() else "cpu"
+        for head_dim in (16, 28, 64, 96, 128, 192, 256):
+            with self.subTest(head_dim=head_dim):
+                q_block, kv_block = _flex_block_size(head_dim, device_type, (torch.float32,))
+                self.assertGreater(q_block, 0)
+                self.assertGreater(kv_block, 0)
+                try:
+                    fwd = V.choices.get_flex_attention_fwd_configs(
+                        head_dim, torch.float32, device_type
+                    )
+                    bwd = V.choices.get_flex_attention_bwd_configs(
+                        head_dim, torch.float32, device_type
+                    )
+                except Exception:  # noqa: BLE001 -- private API; the fallback covers it
+                    self.assertEqual((q_block, kv_block), (128, 128))
+                    continue
+                # at least one config of each must survive Inductor's divisibility filter
+                self.assertTrue(any(q_block % c.block_m == 0 and kv_block % c.block_n == 0
+                                    for c in fwd))
+                self.assertTrue(
+                    any(
+                        q_block % c.block_m1 == 0
+                        and q_block % c.block_m2 == 0
+                        and kv_block % c.block_n1 == 0
+                        and kv_block % c.block_n2 == 0
+                        for c in bwd
+                    )
+                )
+
+    def test_flex_requires_head_dim(self):
+        """Sizing the block mask needs the head dimension, so it cannot be omitted."""
+        ptr = torch.tensor([0, 3, 5], device="meta")
+        batch = torch.tensor([0, 0, 0, 1, 1], device="meta")
+        with self.assertRaises(ValueError):
+            get_sparse_attention_kwargs(ptr, batch, maxlen=3, attention_backend="flex")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for flex_attention")
+    def test_flex_backend_cuda_tuned_head_dim(self):
+        """head_dim 64 hits a tuned row of Inductor's flex config table asking for
+        BLOCK_M=128, wider than the 64-token tile that suits most head dims. This config
+        used to fail to compile outright."""
+        dense, packed = self._make_pair(
+            "flex", hidden_v_channels=128, hidden_s_channels=512, num_heads=16
+        )
+        self.assertEqual(packed._flex_head_dim, 64)
+        dense, packed = dense.cuda(), packed.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            out_dense = dense(x, v, mask)
+            out_packed = packed(x, v, mask)
+        torch.testing.assert_close(out_dense, out_packed, rtol=1e-4, atol=1e-5)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for flex_attention")
+    def test_flex_backend_cuda_varying_token_counts(self):
+        """The compiled block-mask builder must keep the token count symbolic and the
+        block size constant. If the block size is unspecialized too, the ceil-div in the
+        mask's shape becomes a ratio of two unknowns and Inductor fails with "failed to
+        set ranges" -- several steps in, not on the first, so this walks through a dozen
+        training-shaped batches rather than testing one shape."""
+        _, packed = self._make_pair("flex")
+        packed = packed.cuda().train()
+        g = torch.Generator().manual_seed(0)
+        for step in range(12):
+            seq_len = 24 + step
+            x, v, mask = _make_inputs(batch=8, seq_len=seq_len, seed=step)
+            lens = torch.randint(4, seq_len + 1, (8,), generator=g)
+            mask = (torch.arange(seq_len)[None, :] < lens[:, None]).float().unsqueeze(1)
+            out = packed(x.cuda(), v.cuda(), mask.cuda())
+            out.sum().backward()
+            packed.zero_grad(set_to_none=True)
+            self.assertTrue(torch.isfinite(out).all())
 
     @unittest.skipUnless(
         torch.cuda.is_available() and _HAS_XFORMERS,
