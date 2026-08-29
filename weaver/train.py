@@ -181,6 +181,11 @@ parser.add_argument('--backend', type=str, choices=['gloo', 'nccl', 'mpi'], defa
                     help='backend for distributed training')
 parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%%k`')
+parser.add_argument('--start-from-fold', type=int, default=0,
+                    help='when using `--cross-validation`, start (or resume) from this fold index '
+                         'instead of fold 0 -- useful for resuming a crashed cross-validation run; '
+                         'combine with `--load-epoch` to also resume the fold that was mid-training '
+                         'when it crashed')
 parser.add_argument('--auto-clean', action=argparse.BooleanOptionalAction, default=False,
                     help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
 # fmt: on
@@ -1318,7 +1323,12 @@ def main():
         load_model = args.load_model_weights or None
         var_name, kfold = args.cross_validation.split("%")
         kfold = int(kfold)
-        for i in range(kfold):
+        if not (0 <= args.start_from_fold < kfold):
+            raise RuntimeError(
+                "--start-from-fold (%d) must be in [0, %d) given --cross-validation=%s"
+                % (args.start_from_fold, kfold, args.cross_validation)
+            )
+        for i in range(args.start_from_fold, kfold):
             _logger.info(f"\n=== Running cross validation, fold {i} of {kfold} ===")
             opts = copy.deepcopy(args)
             opts.model_prefix = os.path.join(f"{model_dir}_fold{i}", model_fn)
@@ -1329,6 +1339,11 @@ def main():
             opts.extra_selection_test = f"{var_name}%{kfold}=={i}"
             if load_model and "{fold}" in load_model:
                 opts.load_model_weights = load_model.replace("{fold}", f"fold{i}")
+            if i != args.start_from_fold:
+                # `--load-epoch` (if given) only applies to the fold we're resuming into --
+                # it may have a partial checkpoint from the crash. Every later fold hasn't
+                # started training yet, so it must not try to load a checkpoint that doesn't exist.
+                opts.load_epoch = None
 
             _main(opts)
     else:
