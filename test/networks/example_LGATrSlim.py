@@ -14,9 +14,13 @@ On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attent
 varlen kernel), ``-o attention_backend flash`` (flash-attn package),
 ``-o attention_backend xformers`` (xformers memory-efficient attention), or
 ``-o attention_backend flex`` (torch flex_attention) to drop the padding and run
-block-diagonal attention over the packed tokens. The first three have no fp32 kernel
-and run attention in half precision, costing ~1 pp of accuracy against ``native``;
-``flex`` keeps fp32 and matches ``native``. ONNX export requires ``native``.
+block-diagonal attention over the packed tokens. ONNX export requires ``native``.
+
+The four-momenta are mapped to per-jet light-cone coordinates by default
+(``vector_coord="lightcone"``): the same function, but well-conditioned, so under
+``--use-amp`` attention and the vector GEMMs run in the AMP dtype at fp32 accuracy
+(``-o attention_backend flex --use-amp`` is ~2.3x faster than fp32-pinned attention).
+``-o vector_coord "'cartesian'"`` restores Cartesian coordinates, where they stay fp32.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """

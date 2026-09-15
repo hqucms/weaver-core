@@ -23,9 +23,11 @@ the padding and run block-diagonal attention over the packed tokens, as in the
 tagging-guide sparse path.
 
 The three flash-derived packed backends have no fp32 kernel and therefore run attention
-in half precision, which costs ~1 pp of tagging accuracy against ``"native"``; ``"flex"``
-does have an fp32 path, so it keeps ``"native"``'s precision (and its results, to ~1e-6)
-while still skipping the padding. See :func:`_half_cast_dtype` and :func:`_flex_attention`.
+in half precision. In Cartesian coordinates (``vector_coord="cartesian"``) that costs ~1 pp of
+tagging accuracy against ``"native"``, while ``"flex"`` has an fp32 path and keeps
+``"native"``'s precision; see :func:`_half_cast_dtype` and :func:`_flex_attention`. The
+default per-jet light-cone frame (:func:`get_lightcone_frame`) makes half-precision attention
+as accurate as fp32, and under AMP every backend then runs attention in the AMP dtype.
 """
 
 from __future__ import annotations
@@ -232,6 +234,33 @@ def _movedim(t: torch.Tensor, source: int, destination: int) -> torch.Tensor:
     perm = [d for d in range(n) if d != src]
     perm.insert(dst, src)
     return t.permute(perm)
+
+
+def _apply_metric(w: torch.Tensor, metric: torch.Tensor, lightcone: bool) -> torch.Tensor:
+    """``eta @ w`` over the Lorentz-component dim (-2) of ``w`` (..., 4, channels).
+
+    In Cartesian ``(E, px, py, pz)`` coordinates ``eta = diag(1, -1, -1, -1)``. In the
+    light-cone coordinates ``(x+, x-, x1, x2)`` of :func:`get_lightcone_frame`, the metric
+    pairs ``x+`` with ``x-`` and negates the two transverse components, so ``eta @ w``
+    swaps the first two components.
+    """
+    if lightcone:
+        return torch.cat([w[..., 1:2, :], w[..., 0:1, :], -w[..., 2:, :]], dim=-2)
+    return w * metric.to(w.dtype)[..., None]
+
+
+def _lightcone_product(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Light-cone Minkowski product ``a . eta b`` over the component dim (-2), which is
+    reduced away.
+
+    Written on ``select`` rather than via :func:`_apply_metric`, which would materialize
+    (and save for backward) a permuted copy of ``b``. Also not as ``a[..., 0, :]``: that
+    indexing adds a no-op full ``slice`` of the last dim, whose ``slice_backward`` Inductor
+    fused badly into the q/k/v-gradient layout kernel (+5 ms/step at batch 2048).
+    """
+    a0, a1, a2, a3 = (a.select(-2, i) for i in range(4))
+    b0, b1, b2, b3 = (b.select(-2, i) for i in range(4))
+    return a0 * b1 + a1 * b0 - a2 * b2 - a3 * b3
 
 
 def _post_attention_reshape(
@@ -621,6 +650,15 @@ def _build_flex_block_mask(batch: torch.Tensor, block_size: tuple[int, int]):
     return _get_block_mask_builder(block_size)(batch)
 
 
+def _flex_attention_raw(query, key, value, block_mask=None):
+    """:func:`_flex_attention` in the dtype of its inputs, without the fp32 pinning."""
+    if torch.compiler.is_compiling():
+        flex_fn, _ = _get_flex_ops()
+    else:
+        flex_fn = _get_compiled_flex_attention()
+    return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
+
+
 @minimum_autocast_precision(torch.float32, output="high")
 def _flex_attention(query, key, value, block_mask=None):
     """Block-diagonal attention via torch's ``flex_attention``.
@@ -641,11 +679,7 @@ def _flex_attention(query, key, value, block_mask=None):
     would only nest one compile inside another. Outside a compiled region there is no
     such graph, so the separately compiled form is used instead.
     """
-    if torch.compiler.is_compiling():
-        flex_fn, _ = _get_flex_ops()
-    else:
-        flex_fn = _get_compiled_flex_attention()
-    return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
+    return _flex_attention_raw(query, key, value, block_mask=block_mask)
 
 
 @minimum_autocast_precision(torch.float32, output="high")
@@ -653,7 +687,7 @@ def _sdpa_attention(*args, **kwargs):
     return F.scaled_dot_product_attention(*args, **kwargs)
 
 
-def _dispatch_attention(query, key, value, native_fn, **attn_kwargs):
+def _dispatch_attention(query, key, value, native_fn, flex_fn=None, **attn_kwargs):
     if any(attn_kwargs.get(key_) is not None for key_ in _FLASH_KWARGS):
         return _flash_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _VARLEN_KWARGS):
@@ -661,7 +695,7 @@ def _dispatch_attention(query, key, value, native_fn, **attn_kwargs):
     if any(attn_kwargs.get(key_) is not None for key_ in _XFORMERS_KWARGS):
         return _xformers_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _FLEX_KWARGS):
-        return _flex_attention(query, key, value, **attn_kwargs)
+        return (flex_fn or _flex_attention)(query, key, value, **attn_kwargs)
     return native_fn(query, key, value, **attn_kwargs)
 
 
@@ -843,6 +877,8 @@ class SlimRMSNorm(nn.Module):
     be negative under the Lorentz metric.
     """
 
+    _lightcone = False  # set by LGATrSlim(lightcone=...)
+
     def __init__(
         self,
         v_channels: int,
@@ -870,7 +906,10 @@ class SlimRMSNorm(nn.Module):
         self, vectors: torch.Tensor, scalars: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # vectors: (..., 4, v_channels); scalars: (..., s_channels)
-        v_squared_norm = (vectors.square() * self.metric[..., None]).sum(-2).abs()
+        if self._lightcone:
+            v_squared_norm = _lightcone_product(vectors, vectors).abs()
+        else:
+            v_squared_norm = (vectors.square() * self.metric[..., None]).sum(-2).abs()
         s_squared_norm = scalars.square()
         total_features = v_squared_norm.shape[-1] + s_squared_norm.shape[-1]
         mean_squared_norms = (v_squared_norm.sum(-1) + s_squared_norm.sum(-1)) / total_features
@@ -889,6 +928,10 @@ class SlimLinear(nn.Module):
 
     The vector and scalar streams are kept separate; mixing happens elsewhere.
     """
+
+    # set by LGATrSlim(lightcone=...): in light-cone coordinates the vector GEMM runs in the
+    # autocast dtype instead of being pinned to fp32
+    _lightcone = False
 
     def __init__(
         self,
@@ -928,7 +971,7 @@ class SlimLinear(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # vectors: (..., 4, in_v_channels) -> (..., 4, out_v_channels)
         # scalars: (..., in_s_channels) -> (..., out_s_channels)
-        outputs_v = self._linear_v(vectors)
+        outputs_v = F.linear(vectors, self.weight_v) if self._lightcone else self._linear_v(vectors)
         if self.linear_s is not None:
             outputs_s = self.linear_s(scalars)
         else:
@@ -965,6 +1008,8 @@ class SlimGLU(nn.Module):
     Scalar gates are computed from scalar features; vector gates are computed from inner products
     of (transformed) vector features.
     """
+
+    _lightcone = False  # set by LGATrSlim(lightcone=...)
 
     def __init__(
         self,
@@ -1006,11 +1051,15 @@ class SlimGLU(nn.Module):
     @minimum_autocast_precision(torch.float32)
     def _get_inner_product(self, v_gates_1: torch.Tensor, v_gates_2: torch.Tensor) -> torch.Tensor:
         # 0.5 = 1/sqrt(4) controls the scale, like 1/sqrt(d_k) in attention
+        if self._lightcone:
+            return 0.5 * _lightcone_product(v_gates_1, v_gates_2).unsqueeze(-2)
         return 0.5 * ((v_gates_1 * v_gates_2) * self.metric[..., None]).sum(dim=-2, keepdim=True)
 
 
 class SlimSelfAttention(nn.Module):
     """Self-attention for Lorentz vectors and scalar features."""
+
+    _lightcone = False  # set by LGATrSlim(lightcone=...)
 
     def __init__(
         self,
@@ -1066,7 +1115,7 @@ class SlimSelfAttention(nn.Module):
         q_v, k_v, v_v = qkv_v.unbind(0)
         q_s, k_s, v_s = qkv_s.unbind(0)
 
-        q_v = q_v * self.metric.to(q_v.dtype)[..., None]
+        q_v = _apply_metric(q_v, self.metric, self._lightcone)
 
         q = torch.cat([q_v.flatten(start_dim=-2), q_s], dim=-1)
         k = torch.cat([k_v.flatten(start_dim=-2), k_s], dim=-1)
@@ -1080,7 +1129,17 @@ class SlimSelfAttention(nn.Module):
         qkv_v, qkv_s = self.linear_in(vectors, scalars)
 
         q, k, v = self._pre_attention_reshape(qkv_v, qkv_s)
-        out = _call_attention(q, k, v, **attn_kwargs)
+        if self._lightcone:
+            # Light-cone coordinates keep half-precision attention as accurate as fp32
+            # (see get_lightcone_frame), so it is not pinned: with the vector GEMMs unpinned
+            # too, q/k/v already arrive in the autocast dtype (the q/k/v norm returns its
+            # input dtype), and attention runs in it -- or in fp32 outside autocast.
+            out = _dispatch_attention(
+                q, k, v, F.scaled_dot_product_attention, flex_fn=_flex_attention_raw,
+                **attn_kwargs,
+            )
+        else:
+            out = _call_attention(q, k, v, **attn_kwargs)
         h_v, h_s = _post_attention_reshape(out, self.hidden_v_channels)
 
         outputs_v, outputs_s = self.linear_out(h_v, h_s)
@@ -1249,6 +1308,12 @@ class LGATrSlim(nn.Module):
         Whether to bypass the fp32 precision islands so the whole forward runs in the surrounding
         autocast dtype (e.g. bf16). When ``False`` (default), under autocast the vector stream and
         metric contractions stay fp32 while the scalar GEMMs run in bf16.
+    lightcone
+        Whether the vector inputs are in the light-cone coordinates of
+        :func:`get_lightcone_frame` rather than Cartesian ones. Every metric contraction
+        then uses the light-cone metric, and attention and the vector GEMMs run in the
+        autocast dtype instead of being pinned to fp32 (the norms and gate contractions
+        stay fp32).
     compile
         Whether to wrap the model's forward with :func:`torch.compile`.
     compile_kwargs
@@ -1274,6 +1339,7 @@ class LGATrSlim(nn.Module):
         norm_elementwise_affine: bool = True,
         checkpoint_blocks: bool = False,
         naive_amp: bool = False,
+        lightcone: bool = False,
         compile: bool = False,
         compile_kwargs: dict | None = None,
     ) -> None:
@@ -1312,6 +1378,9 @@ class LGATrSlim(nn.Module):
             out_s_channels=out_s_channels,
         )
         self._checkpoint_blocks = checkpoint_blocks
+        for m in self.modules():
+            if isinstance(m, (SlimRMSNorm, SlimLinear, SlimGLU, SlimSelfAttention)):
+                m._lightcone = lightcone
 
         if num_blocks:
             _freeze_dead_tail(
@@ -1425,6 +1494,36 @@ def get_spurion(
     return torch.cat((beam, time), dim=-2)
 
 
+def get_lightcone_frame(fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Per-event orthogonal map from Cartesian ``(E, px, py, pz)`` to light-cone coordinates.
+
+    With ``n`` the jet direction (sum of the valid constituents), ``e1 = z x n / |z x n|``
+    and ``e2 = n x e1``, the rows are ``x+ = (E + p.n)/sqrt2``, ``x- = (E - p.n)/sqrt2``,
+    ``x1 = p.e1`` and ``x2 = p.e2``. The map ``T`` is orthogonal and ``T eta T^T`` is the
+    light-cone metric of :func:`_apply_metric`, so with every vector (spurions included)
+    transformed by ``T`` the network computes the same function in exact arithmetic.
+
+    What changes is the conditioning. Jet constituents are nearly collinear with ``n``,
+    so in Cartesian coordinates a Minkowski product ``E E' - p.p'`` is a small difference
+    of two large numbers and rounding each component to half precision destroys it. Here
+    the small ``E - p.n`` is formed once, in float64, and stored as a number of its own.
+
+    Returns ``(N, 4, 4)`` float64.
+    """
+    p = (fourmomenta.to(torch.float64) * mask.unsqueeze(-1)).sum(dim=1)[..., 1:]
+    n = p / p.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    nx, ny, nz = n.unbind(-1)
+    rho = torch.sqrt(nx**2 + ny**2).clamp_min(1e-12)
+    zero, s = torch.zeros_like(nx), torch.full_like(nx, 2**-0.5)
+    rows = [
+        torch.stack([s, s * nx, s * ny, s * nz], dim=-1),
+        torch.stack([s, -s * nx, -s * ny, -s * nz], dim=-1),
+        torch.stack([zero, -ny / rho, nx / rho, zero], dim=-1),
+        torch.stack([zero, -nz * nx / rho, -nz * ny / rho, rho], dim=-1),
+    ]
+    return torch.stack(rows, dim=-2)
+
+
 class LGATrSlimTagger(nn.Module):
     """Weaver-facing L-GATr-slim jet tagger.
 
@@ -1482,11 +1581,11 @@ class LGATrSlimTagger(nn.Module):
         These packed backends require CUDA; on CPU the packed layout falls back to a
         materialized block-diagonal SDPA mask. ONNX export requires ``"native"``.
 
-        The first three run attention in fp16/bf16 (their kernels have no fp32 path),
-        which costs ~1 pp of accuracy against ``"native"``; ``"flex"`` runs in fp32 and
-        matches ``"native"`` numerically (to ~1e-6 on logits and gradients), so it is
-        strictly better than ``"native"`` here -- faster and much lighter on memory --
-        while ``"varlen"`` buys a further ~1.8x for that ~1 pp.
+        The first three run attention in fp16/bf16 (their kernels have no fp32 path). In
+        Cartesian coordinates (``vector_coord="cartesian"``) that costs ~1 pp of accuracy against
+        ``"native"``, while ``"flex"`` runs in fp32 and matches ``"native"`` numerically
+        (to ~1e-6 on logits and gradients) -- faster and much lighter on memory. In the
+        default light-cone frame half-precision attention keeps fp32 accuracy.
 
         One fwd+bwd step at batch 512 on an RTX 5090 (8 blocks, 128 particles), with
         ``--compile`` / without:
@@ -1498,6 +1597,17 @@ class LGATrSlimTagger(nn.Module):
         flex        70 ms /  5.8 GiB    88 ms /  6.9 GiB
         varlen      39 ms /  5.2 GiB    66 ms /  6.3 GiB
         =========  ==================  ==================
+    vector_coord
+        ``"lightcone"`` (default) maps every vector, spurions included, to per-jet
+        light-cone coordinates (:func:`get_lightcone_frame`): the same function in exact
+        arithmetic, but well-conditioned, so attention and the vector GEMMs follow the AMP
+        dtype -- bf16 under ``--use-amp``, fp16 with ``--amp-dtype fp16`` -- instead of
+        being pinned to fp32. With the flex backend that cuts the step time of AMP
+        training ~2.3x (143 -> ~61 ms at batch 2048 on an RTX 5090) at fp32 accuracy
+        (2-epoch JetClass). ``"cartesian"`` feeds the four-momenta in Cartesian
+        ``(E, px, py, pz)`` coordinates, where half precision destroys the Minkowski
+        products, so there attention and the vector GEMMs stay fp32. The frame assumes a
+        jet: the summed momentum must not vanish.
     trim
         Whether to enable sequence trimming during training.
     use_amp
@@ -1534,6 +1644,8 @@ class LGATrSlimTagger(nn.Module):
         vector_units: float = 1.0,
         # attention
         attention_backend: str = "native",
+        # vector coordinates (see get_lightcone_frame)
+        vector_coord: str = "lightcone",
         # misc
         checkpoint_blocks: bool = False,
         naive_amp: bool = False,
@@ -1589,22 +1701,23 @@ class LGATrSlimTagger(nn.Module):
             norm_elementwise_affine=norm_elementwise_affine,
             checkpoint_blocks=checkpoint_blocks,
             naive_amp=naive_amp,
+            lightcone=vector_coord == "lightcone",
             # NOT compile=compile_model: weaver's --compile already wraps the whole
             # model (train.py), so self-compiling here would compile twice. The flag is
             # kept as a signal that the model is being compiled externally.
             compile=False,
         )
-        # The flex backend sizes its block mask from these two (see _flex_block_size).
-        # Head dim: q/k/v concatenate 4 components per hidden vector channel with the
-        # scalar channels, as in SlimSelfAttention._pre_attention_reshape.
+        # The flex backend sizes its block mask from the head dim and the attention dtype
+        # (see _flex_block_size and _attention_dtypes). Head dim: q/k/v concatenate 4
+        # components per hidden vector channel with the scalar channels, as in
+        # SlimSelfAttention._pre_attention_reshape.
         attn = self.net.blocks[0].attention
         self._flex_head_dim = 4 * attn.hidden_v_channels + attn.hidden_s_channels
-        # Attention runs in fp32, except under naive AMP, which makes
-        # minimum_autocast_precision a no-op and lets it run in the autocast dtype --
-        # either half type, and both want a different tile than fp32.
-        self._flex_dtypes = (
-            (torch.bfloat16, torch.float16) if (naive_amp and use_amp) else (torch.float32,)
-        )
+        if vector_coord not in ("lightcone", "cartesian"):
+            raise ValueError(
+                f"Unsupported vector_coord: {vector_coord}. Supported: 'lightcone', 'cartesian'."
+            )
+        self.vector_coord = vector_coord
 
         if compile_kwargs:
             _logger.warning(
@@ -1636,7 +1749,13 @@ class LGATrSlimTagger(nn.Module):
         scalars = x.transpose(1, 2)  # (N, P, C)
         # (E, px, py, pz) convention, in units of `vector_units`
         fourmomenta = v.transpose(1, 2)[..., [3, 0, 1, 2]]
-        vectors = fourmomenta.to(scalars.dtype) / self.vector_units
+        frame = None
+        if self.vector_coord == "lightcone":
+            frame = get_lightcone_frame(fourmomenta, mask)  # (N, 4, 4) float64
+            vectors = torch.einsum("nij,npj->npi", frame, fourmomenta.to(torch.float64))
+        else:
+            vectors = fourmomenta
+        vectors = vectors.to(scalars.dtype) / self.vector_units
         # zero out padded entries (data configs may pad by wrapping real particles)
         vectors = vectors * mask.unsqueeze(-1)
         scalars = scalars * mask.unsqueeze(-1)
@@ -1655,7 +1774,12 @@ class LGATrSlimTagger(nn.Module):
 
         batch_size = x.size(0)
         # prepend spurions (zero scalar features, valid mask)
-        spurions = self.spurions.to(scalars.dtype).unsqueeze(0).expand(batch_size, -1, -1)
+        if frame is not None:
+            # the spurions are vectors like any other: same frame, not rescaled
+            spurions = torch.einsum("nij,sj->nsi", frame, self.spurions.to(torch.float64))
+            spurions = spurions.to(scalars.dtype)
+        else:
+            spurions = self.spurions.to(scalars.dtype).unsqueeze(0).expand(batch_size, -1, -1)
         vectors = torch.cat([spurions, vectors], dim=1)
         scalars = torch.cat(
             [scalars.new_zeros(batch_size, spurions.size(1), scalars.size(2)), scalars], dim=1
@@ -1693,6 +1817,15 @@ class LGATrSlimTagger(nn.Module):
             output = torch.softmax(output, dim=1)
         return output
 
+    def _attention_dtypes(self, device_type: str) -> tuple[torch.dtype, ...]:
+        """The precision attention will run in, for sizing the flex block mask (see
+        :func:`_flex_block_size`): the autocast dtype where attention follows it -- in the
+        light-cone frame and under naive AMP -- and fp32 otherwise."""
+        follows_autocast = self.vector_coord == "lightcone" or self.net._naive_amp
+        if follows_autocast and _autocast_active(device_type):
+            return (torch.get_autocast_dtype(device_type),)
+        return (torch.float32,)
+
     def _forward_packed(self, vectors, scalars, mask):
         """Packed (sparse) forward path: drop the padding and run block-diagonal varlen
         attention over the concatenated tokens (port of the tagging-guide
@@ -1727,18 +1860,19 @@ class LGATrSlimTagger(nn.Module):
                 dim=-1,
             )
 
-        attn_kwargs = get_sparse_attention_kwargs(
-            ptr,
-            batch,
-            maxlen,
-            self.attention_backend,
-            flex_head_dim=self._flex_head_dim,
-            flex_dtypes=self._flex_dtypes,
-        )
-
         vectors = vectors.unsqueeze(0).unsqueeze(-2)  # (1, tokens, 1, 4)
         scalars = scalars.unsqueeze(0)  # (1, tokens, C)
-        with torch.autocast(vectors.device.type, enabled=self.use_amp):
+        device_type = vectors.device.type
+        with torch.autocast(device_type, enabled=self.use_amp):
+            # inside the autocast region, where the attention dtype is known
+            attn_kwargs = get_sparse_attention_kwargs(
+                ptr,
+                batch,
+                maxlen,
+                self.attention_backend,
+                flex_head_dim=self._flex_head_dim,
+                flex_dtypes=self._attention_dtypes(device_type),
+            )
             _, out = self.net(vectors, scalars, **attn_kwargs)
         out = out.squeeze(0)  # (tokens, num_classes)
 

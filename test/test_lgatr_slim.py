@@ -1,8 +1,8 @@
 """Unit tests for the L-GATr-slim port (weaver/nn/model/LGATrSlim.py).
 
 Covers the tagger forward pass (shapes, padding invariance, permutation invariance,
-``for_inference`` softmax) and the full ONNX export path via ``weaver.train.onnx``,
-mirroring ``test_onnx_export.py``.
+``for_inference`` softmax), the exactness of the light-cone frame, and the full ONNX export
+path via ``weaver.train.onnx``, mirroring ``test_onnx_export.py``.
 """
 
 import argparse
@@ -28,6 +28,7 @@ from weaver.nn.model.LGATrSlim import (
     _flex_block_size,
     _half_cast_dtype,
     _run_varlen_kernel,
+    get_lightcone_frame,
     get_sparse_attention_kwargs,
 )
 
@@ -159,6 +160,66 @@ class LGATrSlimTaggerTest(unittest.TestCase):
         grads = [p.grad for p in model.parameters() if p.requires_grad]
         self.assertTrue(all(g is not None for g in grads))
         self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
+
+
+class LGATrSlimLightconeTest(unittest.TestCase):
+    """``vector_coord="lightcone"`` is an exact change of basis.
+
+    The per-jet map to light-cone coordinates is orthogonal and turns the Minkowski metric
+    into the light-cone metric, so with identical weights the light-cone model must
+    reproduce the Cartesian one -- in fp64 to rounding, outputs and gradients alike. Only
+    the conditioning (and hence half-precision accuracy) differs.
+    """
+
+    def _make_pair(self, **kwargs):
+        cfg = dict(input_dim=17, num_classes=10, trim=False, **_SMALL_NET)
+        cfg.update(kwargs)
+        torch.manual_seed(0)
+        cartesian = LGATrSlimTagger(**cfg, vector_coord="cartesian").double()
+        with torch.no_grad():
+            # the "small" init of the q/k/v projection hides most of the attention
+            for block in cartesian.net.blocks:
+                block.attention.linear_in.weight_v.mul_(10)
+                block.attention.linear_in.linear_s.weight.mul_(10)
+        lightcone = LGATrSlimTagger(**cfg, vector_coord="lightcone").double()
+        lightcone.load_state_dict(cartesian.state_dict())
+        return cartesian, lightcone
+
+    def test_frame_is_orthogonal_with_lightcone_metric(self):
+        _, v, mask = _make_inputs()
+        fourmomenta = v.double().transpose(1, 2)[..., [3, 0, 1, 2]]  # (E, px, py, pz)
+        frame = get_lightcone_frame(fourmomenta, mask.squeeze(1))
+        eye = torch.eye(4, dtype=torch.float64).expand_as(frame)
+        torch.testing.assert_close(frame @ frame.transpose(-1, -2), eye)
+        eta = torch.diag(torch.tensor([1.0, -1.0, -1.0, -1.0], dtype=torch.float64))
+        eta_lightcone = torch.tensor(
+            [[0.0, 1, 0, 0], [1, 0, 0, 0], [0, 0, -1, 0], [0, 0, 0, -1]], dtype=torch.float64
+        )
+        torch.testing.assert_close(
+            frame @ eta @ frame.transpose(-1, -2), eta_lightcone.expand_as(frame)
+        )
+
+    def test_matches_cartesian_fp64(self):
+        x, v, mask = (t.double() for t in _make_inputs())
+        for backend in ["native", "varlen"]:
+            for mean_aggregation in [False, True]:
+                with self.subTest(backend=backend, mean_aggregation=mean_aggregation):
+                    cartesian, lightcone = self._make_pair(
+                        attention_backend=backend, mean_aggregation=mean_aggregation
+                    )
+                    results = []
+                    for model in (cartesian, lightcone):
+                        out = model(x, v, mask)
+                        out.square().sum().backward()
+                        grads = {n: p.grad for n, p in model.named_parameters() if p.grad is not None}
+                        results.append((out.detach(), grads))
+                    (out_c, grads_c), (out_l, grads_l) = results
+                    torch.testing.assert_close(out_l, out_c, rtol=1e-9, atol=1e-10)
+                    self.assertEqual(grads_l.keys(), grads_c.keys())
+                    for name in grads_c:
+                        torch.testing.assert_close(
+                            grads_l[name], grads_c[name], rtol=1e-8, atol=1e-10, msg=name
+                        )
 
 
 class LGATrSlimPackedAttentionTest(unittest.TestCase):
