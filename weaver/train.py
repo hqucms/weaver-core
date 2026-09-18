@@ -10,6 +10,8 @@ import functools
 import numpy as np
 import math
 import copy
+import random
+import zlib
 import torch
 
 from torch.utils.data import DataLoader
@@ -183,7 +185,48 @@ parser.add_argument('--cross-validation', type=str, default=None,
                     help='enable k-fold cross validation; input format: `variable_name%%k`')
 parser.add_argument('--auto-clean', action=argparse.BooleanOptionalAction, default=False,
                     help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
+parser.add_argument('--seed', type=int, default=None,
+                    help='random seed for reproducibility; seeds `random`, `numpy` and `torch` (model init, '
+                         'dropout, ...) and, through a dedicated generator, the DataLoader worker seeds that '
+                         'drive the file shuffling, the load-range offsets and the within-batch shuffling. '
+                         'The data generator is independent of the global torch RNG, so two runs with the same '
+                         'seed see the same events in the same order even if their model configurations differ. '
+                         'Kernel-level nondeterminism (atomics, cuDNN autotuning) is not addressed by this.')
 # fmt: on
+
+
+def set_seed(args):
+    """Seed `random`, `numpy` and `torch` from `--seed`; a no-op when it is unset.
+
+    This covers everything drawn in the main process: model initialisation, dropout, and the
+    file shuffling in `to_filelist`. All ranks are seeded identically so that a distributed run
+    still starts from the same weights; the per-rank data order is handled in `data_generator`.
+    """
+    if args.seed is None:
+        return
+    random.seed(args.seed)
+    np.random.seed(args.seed % (2**32))
+    torch.manual_seed(args.seed)
+    _logger.info("Random seed set to %d", args.seed)
+
+
+def data_generator(args, name):
+    """Deterministic generator for a DataLoader's worker seeds, or None when `--seed` is unset.
+
+    The seed is derived from `--seed`, the loader name and the rank alone, never from the global
+    torch RNG. That matters because the worker seeds are what drive the file shuffling, the
+    load-range offsets and the within-batch shuffling inside `SimpleIterDataset`: drawing them
+    from a dedicated generator keeps the event stream identical across runs that differ only in
+    the model configuration (which consumes a different amount of the global RNG at init).
+    """
+    if args.seed is None:
+        return None
+    rank = 0 if args.local_rank is None else args.local_rank
+    seed = (args.seed + 1000003 * (rank + 1) + zlib.crc32(name.encode())) % (2**31)
+    _logger.info("DataLoader '%s' seeded with %d", name, seed)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
 
 
 def to_filelist(args, mode="train"):
@@ -336,6 +379,7 @@ def train_load(args):
         num_workers=num_workers_train,
         persistent_workers=num_workers_train > 0,
         prefetch_factor=args.prefetch_factor if num_workers_train > 0 else None,
+        generator=data_generator(args, "train"),
     )
     val_loader = DataLoader(
         val_data,
@@ -345,6 +389,7 @@ def train_load(args):
         num_workers=num_workers_val,
         persistent_workers=num_workers_val > 0,
         prefetch_factor=args.prefetch_factor if num_workers_val > 0 else None,
+        generator=data_generator(args, "val"),
     )
     train_data_config = train_data.config
     val_data_config = val_data.config
@@ -408,6 +453,7 @@ def test_load(args):
             pin_memory=True,
             persistent_workers=num_workers > 0,
             prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
+            generator=data_generator(args, "test_" + name),
         )
         return test_loader
 
@@ -974,6 +1020,8 @@ def save_parquet(args, output_path, scores, labels, observers):
 
 def _main(args):
     _logger.info("args:\n - %s", "\n - ".join(str(it) for it in args.__dict__.items()))
+
+    set_seed(args)
 
     # export to ONNX
     if args.export_onnx:
