@@ -28,6 +28,11 @@ tagging accuracy against ``"native"``, while ``"flex"`` has an fp32 path and kee
 ``"native"``'s precision; see :func:`_half_cast_dtype` and :func:`_flex_attention`. The
 default per-jet light-cone frame (:func:`get_lightcone_frame`) makes half-precision attention
 as accurate as fp32, and under AMP every backend then runs attention in the AMP dtype.
+
+That frame is built on the summed constituent momentum, which is a jet assumption. For
+**full events** the axis is fitted to the particles instead (``lightcone_frame=
+"principal"`` or ``"collinear"``, see :func:`get_principal_axis` and
+:func:`get_collinear_axis`); it is still one frame per event, so attention is unchanged.
 """
 
 from __future__ import annotations
@@ -284,6 +289,8 @@ def _post_attention_reshape(
 # ------------------------------------------------------------------------------------
 
 ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers", "flex")
+# how the light-cone axis of an event is chosen; see LGATrSlimTagger's lightcone_frame
+LIGHTCONE_FRAMES = ("sum", "principal", "collinear")
 
 # kwargs that select the varlen kernels, following the upstream argument naming of
 # torch.nn.attention.varlen.varlen_attn and flash_attn.flash_attn_varlen_func;
@@ -1501,7 +1508,11 @@ def get_lightcone_frame(fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.
 
     Returns ``(N, 4, 4)`` float64.
     """
-    p = (fourmomenta.to(torch.float64) * mask.unsqueeze(-1)).sum(dim=1)[..., 1:]
+    momenta = fourmomenta.to(torch.float64)
+    # masked with ``where`` rather than multiplied by the mask: 0 * nan is nan, and
+    # padded slots are allowed to hold anything
+    keep = mask.to(torch.bool).unsqueeze(-1)
+    p = torch.where(keep, momenta, torch.zeros_like(momenta)).sum(dim=1)[..., 1:]
     n = p / p.norm(dim=-1, keepdim=True).clamp_min(1e-12)
     nx, ny, nz = n.unbind(-1)
     rho = torch.sqrt(nx**2 + ny**2).clamp_min(1e-12)
@@ -1513,6 +1524,188 @@ def get_lightcone_frame(fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.
         torch.stack([zero, -nz * nx / rho, -nz * ny / rho, rho], dim=-1),
     ]
     return torch.stack(rows, dim=-2)
+
+
+# ------------------------------------------------------------------------------------
+# Event-level light-cone axes
+#
+# get_lightcone_frame above assumes a jet: one axis, taken from the summed momentum. A
+# full event has no such axis -- its momentum sum points along the beam and says nothing
+# about where the particles are -- so the axis here is fitted to the particle directions
+# instead. It is still one axis, hence one frame, per event.
+#
+# None of this is a physics selection: the axis is a numerical coordinate choice, and the
+# network function is unchanged in exact arithmetic for any axis.
+# ------------------------------------------------------------------------------------
+
+# magnitudes below this are treated as zero when normalizing a direction
+_AXIS_EPS = 1e-30
+
+
+def _weighted_directions(
+    fourmomenta: torch.Tensor, mask: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(weights, directions)`` of the valid particles, as used by the axis fits.
+
+    Weights are ``|p_i|`` normalized by their event sum; padded particles and
+    particles with no spatial momentum get zero weight and a zero direction, so they
+    never contribute to an axis -- masked with ``where``, not multiplied by zero, so
+    that padding holding infinities or NaNs cannot poison the reduction.
+    """
+    momenta = fourmomenta[..., 1:]
+    magnitude = momenta.norm(dim=-1)
+    usable = mask.to(torch.bool) & (magnitude > 0)
+    directions = torch.where(
+        usable.unsqueeze(-1),
+        momenta / magnitude.clamp_min(_AXIS_EPS).unsqueeze(-1),
+        torch.zeros_like(momenta),
+    )
+    weights = torch.where(usable, magnitude, torch.zeros_like(magnitude))
+    return weights / weights.sum(dim=-1, keepdim=True).clamp_min(_AXIS_EPS), directions
+
+
+def _direction_tensor(weights: torch.Tensor, directions: torch.Tensor) -> torch.Tensor:
+    """``S = sum_i w_i n_i n_i^T``, ``(B, 3, 3)``.
+
+    The uncentered (linearized sphericity) direction tensor: opposite directions reinforce
+    each other, which is what a light-cone axis wants -- it protects both of its poles --
+    whereas a centered covariance would cancel them.
+    """
+    return torch.einsum("bn,bni,bnj->bij", weights, directions, directions)
+
+
+def leading_eigenvector(matrices: torch.Tensor) -> torch.Tensor:
+    """Unit eigenvector of the largest eigenvalue of symmetric PSD ``(..., 3, 3)`` inputs.
+
+    The sign of an eigenvector is physically immaterial -- a light-cone frame about ``n``
+    protects both poles -- but it is fixed deterministically (largest-magnitude component
+    positive) so that frames are reproducible. Inputs that are (numerically) zero, i.e.
+    events with no directional weight, fall back to the z axis.
+    """
+    trace = matrices.diagonal(dim1=-2, dim2=-1).sum(-1)
+    usable = trace > _AXIS_EPS
+    eye = torch.eye(3, dtype=matrices.dtype, device=matrices.device).expand_as(matrices)
+    _, eigenvectors = torch.linalg.eigh(torch.where(usable[..., None, None], matrices, eye))
+    axis = eigenvectors[..., -1]  # eigh returns ascending eigenvalues
+    largest = axis.abs().argmax(dim=-1, keepdim=True)
+    sign = torch.sign(axis.gather(-1, largest))
+    axis = axis * torch.where(sign == 0, torch.ones_like(sign), sign)
+    fallback = torch.zeros_like(axis)
+    fallback[..., 2] = 1.0
+    return torch.where(usable[..., None], axis, fallback)
+
+
+def lightcone_frame_from_axis(axis: torch.Tensor) -> torch.Tensor:
+    """Light-cone frame ``(..., 4, 4)`` about a unit spatial ``axis`` ``(..., 3)``.
+
+    Rows ``(1, n)/sqrt2``, ``(1, -n)/sqrt2``, ``(0, e1)``, ``(0, e2)``, i.e.
+    ``x+ = (E + p.n)/sqrt2``, ``x- = (E - p.n)/sqrt2``, ``x1 = p.e1``, ``x2 = p.e2``. For
+    any orthonormal ``(n, e1, e2)`` the map is Euclidean-orthogonal (so its inverse is its
+    transpose) and satisfies ``T^T J T = eta`` for the light-cone metric ``J`` of
+    :func:`_apply_metric`, so the network computes the same function as in Cartesian
+    coordinates -- see :func:`get_lightcone_frame` for why the conditioning differs.
+
+    Unlike :func:`get_lightcone_frame`, which builds the transverse pair from ``z x n``
+    and degenerates as ``n`` approaches the beam axis, ``e1`` is taken from the Cartesian
+    unit vector *least* aligned with ``n``. That bounds ``|h x n| >= sqrt(2/3)``, so the
+    construction is well conditioned for every direction -- which matters for events,
+    whose axes are often close to the beam.
+    """
+    least_aligned = axis.abs().argmin(dim=-1, keepdim=True)
+    helper = torch.zeros_like(axis).scatter_(-1, least_aligned, 1.0)
+    e1 = torch.linalg.cross(helper, axis, dim=-1)
+    e1 = e1 / e1.norm(dim=-1, keepdim=True).clamp_min(_AXIS_EPS)
+    e2 = torch.linalg.cross(axis, e1, dim=-1)
+    half = torch.full_like(axis[..., :1], 2**-0.5)
+    zero = torch.zeros_like(half)
+    rows = [
+        torch.cat([half, half * axis], dim=-1),
+        torch.cat([half, -half * axis], dim=-1),
+        torch.cat([zero, e1], dim=-1),
+        torch.cat([zero, e2], dim=-1),
+    ]
+    return torch.stack(rows, dim=-2)
+
+
+def get_principal_axis(fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Event principal axis, ``(B, 3)`` unit vectors.
+
+    The leading eigenvector of the direction tensor ``sum_i w_i n_i n_i^T`` with
+    ``w_i = |p_i|`` normalized by the event momentum sum. Particle-only -- no jets or
+    external clustering -- and defined for any set of particles, including a balanced
+    dijet whose momentum sum vanishes.
+    """
+    weights, directions = _weighted_directions(fourmomenta, mask)
+    return leading_eigenvector(_direction_tensor(weights, directions))
+
+
+def collinearity_weights(
+    directions: torch.Tensor,
+    weights: torch.Tensor,
+    usable: torch.Tensor,
+    scale: float,
+    chunk: int = 256,
+) -> torch.Tensor:
+    """``c_i = w_i sum_{j != i} w_j / (theta_ij^2 + scale^2)``: how much *nearby* momentum ``i`` has.
+
+    This is the weight that makes a single light-cone axis minimize the right thing. The
+    relative half-precision error of a pair's Minkowski product is
+    ``~ eps (theta_i^2 + theta_j^2) / theta_ij^2`` with ``theta`` measured from the axis,
+    so the damage an axis ``a`` does to an event is
+
+        D(a) = sum_{i<j} w_ij (theta_i^2 + theta_j^2) / theta_ij^2 = sum_i c_i sin^2 theta_i(a),
+
+    i.e. the same eigenproblem :func:`get_principal_axis` solves, but weighted by ``c_i``
+    instead of by the momentum ``w_i``. ``principal`` minimizes the momentum variance
+    about the axis, which is not the same objective: an isolated hard particle pulls the
+    axis towards itself even though none of its pairs are ill-conditioned, while a
+    collimated cluster of soft particles -- where every internal pair *is*
+    ill-conditioned -- barely counts.
+
+    ``scale`` is the angular scale below which a pair counts as collinear; it also
+    regulates ``theta_ij -> 0``, where the pair's product vanishes anyway.
+
+    The pairwise kernel is the only O(N^2) term in the geometry, so it is computed in
+    single precision (the axis it feeds is a coordinate choice, not a physical quantity)
+    and in chunks over the batch, to keep a (B, N, N) intermediate off the peak.
+    """
+    reference = directions.dtype
+    directions32 = directions.to(torch.float32)
+    weights32 = weights.to(torch.float32)
+    valid = usable.to(torch.float32)
+    out = []
+    # `.to(torch.float32)` is NOT enough: under the trainer's outer autocast, bmm casts
+    # float32 operands down to the autocast dtype (float64 operands are left alone, which
+    # is why the rest of the geometry is safe). In bfloat16 the spacing near cos = 1 is
+    # 2^-8, so 1 - cos is unresolvable below ~0.09 rad and every collinear pair -- exactly
+    # the ones this weight is about -- collapses to theta = 0 and saturates the kernel.
+    with torch.autocast(device_type=directions.device.type, enabled=False):
+        for start in range(0, directions.shape[0], chunk):
+            stop = start + chunk
+            d = directions32[start:stop]
+            w = weights32[start:stop]
+            cosine = torch.bmm(d, d.transpose(-1, -2)).clamp(-1.0, 1.0)
+            kernel = torch.arccos(cosine).square_().add_(scale * scale).reciprocal_()
+            pair = valid[start:stop, :, None] * valid[start:stop, None, :]
+            # a particle is not its own pair: the j == i term is 1 / scale^2 for everyone
+            # and would just reinstate the momentum weighting this weight exists to replace
+            pair = pair * (1.0 - torch.eye(d.shape[1], dtype=pair.dtype, device=pair.device))
+            out.append(w * torch.bmm(kernel * pair, w.unsqueeze(-1)).squeeze(-1))
+    collinearity = torch.cat(out, dim=0).to(reference)
+    return collinearity / collinearity.sum(dim=-1, keepdim=True).clamp_min(_AXIS_EPS)
+
+
+def get_collinear_axis(
+    fourmomenta: torch.Tensor, mask: torch.Tensor, scale: float = 0.02
+) -> torch.Tensor:
+    """Single event axis minimizing the half-precision damage; ``(B, 3)`` unit vectors.
+
+    Same construction as :func:`get_principal_axis` -- leading eigenvector of
+    ``sum_i c_i n_i n_i^T`` -- with :func:`collinearity_weights` in place of ``|p_i|``.
+    """
+    weights, directions = _weighted_directions(fourmomenta, mask)
+    collinearity = collinearity_weights(directions, weights, weights > 0, scale)
+    return leading_eigenvector(_direction_tensor(collinearity, directions))
 
 
 class LGATrSlimTagger(nn.Module):
@@ -1597,8 +1790,40 @@ class LGATrSlimTagger(nn.Module):
         flex backend that cuts the step time of AMP training ~2.3x (143 -> ~61 ms at batch
         2048 on an RTX 5090) at fp32 accuracy (2-epoch JetClass). ``"cartesian"`` feeds the
         four-momenta in Cartesian ``(E, px, py, pz)`` coordinates, where half precision
-        destroys the Minkowski products, so train those without ``--use-amp``. The frame
-        assumes a jet: the summed momentum must not vanish.
+        destroys the Minkowski products, so train those without ``--use-amp``.
+    lightcone_frame
+        Which light-cone axis the coordinates are built on; one frame per event in every
+        case, so attention is unchanged.
+
+        ``"sum"`` (default) is the per-jet axis of :func:`get_lightcone_frame`: the summed
+        constituent momentum. It assumes a jet, and on a full event it points along the
+        beam and protects only the forward particles.
+
+        ``"principal"`` uses the event principal axis instead -- the leading eigenvector
+        of the weighted direction tensor ``sum_i |p_i| n_i n_i^T`` -- which is defined for
+        any set of particles, including a balanced dijet whose momentum sum vanishes, and
+        is built with the degeneracy-free :func:`lightcone_frame_from_axis`. See
+        :func:`get_principal_axis`.
+
+        ``"collinear"`` solves the same eigenproblem but weights each particle by how much
+        *nearby* momentum it has (:func:`collinearity_weights`) instead of by its own
+        momentum. That is the weight the conditioning objective actually asks for, since a
+        pair's half-precision error scales as ``(theta_to_axis / theta_pair)^2``: a
+        collimated cluster, where every internal pair is ill-conditioned, outvotes an
+        isolated hard particle, whose pairs are all well conditioned anyway. On hh4b events
+        it roughly halves the weighted product error of ``"principal"``, for one O(N^2)
+        kernel per batch (+5% step time). See :func:`get_collinear_axis` and
+        ``lightcone_collinear_scale``.
+
+        On 10-epoch hh4b full-event trainings with fp16 AMP and the varlen backend, all
+        three are within 0.03 pp of Cartesian fp32 at ~3.5x its speed, and ~0.15 pp ahead
+        of Cartesian coordinates at the same precision.
+    lightcone_collinear_scale
+        Angular scale (rad) below which a pair counts as collinear in the ``"collinear"``
+        weights; also the regulator as ``theta_ij -> 0``. Default 0.02 rad (~1 degree).
+        On hh4b the weighted product error is flat over 0.002-0.02 and degrades above
+        0.05, so the default sits at the loose end of the plateau, where it still
+        regulates genuinely coincident directions.
     trim
         Whether to enable sequence trimming during training.
     use_amp
@@ -1642,6 +1867,8 @@ class LGATrSlimTagger(nn.Module):
         attention_backend: str = "native",
         # vector coordinates (see get_lightcone_frame)
         vector_coord: str = "lightcone",
+        lightcone_frame: str = "sum",
+        lightcone_collinear_scale: float = 0.02,
         # misc
         checkpoint_blocks: bool = False,
         naive_amp: bool = False,
@@ -1661,6 +1888,20 @@ class LGATrSlimTagger(nn.Module):
                 f"Unsupported attention_backend: {attention_backend}. "
                 f"Supported backends: {ATTENTION_BACKENDS}."
             )
+        if vector_coord not in ("lightcone", "cartesian"):
+            raise ValueError(
+                f"Unsupported vector_coord: {vector_coord}. Supported: 'lightcone', 'cartesian'."
+            )
+        if lightcone_frame not in LIGHTCONE_FRAMES:
+            raise ValueError(
+                f"Unsupported lightcone_frame: {lightcone_frame}. Supported: {LIGHTCONE_FRAMES}."
+            )
+        if lightcone_frame != "sum" and vector_coord != "lightcone":
+            raise ValueError(
+                f"lightcone_frame={lightcone_frame!r} needs vector_coord='lightcone'; "
+                "in Cartesian coordinates there is no frame to choose."
+            )
+
         self.auxiliary_scalars = auxiliary_scalars
         self.momentum_float64 = momentum_float64
         self.mean_aggregation = mean_aggregation
@@ -1669,6 +1910,9 @@ class LGATrSlimTagger(nn.Module):
         # accepted and ignored; weaver enters autocast centrally (see the class docstring)
         self.use_amp = use_amp
         self.for_inference = for_inference
+        self.vector_coord = vector_coord
+        self.lightcone_frame = lightcone_frame
+        self.lightcone_collinear_scale = lightcone_collinear_scale
 
         spurions = get_spurion(beam_reference, add_time_reference, two_beams) * spurion_scale
         self.register_buffer("spurions", spurions, persistent=False)
@@ -1710,12 +1954,6 @@ class LGATrSlimTagger(nn.Module):
         # SlimSelfAttention._pre_attention_reshape.
         attn = self.net.blocks[0].attention
         self._flex_head_dim = 4 * attn.hidden_v_channels + attn.hidden_s_channels
-        if vector_coord not in ("lightcone", "cartesian"):
-            raise ValueError(
-                f"Unsupported vector_coord: {vector_coord}. Supported: 'lightcone', 'cartesian'."
-            )
-        self.vector_coord = vector_coord
-
         if compile_kwargs:
             _logger.warning(
                 "compile_kwargs=%s is ignored: the model is compiled as a whole by "
@@ -1735,6 +1973,22 @@ class LGATrSlimTagger(nn.Module):
             num_extra_tokens=num_extra_tokens,
         )
 
+    def _lightcone_frame(self, fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """The ``(N, 4, 4)`` float64 light-cone frame of each event, per ``lightcone_frame``.
+
+        Pure geometry, so the caller computes it outside the autograd graph; the momentum
+        transform it feeds stays differentiable.
+        """
+        if self.lightcone_frame == "sum":
+            # per-jet axis: the summed constituent momentum
+            return get_lightcone_frame(fourmomenta, mask)
+        momenta = fourmomenta.to(torch.float64)
+        if self.lightcone_frame == "collinear":
+            axis = get_collinear_axis(momenta, mask, self.lightcone_collinear_scale)
+        else:
+            axis = get_principal_axis(momenta, mask)
+        return lightcone_frame_from_axis(axis)
+
     def forward(self, x, v=None, mask=None):
         # x: (N, C, P) -- scalar features
         # v: (N, 4, P) [px,py,pz,energy]
@@ -1748,20 +2002,26 @@ class LGATrSlimTagger(nn.Module):
         fourmomenta = v.transpose(1, 2)[..., [3, 0, 1, 2]]
         frame = None
         if self.vector_coord == "lightcone":
-            frame = get_lightcone_frame(fourmomenta, mask)  # (N, 4, 4) float64
+            with torch.no_grad():
+                frame = self._lightcone_frame(fourmomenta, mask)  # (N, 4, 4) float64
             vectors = torch.einsum("nij,npj->npi", frame, fourmomenta.to(torch.float64))
         else:
             vectors = fourmomenta
         vectors = vectors.to(scalars.dtype) / self.vector_units
-        # zero out padded entries (data configs may pad by wrapping real particles)
-        vectors = vectors * mask.unsqueeze(-1)
-        scalars = scalars * mask.unsqueeze(-1)
+        # Zero out padded entries (data configs may pad by wrapping real particles).
+        # ``where``, not a multiplication by the mask: padding is allowed to hold
+        # anything, and 0 * nan is nan.
+        keep = mask.unsqueeze(-1)
+        vectors = torch.where(keep, vectors, torch.zeros_like(vectors))
+        scalars = torch.where(keep, scalars, torch.zeros_like(scalars))
 
         if self.auxiliary_scalars is not None:
             # kinematic features, computed in the original (unscaled) momentum units
             if self.momentum_float64:
                 fourmomenta = fourmomenta.to(torch.float64)
-            fourmomenta = fourmomenta * mask.unsqueeze(-1)
+            fourmomenta = torch.where(
+                mask.unsqueeze(-1), fourmomenta, torch.zeros_like(fourmomenta)
+            )
             jet = fourmomenta.sum(dim=1, keepdim=True)  # (N, 1, 4)
             aux = get_auxiliary_scalars(
                 fourmomenta, jet, auxiliary_scalars=self.auxiliary_scalars

@@ -23,6 +23,21 @@ The four-momenta are mapped to per-jet light-cone coordinates by default
 ``-o vector_coord "'cartesian'"`` restores Cartesian coordinates, where half-precision
 attention costs ~1 pp, so train those without ``--use-amp``.
 
+That default axis is the summed constituent momentum, which assumes the input is one
+jet. On **full events** it points along the beam, so fit the axis to the event instead:
+
+    -o lightcone_frame "'principal'" -o attention_backend "'varlen'" \
+    --use-amp --amp-dtype fp16 \
+    --compiler-option options "{'loop_ordering_after_fusion': False}"
+
+That is the accuracy-first *and* speed-first setting: on 10-epoch hh4b runs at four seeds it
+is -0.01 pp from Cartesian fp32 at **3.5x** the speed. **Use fp16, not bf16** -- fp16 beat
+bf16 on 12 of 12 paired runs by +0.24..+0.27 pp at identical step times, because bf16's
+8-bit mantissa, not the packed layout, is what half-precision attention loses to here.
+``-o lightcone_frame "'sum'"`` (the default) and ``"'collinear'"`` are within 0.02 pp of
+``principal``; Cartesian at the same precision is -0.15 pp behind all three, which is what
+the light-cone frame is actually worth.
+
 Precision is the trainer's: everything but the norms and the gate contractions follows
 ``--use-amp``, and the model takes no precision options of its own.
 
