@@ -20,7 +20,11 @@ The four-momenta are mapped to per-jet light-cone coordinates by default
 (``vector_coord="lightcone"``): the same function, but well-conditioned, so under
 ``--use-amp`` attention and the vector GEMMs run in the AMP dtype at fp32 accuracy
 (``-o attention_backend flex --use-amp`` is ~2.3x faster than fp32-pinned attention).
-``-o vector_coord "'cartesian'"`` restores Cartesian coordinates, where they stay fp32.
+``-o vector_coord "'cartesian'"`` restores Cartesian coordinates, where half-precision
+attention costs ~1 pp, so train those without ``--use-amp``.
+
+Precision is the trainer's: everything but the norms and the gate contractions follows
+``--use-amp``, and the model takes no precision options of its own.
 
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """

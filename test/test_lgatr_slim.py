@@ -560,5 +560,65 @@ class LGATrSlimOnnxExportTest(unittest.TestCase):
                     )
 
 
+
+class AmpPolicyTest(unittest.TestCase):
+    """Precision is the trainer's business, not the model's.
+
+    weaver enters ``torch.autocast`` once per step in ``weaver.utils.nn.tools`` and passes
+    ``use_amp=True`` to the model as well (``train.py``). The model must not act on that
+    second copy: a model-side ``torch.autocast(enabled=self.use_amp)`` *overrides* the
+    surrounding region, so with ``use_amp=False`` -- the default, and what every script
+    that builds the tagger directly gets -- it silently forced the whole forward back to
+    float32 while the caller believed it was measuring AMP.
+    """
+
+    def _model(self, **kwargs):
+        torch.manual_seed(1)
+        return LGATrSlimTagger(
+            input_dim=17, num_classes=10, trim=False, **_SMALL_NET, **kwargs
+        ).eval()
+
+    def test_use_amp_does_not_change_the_forward(self):
+        """Same weights, same inputs, both settings: bitwise equal, in or out of autocast."""
+        x, v, mask = _make_inputs()
+        off, on = self._model(use_amp=False), self._model(use_amp=True)
+        with torch.no_grad():
+            self.assertTrue(torch.equal(off(x, v, mask), on(x, v, mask)))
+            with torch.autocast("cpu", dtype=torch.bfloat16):
+                self.assertTrue(torch.equal(off(x, v, mask), on(x, v, mask)))
+
+    def test_use_amp_does_not_enable_autocast_by_itself(self):
+        x, v, mask = _make_inputs()
+        with torch.no_grad():
+            self.assertEqual(self._model(use_amp=True)(x, v, mask).dtype, torch.float32)
+
+    def test_the_trainer_s_autocast_reaches_the_network(self):
+        """The regression guard: ``use_amp=False`` must not veto an outer AMP region."""
+        x, v, mask = _make_inputs()
+        with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
+            self.assertEqual(self._model(use_amp=False)(x, v, mask).dtype, torch.bfloat16)
+
+    def test_the_model_opens_no_autocast_region_of_its_own(self):
+        """Nothing inside the forward may *enable* autocast; the fp32 islands only disable it."""
+        x, v, mask = _make_inputs()
+        model = self._model(use_amp=True)
+        real = torch.autocast
+        enabled_calls = []
+
+        class _spy(real):
+            def __init__(self, *args, **kwargs):
+                if kwargs.get("enabled", True) and (len(args) < 2 or args[1]):
+                    enabled_calls.append((args, kwargs))
+                super().__init__(*args, **kwargs)
+
+        torch.autocast = _spy
+        try:
+            with torch.no_grad():
+                model(x, v, mask)
+        finally:
+            torch.autocast = real
+        self.assertEqual(enabled_calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

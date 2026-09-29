@@ -347,8 +347,8 @@ def _half_cast_dtype(device: torch.device) -> torch.dtype:
     arrive in it, so no cast happens at all. Outside one, fp16 is used: it keeps three
     more mantissa bits than bf16, which measurably matters here (see below).
 
-    Note that this makes the packed backends *less accurate than* ``native``, which pins
-    attention to fp32 via :class:`minimum_autocast_precision` even under autocast. On a
+    Note that this makes the packed backends *less accurate than* ``native`` and
+    ``flex`` whenever those run in fp32, i.e. whenever the trainer is not under AMP. On a
     6-epoch JetClass run of the tag-slim config, val accuracy was 0.818 for fp32 attention
     against 0.808 (fp16) and 0.806 (bf16) -- and that ~1 pp gap comes from the precision,
     not from the packed layout: forcing the *dense* path to fp16 reproduced it, while the
@@ -589,9 +589,9 @@ def _flex_block_size(
     wastes the asymmetry: at head_dim 64, (128, 32) beats (128, 128) by 19%.
 
     ``dtypes`` is the precisions attention may run in, since the table is dtype-keyed and
-    disagrees -- head_dim 28 on sm_120 wants (64, 64) in fp32 but (128, 128) in bf16. The
-    flex backend pins fp32 (see :func:`_flex_attention`), so this is normally just
-    ``(float32,)``; under :class:`naive_amp` attention runs in the autocast dtype instead.
+    disagrees -- head_dim 28 on sm_120 wants (64, 64) in fp32 but (128, 128) in bf16.
+    Attention follows the trainer's AMP setting, so this is the autocast dtype under AMP
+    and ``(float32,)`` otherwise.
 
     This reads ``torch._inductor``, which is private, so a breakage falls back to
     (128, 128) -- coarse, but valid for every table shipped so far.
@@ -650,24 +650,16 @@ def _build_flex_block_mask(batch: torch.Tensor, block_size: tuple[int, int]):
     return _get_block_mask_builder(block_size)(batch)
 
 
-def _flex_attention_raw(query, key, value, block_mask=None):
-    """:func:`_flex_attention` in the dtype of its inputs, without the fp32 pinning."""
-    if torch.compiler.is_compiling():
-        flex_fn, _ = _get_flex_ops()
-    else:
-        flex_fn = _get_compiled_flex_attention()
-    return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
-
-
-@minimum_autocast_precision(torch.float32, output="high")
 def _flex_attention(query, key, value, block_mask=None):
     """Block-diagonal attention via torch's ``flex_attention``.
 
     Unlike the varlen / flash / xformers kernels, flex_attention has an fp32 path, so
-    this backend drops the padding *and* keeps the fp32 attention precision of
-    ``native`` -- worth ~1 pp of val accuracy over the half-precision packed backends
-    (see :func:`_half_cast_dtype`). It is pinned to fp32 under autocast exactly as
-    ``_sdpa_attention`` is, so ``flex`` and ``native`` share one precision policy.
+    this backend drops the padding without forcing half precision: it runs in whatever
+    dtype its inputs carry, which is the trainer's AMP dtype under ``--use-amp`` and
+    float32 otherwise. In Cartesian coordinates that fp32 path is worth ~1 pp of val
+    accuracy over the half-precision packed backends (see :func:`_half_cast_dtype`); in
+    the default light-cone coordinates half precision costs nothing, which is the whole
+    point of the frame (see :func:`get_lightcone_frame`).
 
     The block mask makes this O(tokens x block) rather than the O(tokens^2) of a
     materialized block-diagonal SDPA mask, which is why the fp32 packed layout is
@@ -679,15 +671,19 @@ def _flex_attention(query, key, value, block_mask=None):
     would only nest one compile inside another. Outside a compiled region there is no
     such graph, so the separately compiled form is used instead.
     """
-    return _flex_attention_raw(query, key, value, block_mask=block_mask)
+    if torch.compiler.is_compiling():
+        flex_fn, _ = _get_flex_ops()
+    else:
+        flex_fn = _get_compiled_flex_attention()
+    return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
 
 
-@minimum_autocast_precision(torch.float32, output="high")
-def _sdpa_attention(*args, **kwargs):
-    return F.scaled_dot_product_attention(*args, **kwargs)
+def scaled_dot_product_attention(query, key, value, **attn_kwargs):
+    """Attention with the backend selected by the given kwargs.
 
-
-def _dispatch_attention(query, key, value, native_fn, flex_fn=None, **attn_kwargs):
+    No precision pinning of its own: every backend runs in the dtype of its inputs, so
+    attention follows the trainer's AMP setting like the rest of the network.
+    """
     if any(attn_kwargs.get(key_) is not None for key_ in _FLASH_KWARGS):
         return _flash_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _VARLEN_KWARGS):
@@ -695,20 +691,8 @@ def _dispatch_attention(query, key, value, native_fn, flex_fn=None, **attn_kwarg
     if any(attn_kwargs.get(key_) is not None for key_ in _XFORMERS_KWARGS):
         return _xformers_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _FLEX_KWARGS):
-        return (flex_fn or _flex_attention)(query, key, value, **attn_kwargs)
-    return native_fn(query, key, value, **attn_kwargs)
-
-
-def _call_attention(query, key, value, **attn_kwargs):
-    """Attention with the backend selected by the given kwargs; the native (SDPA) path is
-    pinned to fp32 under autocast, as in the lgatr package."""
-    return _dispatch_attention(query, key, value, _sdpa_attention, **attn_kwargs)
-
-
-def scaled_dot_product_attention(query, key, value, **attn_kwargs):
-    """Attention with the backend selected by the given kwargs; the native path is plain
-    SDPA (no fp32 pinning), as in the lloca package."""
-    return _dispatch_attention(query, key, value, F.scaled_dot_product_attention, **attn_kwargs)
+        return _flex_attention(query, key, value, **attn_kwargs)
+    return F.scaled_dot_product_attention(query, key, value, **attn_kwargs)
 
 
 # ------------------------------------------------------------------------------------
@@ -929,10 +913,6 @@ class SlimLinear(nn.Module):
     The vector and scalar streams are kept separate; mixing happens elsewhere.
     """
 
-    # set by LGATrSlim(lightcone=...): in light-cone coordinates the vector GEMM runs in the
-    # autocast dtype instead of being pinned to fp32
-    _lightcone = False
-
     def __init__(
         self,
         in_v_channels: int,
@@ -962,16 +942,15 @@ class SlimLinear(nn.Module):
         if self.weight_v.numel() == 0:
             self.weight_v.requires_grad_(False)
 
-    @minimum_autocast_precision(torch.float32, output="high")
-    def _linear_v(self, vectors: torch.Tensor) -> torch.Tensor:
-        return F.linear(vectors, self.weight_v)
-
     def forward(
         self, vectors: torch.Tensor, scalars: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # vectors: (..., 4, in_v_channels) -> (..., 4, out_v_channels)
         # scalars: (..., in_s_channels) -> (..., out_s_channels)
-        outputs_v = F.linear(vectors, self.weight_v) if self._lightcone else self._linear_v(vectors)
+        # Both GEMMs follow the trainer's AMP setting: the vector stream carries no
+        # metric here (that is the norms' and the gates' business, which stay fp32), so
+        # there is nothing for half precision to cancel.
+        outputs_v = F.linear(vectors, self.weight_v)
         if self.linear_s is not None:
             outputs_s = self.linear_s(scalars)
         else:
@@ -1059,7 +1038,7 @@ class SlimGLU(nn.Module):
 class SlimSelfAttention(nn.Module):
     """Self-attention for Lorentz vectors and scalar features."""
 
-    _lightcone = False  # set by LGATrSlim(lightcone=...)
+    _lightcone = False  # set by LGATrSlim(lightcone=...): selects the light-cone metric
 
     def __init__(
         self,
@@ -1122,6 +1101,21 @@ class SlimSelfAttention(nn.Module):
         v = torch.cat([v_v.flatten(start_dim=-2), v_s], dim=-1)
         return q, k, v
 
+    @staticmethod
+    def _attention_dtype(dtype: torch.dtype) -> torch.dtype:
+        """The dtype attention runs in: the trainer's autocast dtype under AMP, else the
+        inputs'.
+
+        Taking the autocast dtype rather than inheriting the inputs' keeps this correct
+        whichever way the fp32 islands that remain -- the norms and the gate contractions,
+        which hold the metric -- happen to round their outputs.
+        """
+        if dtype.is_floating_point and _autocast_active():
+            for device_type in ("cuda", "cpu"):
+                if _autocast_active(device_type):
+                    return torch.get_autocast_dtype(device_type)
+        return dtype
+
     def forward(
         self, vectors: torch.Tensor, scalars: torch.Tensor, **attn_kwargs
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1129,17 +1123,12 @@ class SlimSelfAttention(nn.Module):
         qkv_v, qkv_s = self.linear_in(vectors, scalars)
 
         q, k, v = self._pre_attention_reshape(qkv_v, qkv_s)
-        if self._lightcone:
-            # Light-cone coordinates keep half-precision attention as accurate as fp32
-            # (see get_lightcone_frame), so it is not pinned: with the vector GEMMs unpinned
-            # too, q/k/v already arrive in the autocast dtype (the q/k/v norm returns its
-            # input dtype), and attention runs in it -- or in fp32 outside autocast.
-            out = _dispatch_attention(
-                q, k, v, F.scaled_dot_product_attention, flex_fn=_flex_attention_raw,
-                **attn_kwargs,
-            )
-        else:
-            out = _call_attention(q, k, v, **attn_kwargs)
+        # Attention follows the trainer's AMP setting. The default light-cone coordinates
+        # make half-precision attention as accurate as fp32 (see get_lightcone_frame); in
+        # Cartesian ones it costs ~1 pp, so run those in fp32 (i.e. without --use-amp).
+        dtype = self._attention_dtype(q.dtype)
+        q, k, v = q.to(dtype), k.to(dtype), v.to(dtype)
+        out = scaled_dot_product_attention(q, k, v, **attn_kwargs)
         h_v, h_s = _post_attention_reshape(out, self.hidden_v_channels)
 
         outputs_v, outputs_s = self.linear_out(h_v, h_s)
@@ -1305,15 +1294,14 @@ class LGATrSlim(nn.Module):
     checkpoint_blocks
         Whether to use gradient checkpointing for the blocks.
     naive_amp
-        Whether to bypass the fp32 precision islands so the whole forward runs in the surrounding
-        autocast dtype (e.g. bf16). When ``False`` (default), under autocast the vector stream and
-        metric contractions stay fp32 while the scalar GEMMs run in bf16.
+        Whether to bypass the fp32 precision islands so the whole forward runs in the
+        surrounding autocast dtype (e.g. bf16). When ``False`` (default), the norms and the
+        gate contractions -- the two places that contract the metric -- stay fp32 under
+        autocast; everything else (the GEMMs and attention) follows AMP.
     lightcone
         Whether the vector inputs are in the light-cone coordinates of
         :func:`get_lightcone_frame` rather than Cartesian ones. Every metric contraction
-        then uses the light-cone metric, and attention and the vector GEMMs run in the
-        autocast dtype instead of being pinned to fp32 (the norms and gate contractions
-        stay fp32).
+        then uses the light-cone metric.
     compile
         Whether to wrap the model's forward with :func:`torch.compile`.
     compile_kwargs
@@ -1378,8 +1366,11 @@ class LGATrSlim(nn.Module):
             out_s_channels=out_s_channels,
         )
         self._checkpoint_blocks = checkpoint_blocks
+        # the coordinates decide the metric; precision is not a coordinate choice, it
+        # follows the trainer's AMP setting everywhere except the fp32 islands that hold
+        # the metric (the norms and the gate contractions, see minimum_autocast_precision)
         for m in self.modules():
-            if isinstance(m, (SlimRMSNorm, SlimLinear, SlimGLU, SlimSelfAttention)):
+            if isinstance(m, (SlimRMSNorm, SlimGLU, SlimSelfAttention)):
                 m._lightcone = lightcone
 
         if num_blocks:
@@ -1583,9 +1574,10 @@ class LGATrSlimTagger(nn.Module):
 
         The first three run attention in fp16/bf16 (their kernels have no fp32 path). In
         Cartesian coordinates (``vector_coord="cartesian"``) that costs ~1 pp of accuracy against
-        ``"native"``, while ``"flex"`` runs in fp32 and matches ``"native"`` numerically
-        (to ~1e-6 on logits and gradients) -- faster and much lighter on memory. In the
-        default light-cone frame half-precision attention keeps fp32 accuracy.
+        fp32 ``"native"``, while ``"flex"`` follows the trainer's precision and in fp32
+        matches ``"native"`` numerically (to ~1e-6 on logits and gradients) -- faster and
+        much lighter on memory. In the default light-cone frame half-precision attention
+        keeps fp32 accuracy.
 
         One fwd+bwd step at batch 512 on an RTX 5090 (8 blocks, 128 particles), with
         ``--compile`` / without:
@@ -1600,18 +1592,22 @@ class LGATrSlimTagger(nn.Module):
     vector_coord
         ``"lightcone"`` (default) maps every vector, spurions included, to per-jet
         light-cone coordinates (:func:`get_lightcone_frame`): the same function in exact
-        arithmetic, but well-conditioned, so attention and the vector GEMMs follow the AMP
-        dtype -- bf16 under ``--use-amp``, fp16 with ``--amp-dtype fp16`` -- instead of
-        being pinned to fp32. With the flex backend that cuts the step time of AMP
-        training ~2.3x (143 -> ~61 ms at batch 2048 on an RTX 5090) at fp32 accuracy
-        (2-epoch JetClass). ``"cartesian"`` feeds the four-momenta in Cartesian
-        ``(E, px, py, pz)`` coordinates, where half precision destroys the Minkowski
-        products, so there attention and the vector GEMMs stay fp32. The frame assumes a
-        jet: the summed momentum must not vanish.
+        arithmetic, but well-conditioned, so attention and the vector GEMMs can run in the
+        AMP dtype -- bf16 under ``--use-amp``, fp16 with ``--amp-dtype fp16``. With the
+        flex backend that cuts the step time of AMP training ~2.3x (143 -> ~61 ms at batch
+        2048 on an RTX 5090) at fp32 accuracy (2-epoch JetClass). ``"cartesian"`` feeds the
+        four-momenta in Cartesian ``(E, px, py, pz)`` coordinates, where half precision
+        destroys the Minkowski products, so train those without ``--use-amp``. The frame
+        assumes a jet: the summed momentum must not vanish.
     trim
         Whether to enable sequence trimming during training.
     use_amp
-        Whether to run the network under ``torch.autocast``.
+        Accepted for weaver compatibility (``train.py`` passes it whenever ``--use-amp``
+        is given) and deliberately ignored: autocast is entered centrally, once per step,
+        by ``weaver.utils.nn.tools``. A model-side ``torch.autocast(enabled=use_amp)``
+        would not merely duplicate that -- with ``use_amp=False`` it *disables* autocast
+        for the whole forward and overrides the trainer's region, so a model constructed
+        outside weaver silently ran fp32 while claiming AMP.
     for_inference
         Whether to apply a softmax to the output (for deployment/ONNX export).
     """
@@ -1670,6 +1666,7 @@ class LGATrSlimTagger(nn.Module):
         self.mean_aggregation = mean_aggregation
         self.vector_units = vector_units
         self.attention_backend = attention_backend
+        # accepted and ignored; weaver enters autocast centrally (see the class docstring)
         self.use_amp = use_amp
         self.for_inference = for_inference
 
@@ -1803,8 +1800,7 @@ class LGATrSlimTagger(nn.Module):
         vectors = vectors.unsqueeze(2)  # (N, 1 + S + P, 1, 4)
         attn_mask = mask.unsqueeze(1).unsqueeze(2)  # (N, 1, 1, 1 + S + P)
 
-        with torch.autocast(vectors.device.type, enabled=self.use_amp):
-            _, out = self.net(vectors, scalars, attn_mask=attn_mask)
+        _, out = self.net(vectors, scalars, attn_mask=attn_mask)
         # out: (N, 1 + S + P, num_classes)
 
         if self.mean_aggregation:
@@ -1819,10 +1815,8 @@ class LGATrSlimTagger(nn.Module):
 
     def _attention_dtypes(self, device_type: str) -> tuple[torch.dtype, ...]:
         """The precision attention will run in, for sizing the flex block mask (see
-        :func:`_flex_block_size`): the autocast dtype where attention follows it -- in the
-        light-cone frame and under naive AMP -- and fp32 otherwise."""
-        follows_autocast = self.vector_coord == "lightcone" or self.net._naive_amp
-        if follows_autocast and _autocast_active(device_type):
+        :func:`_flex_block_size`): the trainer's autocast dtype under AMP, else fp32."""
+        if _autocast_active(device_type):
             return (torch.get_autocast_dtype(device_type),)
         return (torch.float32,)
 
@@ -1863,17 +1857,16 @@ class LGATrSlimTagger(nn.Module):
         vectors = vectors.unsqueeze(0).unsqueeze(-2)  # (1, tokens, 1, 4)
         scalars = scalars.unsqueeze(0)  # (1, tokens, C)
         device_type = vectors.device.type
-        with torch.autocast(device_type, enabled=self.use_amp):
-            # inside the autocast region, where the attention dtype is known
-            attn_kwargs = get_sparse_attention_kwargs(
-                ptr,
-                batch,
-                maxlen,
-                self.attention_backend,
-                flex_head_dim=self._flex_head_dim,
-                flex_dtypes=self._attention_dtypes(device_type),
-            )
-            _, out = self.net(vectors, scalars, **attn_kwargs)
+        # inside the trainer's autocast region, where the attention dtype is known
+        attn_kwargs = get_sparse_attention_kwargs(
+            ptr,
+            batch,
+            maxlen,
+            self.attention_backend,
+            flex_head_dim=self._flex_head_dim,
+            flex_dtypes=self._attention_dtypes(device_type),
+        )
+        _, out = self.net(vectors, scalars, **attn_kwargs)
         out = out.squeeze(0)  # (tokens, num_classes)
 
         if self.mean_aggregation:
