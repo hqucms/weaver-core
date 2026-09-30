@@ -823,7 +823,7 @@ def _freeze_dead_tail(
         if norm.weight_v is not None:
             norm.weight_v.requires_grad_(False)
         for name, p in mlp.named_parameters():
-            if name.endswith("weight_v"):
+            if name.endswith("weight_v") or name.endswith("gate_scale"):
                 p.requires_grad_(False)
     if out_s_channels == 0:
         if norm.weight_s is not None:
@@ -1018,6 +1018,8 @@ class SlimGLU(nn.Module):
             get_nonlinearity(nonlinearity_v) if nonlinearity_v is not None else self.nonlinearity
         )
         self.register_buffer("metric", torch.tensor([1.0, -1.0, -1.0, -1.0]), persistent=False)
+        # set by LGATrSlim(gate_norm="euclidean"): per-channel scale of the scale-free gate
+        self.gate_scale: nn.Parameter | None = None
 
     def forward(
         self, vectors: torch.Tensor, scalars: torch.Tensor
@@ -1036,10 +1038,20 @@ class SlimGLU(nn.Module):
 
     @minimum_autocast_precision(torch.float32)
     def _get_inner_product(self, v_gates_1: torch.Tensor, v_gates_2: torch.Tensor) -> torch.Tensor:
-        # 0.5 = 1/sqrt(4) controls the scale, like 1/sqrt(d_k) in attention
         if self._lightcone:
-            return 0.5 * _lightcone_product(v_gates_1, v_gates_2).unsqueeze(-2)
-        return 0.5 * ((v_gates_1 * v_gates_2) * self.metric[..., None]).sum(dim=-2, keepdim=True)
+            product = _lightcone_product(v_gates_1, v_gates_2).unsqueeze(-2)
+        else:
+            product = ((v_gates_1 * v_gates_2) * self.metric[..., None]).sum(dim=-2, keepdim=True)
+        if self.gate_scale is not None:
+            # scale-free gate: |<a, b>| <= ||a|| ||b|| (Euclidean, Cauchy-Schwarz), so the
+            # argument is a learned per-channel scale times a number in [-1, 1] and the gate
+            # cannot saturate just because the vector stream grew. The Euclidean norms are
+            # frame dependent, so this gate is not a Lorentz scalar: it breaks the Lorentz
+            # equivariance of the block (rotations are still respected in Cartesian coordinates)
+            norms = v_gates_1.square().sum(-2, keepdim=True).sqrt() * v_gates_2.square().sum(-2, keepdim=True).sqrt()
+            return self.gate_scale * product / (norms + 1e-6)
+        # 0.5 = 1/sqrt(4) controls the scale, like 1/sqrt(d_k) in attention
+        return 0.5 * product
 
 
 class SlimSelfAttention(nn.Module):
@@ -1313,6 +1325,11 @@ class LGATrSlim(nn.Module):
         Whether to wrap the model's forward with :func:`torch.compile`.
     compile_kwargs
         Dict forwarded verbatim to :func:`torch.compile` when ``compile=True``.
+    gate_norm / gate_scale_init
+        ``"euclidean"`` makes the vector gate scale-free: its argument becomes a learned
+        per-channel scale (initialised to ``gate_scale_init``) times ``<a, b> / (||a|| ||b||)``,
+        which lies in [-1, 1]. ``"none"`` (default) keeps ``0.5 <a, b>``. The Euclidean norms
+        depend on the frame, so ``"euclidean"`` breaks Lorentz equivariance.
     """
 
     def __init__(
@@ -1337,9 +1354,13 @@ class LGATrSlim(nn.Module):
         lightcone: bool = False,
         compile: bool = False,
         compile_kwargs: dict | None = None,
+        gate_norm: str = "none",
+        gate_scale_init: float = 4.0,
     ) -> None:
         super().__init__()
         self._naive_amp = naive_amp
+        if gate_norm not in ("none", "euclidean"):
+            raise ValueError(f"Unsupported gate_norm: {gate_norm}. Supported: 'none', 'euclidean'.")
 
         self.linear_in = SlimLinear(
             in_v_channels=in_v_channels,
@@ -1379,6 +1400,10 @@ class LGATrSlim(nn.Module):
         for m in self.modules():
             if isinstance(m, (SlimRMSNorm, SlimGLU, SlimSelfAttention)):
                 m._lightcone = lightcone
+            if isinstance(m, SlimGLU) and gate_norm == "euclidean":
+                # no random draw: the other weights of a seed are unchanged
+                out_v = m.linear._out_v_channels // 3
+                m.gate_scale = nn.Parameter(torch.full((out_v,), float(gate_scale_init)))
 
         if num_blocks:
             _freeze_dead_tail(
@@ -1731,7 +1756,7 @@ class LGATrSlimTagger(nn.Module):
         Number of output classes.
     hidden_v_channels / hidden_s_channels / num_blocks / num_heads / mlp_ratio / attn_ratio /
     num_layers_mlp / nonlinearity / nonlinearity_v / dropout_prob / norm_elementwise_affine /
-    checkpoint_blocks / naive_amp
+    checkpoint_blocks / naive_amp / gate_norm / gate_scale_init
         Forwarded to :class:`LGATrSlim` (defaults follow the tagging-guide ``tag_slim`` config).
     compile_model / compile_kwargs
         Accepted for interface compatibility but no longer used to self-compile: weaver's
@@ -1870,6 +1895,8 @@ class LGATrSlimTagger(nn.Module):
         lightcone_frame: str = "sum",
         lightcone_collinear_scale: float = 0.02,
         # misc
+        gate_norm: str = "none",
+        gate_scale_init: float = 4.0,
         checkpoint_blocks: bool = False,
         naive_amp: bool = False,
         compile_model: bool = False,
@@ -1943,6 +1970,8 @@ class LGATrSlimTagger(nn.Module):
             checkpoint_blocks=checkpoint_blocks,
             naive_amp=naive_amp,
             lightcone=vector_coord == "lightcone",
+            gate_norm=gate_norm,
+            gate_scale_init=gate_scale_init,
             # NOT compile=compile_model: weaver's --compile already wraps the whole
             # model (train.py), so self-compiling here would compile twice. The flag is
             # kept as a signal that the model is being compiled externally.

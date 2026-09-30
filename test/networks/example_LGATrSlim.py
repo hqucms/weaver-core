@@ -41,6 +41,11 @@ the light-cone frame is actually worth.
 Precision is the trainer's: everything but the norms and the gate contractions follows
 ``--use-amp``, and the model takes no precision options of its own.
 
+``-o gate_norm "'euclidean'"`` makes the vector gates scale-free: their argument becomes a
+learned per-channel scale times ``<a, b> / (||a|| ||b||)``, which lies in [-1, 1], so a gate
+cannot saturate just because the vector stream grew (``-o gate_scale_init`` sets the initial
+scale, default 4).
+
 This file is intentionally NOT named ``test_*`` so pytest does not collect it.
 """
 

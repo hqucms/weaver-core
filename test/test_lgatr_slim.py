@@ -167,6 +167,40 @@ class LGATrSlimTaggerTest(unittest.TestCase):
         self.assertTrue(all(g is not None for g in grads))
         self.assertTrue(all(torch.isfinite(g).all() for g in grads if g is not None))
 
+    def test_scale_free_gate(self):
+        with self.assertRaises(ValueError):
+            self._make_tagger(gate_norm="minkowski")
+        base = self._make_tagger()
+        self.assertFalse(any("gate_scale" in name for name, _ in base.named_parameters()))
+        for vector_coord in ("lightcone", "cartesian"):
+            model = self._make_tagger(
+                gate_norm="euclidean", gate_scale_init=3.0, vector_coord=vector_coord
+            )
+            scales = {n: p for n, p in model.named_parameters() if n.endswith("gate_scale")}
+            self.assertTrue(scales)
+            self.assertTrue(all((p == 3.0).all() for p in scales.values()))
+            # the scale draws no random numbers, so the other weights of a seed are unchanged
+            if vector_coord == "lightcone":
+                for name, p in base.named_parameters():
+                    torch.testing.assert_close(p, model.get_parameter(name), rtol=0, atol=0)
+
+            # the gate argument is bounded by the scale however large the vectors are
+            glu = model.net.blocks[0].mlp.layers[0]
+            a, b = (1e4 * torch.randn(2, 5, 7, 4, glu.gate_scale.numel())).unbind(0)
+            self.assertLessEqual(glu._get_inner_product(a, b).abs().max().item(), 3.0)
+
+            model.train()
+            x, v, mask = _make_inputs()
+            out = model(x, v, mask)
+            loss = torch.nn.functional.cross_entropy(out, torch.randint(0, 10, (x.size(0),)))
+            loss.backward()
+            self.assertTrue(torch.isfinite(out).all())
+            grads = {n: p.grad for n, p in model.named_parameters() if p.requires_grad}
+            self.assertTrue(all(g is not None and torch.isfinite(g).all() for g in grads.values()))
+            # only the gates of the dead vector tail are frozen
+            self.assertTrue(any(n.endswith("gate_scale") for n in grads))
+            self.assertFalse(scales[max(scales)].requires_grad)
+
 
 class LGATrSlimLightconeTest(unittest.TestCase):
     """``vector_coord="lightcone"`` is an exact change of basis.
