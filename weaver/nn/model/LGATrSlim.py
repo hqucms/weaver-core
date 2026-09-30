@@ -344,6 +344,8 @@ def _get_flash_attn_varlen_func():
 
 
 _HALF_CAST_WARNED = False
+# the AMP settings already warned about (see LGATrSlimTagger._check_amp), once per process
+_AMP_WARNED: set[str] = set()
 
 
 def _half_cast_dtype(device: torch.device) -> torch.dtype:
@@ -1811,7 +1813,7 @@ class LGATrSlimTagger(nn.Module):
         ``"lightcone"`` (default) maps every vector, spurions included, to per-jet
         light-cone coordinates (:func:`get_lightcone_frame`): the same function in exact
         arithmetic, but well-conditioned, so attention and the vector GEMMs can run in the
-        AMP dtype -- bf16 under ``--use-amp``, fp16 with ``--amp-dtype fp16``. With the
+        AMP dtype -- fp16 under ``--use-amp``, bf16 with ``--amp-dtype bf16``. With the
         flex backend that cuts the step time of AMP training ~2.3x (143 -> ~61 ms at batch
         2048 on an RTX 5090) at fp32 accuracy (2-epoch JetClass). ``"cartesian"`` feeds the
         four-momenta in Cartesian ``(E, px, py, pz)`` coordinates, where half precision
@@ -2018,10 +2020,39 @@ class LGATrSlimTagger(nn.Module):
             axis = get_principal_axis(momenta, mask)
         return lightcone_frame_from_axis(axis)
 
+    def _check_amp(self, device_type: str) -> None:
+        """Warn, once per process, about the two AMP settings known to cost accuracy.
+
+        This has to look at the autocast state in the forward, since the precision is the
+        trainer's and the model is never told the AMP dtype. Under ``torch.compile`` the
+        logger call is a graph break on the first trace only: once the setting is in
+        ``_AMP_WARNED`` the branch is skipped and the frame recompiles without it.
+        """
+        if not _autocast_active(device_type):
+            return
+        dtype = torch.get_autocast_dtype(device_type)
+        if dtype not in (torch.float16, torch.bfloat16):
+            return
+        if self.vector_coord == "cartesian" and "cartesian" not in _AMP_WARNED:
+            _AMP_WARNED.add("cartesian")
+            _logger.warning(
+                "LGATrSlimTagger runs under %s AMP with vector_coord='cartesian': half "
+                "precision destroys the Minkowski products of Cartesian four-momenta. Use "
+                "vector_coord='lightcone' (the default), or train without --use-amp.",
+                dtype,
+            )
+        if dtype == torch.bfloat16 and "bf16" not in _AMP_WARNED:
+            _AMP_WARNED.add("bf16")
+            _logger.warning(
+                "LGATrSlimTagger runs under bf16 AMP: bf16's 8-bit mantissa costs accuracy "
+                "here, and fp16 is just as fast. Use --amp-dtype fp16."
+            )
+
     def forward(self, x, v=None, mask=None):
         # x: (N, C, P) -- scalar features
         # v: (N, 4, P) [px,py,pz,energy]
         # mask: (N, 1, P) -- real particle = 1, padded = 0
+        self._check_amp(x.device.type)
         with torch.no_grad():
             x, v, mask, _ = self.trimmer(x, v, mask)
         mask = mask.squeeze(1)  # (N, P) bool

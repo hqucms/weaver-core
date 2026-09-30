@@ -6,6 +6,7 @@ path via ``weaver.train.onnx``, mirroring ``test_onnx_export.py``.
 """
 
 import argparse
+import logging
 import os
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ except ImportError:
     _HAS_ORT = False
 
 from weaver import train as weaver_train
+from weaver.nn.model import LGATrSlim as lgatr_slim
 from weaver.utils.dataset import DataConfig
 from weaver.utils.import_tools import import_module
 from weaver.nn.model.LGATrSlim import (
@@ -1079,6 +1081,33 @@ class AmpPolicyTest(unittest.TestCase):
         x, v, mask = _make_inputs()
         with torch.no_grad(), torch.autocast("cpu", dtype=torch.bfloat16):
             self.assertEqual(self._model(use_amp=False)(x, v, mask).dtype, torch.bfloat16)
+
+    def test_warns_about_lossy_amp_settings(self):
+        """bf16, and any half precision on Cartesian vectors, are warned about -- once."""
+        x, v, mask = _make_inputs()
+
+        def warnings(dtype, **kwargs):
+            lgatr_slim._AMP_WARNED.clear()
+            model = self._model(**kwargs)
+            with self.assertLogs("weaver", level="INFO") as logs:
+                logging.getLogger("weaver").info("sentinel")  # assertLogs needs one record
+                with torch.no_grad():
+                    if dtype is None:
+                        model(x, v, mask)
+                    else:
+                        with torch.autocast("cpu", dtype=dtype):
+                            model(x, v, mask)
+                            model(x, v, mask)  # the second forward must stay silent
+            return [r.getMessage() for r in logs.records if r.levelno == logging.WARNING]
+
+        self.assertEqual(warnings(None), [])
+        self.assertEqual(warnings(None, vector_coord="cartesian"), [])
+        (msg,) = warnings(torch.bfloat16)
+        self.assertIn("--amp-dtype fp16", msg)
+        (msg,) = warnings(torch.float16, vector_coord="cartesian")
+        self.assertIn("vector_coord='lightcone'", msg)
+        self.assertEqual(len(warnings(torch.bfloat16, vector_coord="cartesian")), 2)
+        self.assertEqual(warnings(torch.float16), [])
 
     def test_the_model_opens_no_autocast_region_of_its_own(self):
         """Nothing inside the forward may *enable* autocast; the fp32 islands only disable it."""

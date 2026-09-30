@@ -142,7 +142,7 @@ parser.add_argument('--batch-size-test', type=int, default=None,
                     help='batch size for test dataset')
 parser.add_argument('--use-amp', action=argparse.BooleanOptionalAction, default=False,
                     help='use mixed precision training (fp16)')
-parser.add_argument('--amp-dtype', type=str, default='bf16', choices=['fp16', 'bf16'],
+parser.add_argument('--amp-dtype', type=str, default='fp16', choices=['fp16', 'bf16'],
                     help='dtype for mixed precision training (fp16 or bf16)')
 parser.add_argument('--compile', action=argparse.BooleanOptionalAction, default=False,
                     help='use torch.compile')
