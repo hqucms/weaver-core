@@ -109,6 +109,20 @@ def unwrap_model(model):
     return model
 
 
+def inputs_to_device(X, data_config, dev, args):
+    """The model inputs of batch ``X`` on ``dev``; under ``--jagged device`` the unpadded
+    groups are padded there, into the batch the stock loader would have produced."""
+    inputs = [X[k].to(dev, non_blocking=True) for k in data_config.input_names]
+    if getattr(args, 'jagged', None) == 'device':
+        from weaver.utils.data.jagged import JaggedCollator, Unpadded
+        padder = getattr(data_config, '_device_padder', None)
+        if padder is None:
+            padder = data_config._device_padder = JaggedCollator(data_config, 'device')
+        inputs = [padder.pad_on_device(k, x) if isinstance(x, Unpadded) else x
+                  for k, x in zip(data_config.input_names, inputs)]
+    return inputs
+
+
 def get_autocast_config(args):
     enable_autocast = args.use_amp
     if args.amp_dtype == 'bf16':
@@ -139,11 +153,13 @@ def train_classification(
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
-            inputs = [X[k].to(dev) for k in data_config.input_names]
-            label = y[data_config.label_names[0]].long().to(dev)
+            inputs = inputs_to_device(X, data_config, dev, extra_args['args'])
+            # copy first, cast on the device: a CPU-side cast would make an unpinned temporary,
+            # and the copy from it could not be asynchronous
+            label = y[data_config.label_names[0]].to(dev, non_blocking=True).long()
             entry_count += label.shape[0]
             try:
-                mask = y[data_config.label_names[0] + '_mask'].bool().to(dev)
+                mask = y[data_config.label_names[0] + '_mask'].to(dev, non_blocking=True).bool()
             except KeyError:
                 mask = None
             if tb_helper:
@@ -248,8 +264,8 @@ def evaluate_classification(model, test_loader, dev, epoch, for_training=True, l
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
                 # X, y: torch.Tensor; Z: ak.Array
-                inputs = [X[k].to(dev) for k in data_config.input_names]
-                y = {k: AllGather.apply(v.to(dev)) for k, v in y.items()}
+                inputs = inputs_to_device(X, data_config, dev, extra_args['args'])
+                y = {k: AllGather.apply(v.to(dev, non_blocking=True)) for k, v in y.items()}
                 label = y[data_config.label_names[0]].long().to(dev)
                 entry_count += label.shape[0]
                 try:
@@ -408,10 +424,9 @@ def train_regression(
     start_time = time.time()
     with tqdm.tqdm(train_loader) as tq:
         for X, y, _ in tq:
-            inputs = [X[k].to(dev) for k in data_config.input_names]
-            label = y[data_config.label_names[0]].float()
+            inputs = inputs_to_device(X, data_config, dev, extra_args['args'])
+            label = y[data_config.label_names[0]].to(dev, non_blocking=True).float()
             num_examples = label.shape[0]
-            label = label.to(dev)
             if tb_helper:
                 tb_helper.global_step += 1
             opt.zero_grad()
@@ -518,8 +533,8 @@ def evaluate_regression(model, test_loader, dev, epoch, for_training=True, loss_
         with tqdm.tqdm(test_loader) as tq:
             for X, y, Z in tq:
                 # X, y: torch.Tensor; Z: ak.Array
-                inputs = [X[k].to(dev) for k in data_config.input_names]
-                y = {k: AllGather.apply(v.to(dev)) for k, v in y.items()}
+                inputs = inputs_to_device(X, data_config, dev, extra_args['args'])
+                y = {k: AllGather.apply(v.to(dev, non_blocking=True)) for k, v in y.items()}
                 label = y[data_config.label_names[0]].float()
                 num_examples = label.shape[0]
                 with torch.autocast('cuda', enabled=enable_autocast, dtype=autocast_dtype):

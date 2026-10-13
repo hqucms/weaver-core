@@ -71,6 +71,17 @@ parser.add_argument('--data-split-num', type=int, default=1,
                     help='for each dataloader worker, split its dataset further into N parts when loading a certain fraction of each file. Setting N > 1 can reduce the workers\' memory usage.')
 parser.add_argument('--data-split-val', type=int, default=None,
                     help='--data-split-num for the validation data loader.')
+parser.add_argument('--jagged', type=str, default=None, choices=['host', 'device', 'nested'],
+                    help='keep the per-particle inputs unpadded in the dataloader workers, and pad them to the data '
+                         'config length either on the `host` when the batch is built, or on the `device` after the '
+                         'host-to-device copy (both give batches identical to the default loader; `device` moves only '
+                         'the real particles through the host-side copies), or not at all: `nested` passes them to '
+                         'the model as torch.nested jagged-layout tensors of shape (B, j, vars), which the network '
+                         'must accept')
+parser.add_argument('--batch-gather', action=argparse.BooleanOptionalAction, default=True,
+                    help='let each dataloader worker gather a whole batch from its loaded table in one go, instead of '
+                         'handing out events one by one to the DataLoader\'s collate; same batches, several times '
+                         'less worker CPU per batch')
 parser.add_argument('--in-memory', action=argparse.BooleanOptionalAction, default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
 parser.add_argument('--in-memory-val', action=argparse.BooleanOptionalAction, default=None,
@@ -291,6 +302,20 @@ def to_filelist(args, mode="train"):
     return file_dict, filelist
 
 
+def batch_args(args, data_config, batch_size, drop_last):
+    """DataLoader batching kwargs. With ``--batch-gather`` the dataset already yields whole
+    batches (drop_last is applied there), so the DataLoader must not batch again; otherwise
+    the DataLoader batches, through a JaggedCollator under ``--jagged``."""
+    if args.batch_gather:
+        return dict(batch_size=None)
+    collate_fn = None
+    if args.jagged is not None:
+        from weaver.utils.data.jagged import JaggedCollator
+
+        collate_fn = JaggedCollator(data_config, args.jagged)
+    return dict(batch_size=batch_size, drop_last=drop_last, collate_fn=collate_fn)
+
+
 def train_load(args):
     """
     Loads the training data.
@@ -353,6 +378,9 @@ def train_load(args):
         fetch_step=args.fetch_step,
         infinity_mode=args.steps_per_epoch is not None,
         in_memory=args.in_memory,
+        jagged=args.jagged or False,
+        batch_gather=args.batch_gather,
+        drop_last=True,
         name="train" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
     val_data = SimpleIterDataset(
@@ -367,14 +395,16 @@ def train_load(args):
         fetch_step=args.fetch_step_val,
         infinity_mode=args.steps_per_epoch_val is not None,
         in_memory=args.in_memory_val,
+        jagged=args.jagged or False,
+        batch_gather=args.batch_gather,
+        drop_last=True,
         name="val" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
     num_workers_train = min(args.num_workers, max(1, int(len(train_files) * args.file_fraction)))
     num_workers_val = min(args.num_workers, max(1, int(len(val_files) * args.file_fraction)))
     train_loader = DataLoader(
         train_data,
-        batch_size=args.batch_size,
-        drop_last=True,
+        **batch_args(args, train_data.config, args.batch_size, drop_last=True),
         pin_memory=True,
         num_workers=num_workers_train,
         persistent_workers=num_workers_train > 0,
@@ -383,8 +413,7 @@ def train_load(args):
     )
     val_loader = DataLoader(
         val_data,
-        batch_size=args.batch_size_val,
-        drop_last=True,
+        **batch_args(args, val_data.config, args.batch_size_val, drop_last=True),
         pin_memory=True,
         num_workers=num_workers_val,
         persistent_workers=num_workers_val > 0,
@@ -443,13 +472,16 @@ def test_load(args):
             load_range_and_fraction=((0, 1), args.data_fraction, args.data_split_num),
             fetch_by_files=True,
             fetch_step=1,
+            jagged=args.jagged or False,
+            batch_gather=args.batch_gather,
+            batch_size=args.batch_size_test,
+            drop_last=False,
             name="test_" + name,
         )
         test_loader = DataLoader(
             test_data,
             num_workers=num_workers,
-            batch_size=args.batch_size_test,
-            drop_last=False,
+            **batch_args(args, test_data.config, args.batch_size_test, drop_last=False),
             pin_memory=True,
             persistent_workers=num_workers > 0,
             prefetch_factor=args.prefetch_factor if num_workers > 0 else None,

@@ -276,7 +276,7 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
         cfg = dict(input_dim=17, num_classes=10, trim=False, **_SMALL_NET)
         cfg.update(kwargs)
         torch.manual_seed(0)
-        dense = LGATrSlimTagger(**cfg)
+        dense = LGATrSlimTagger(**cfg, attention_backend="native")
         dense.eval()
         packed = LGATrSlimTagger(**cfg, attention_backend=backend)
         packed.load_state_dict(dense.state_dict())
@@ -286,6 +286,33 @@ class LGATrSlimPackedAttentionTest(unittest.TestCase):
     def test_invalid_backend(self):
         with self.assertRaises(ValueError):
             LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="nonesuch")
+
+    def test_auto_backend_resolution(self):
+        """``"auto"`` (the default): dense SDPA on CPU and for ONNX export; on CUDA the
+        exact-fp32 ``efficient`` kernel without AMP and ``varlen`` under fp16/bf16 AMP."""
+        model = LGATrSlimTagger(input_dim=17, num_classes=10, **_SMALL_NET)
+        self.assertEqual(model.attention_backend, "auto")
+        self.assertEqual(model._resolve_backend("cpu"), "native")
+        self.assertEqual(model._resolve_backend("cuda"), "efficient")
+        for dtype in (torch.float16, torch.bfloat16):
+            with torch.autocast("cuda", dtype=dtype):
+                self.assertEqual(model._resolve_backend("cuda"), "varlen")
+        explicit = LGATrSlimTagger(input_dim=17, num_classes=10, attention_backend="flex", **_SMALL_NET)
+        with torch.autocast("cuda", dtype=torch.float16):
+            self.assertEqual(explicit._resolve_backend("cuda"), "flex")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for the packed kernels")
+    def test_auto_backend_cuda(self):
+        """fp32: ``auto`` = ``efficient`` reproduces fp32 dense attention tightly; under fp16
+        AMP it runs ``varlen`` and agrees to half precision."""
+        dense, auto = self._make_pair("auto")
+        dense, auto = dense.cuda(), auto.cuda()
+        x, v, mask = (t.cuda() for t in _make_inputs())
+        with torch.no_grad():
+            torch.testing.assert_close(auto(x, v, mask), dense(x, v, mask), rtol=1e-4, atol=1e-5)
+            with torch.autocast("cuda", dtype=torch.float16):
+                out_auto, out_dense = auto(x, v, mask), dense(x, v, mask)
+        torch.testing.assert_close(out_auto.float(), out_dense.float(), rtol=2e-2, atol=2e-2)
 
     def test_packed_matches_dense(self):
         for mean_aggregation in [False, True]:

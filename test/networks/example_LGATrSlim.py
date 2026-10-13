@@ -10,11 +10,13 @@ standardized tagging features inside the model from ``pf_vectors`` and prepend t
 additionally requires ``-o momentum_float64 False`` (onnxruntime lacks float64 kernels
 for some of the ops used by the kinematic features).
 
-On CUDA, pass ``-o attention_backend varlen`` (torch >= 2.10 native flash-attention
-varlen kernel), ``-o attention_backend flash`` (flash-attn package),
-``-o attention_backend xformers`` (xformers memory-efficient attention), or
-``-o attention_backend flex`` (torch flex_attention) to drop the padding and run
-block-diagonal attention over the packed tokens. ONNX export requires ``native``.
+The default ``attention_backend="auto"`` drops the padding on CUDA and runs
+block-diagonal attention over the packed tokens with the fastest kernel for the
+precision: ``efficient`` (exact fp32, torch's memory-efficient kernel) without
+``--use-amp``, ``varlen`` (torch >= 2.10 flash-attention varlen kernel) under fp16/bf16
+AMP. On CPU and for ONNX export it uses ``native`` (dense SDPA). A backend can still be
+forced with ``-o attention_backend "'<name>'"``: ``native``, ``varlen``, ``efficient``,
+``flex`` (torch flex_attention), ``flash`` (flash-attn package) or ``xformers``.
 
 The four-momenta are mapped to per-jet light-cone coordinates by default
 (``vector_coord="lightcone"``): the same function, but well-conditioned, so under
@@ -55,11 +57,19 @@ from weaver.nn.model.LGATrSlim import LGATrSlimTagger
 
 
 class LGATrSlimTaggerWrapper(torch.nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self, max_particles=None, **kwargs):
         super().__init__()
         self.mod = LGATrSlimTagger(**kwargs)
+        # upper bound on the particles per event, for the unpadded (--jagged nested) input
+        self.max_particles = max_particles
 
     def forward(self, points, features, lorentz_vectors, mask):
+        if features.is_nested:
+            # (B, j, C) jagged-layout nested tensors: hand the packed values straight to the
+            # model, which never builds the padded layout
+            return self.mod.forward_jagged(
+                features.values(), lorentz_vectors.values(), features.offsets(), self.max_particles
+            )
         return self.mod(features, v=lorentz_vectors, mask=mask)
 
 
@@ -74,6 +84,7 @@ def get_model(data_config, **kwargs):
         num_heads=8,
         mlp_ratio=4,
         attn_ratio=1,
+        max_particles=data_config.input_shapes["pf_features"][2],
     )
     cfg.update(**kwargs)
     model = LGATrSlimTaggerWrapper(**cfg)

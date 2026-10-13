@@ -10,6 +10,7 @@ from functools import partial
 from concurrent.futures.thread import ThreadPoolExecutor
 from .logger import _logger
 from .data.tools import _pad, _repeat_pad, _clip, _stack, _fused_pad_and_stack, _get_content_and_offsets
+from .data.jagged import JaggedArray, JaggedCollator, _fused_jagged_stack, gather_rows
 from .data.fileio import _read_files
 from .data.config import DataConfig, _md5
 from .data.preprocess import _apply_selection, _build_new_variables, _build_weights, AutoStandardizer, WeightMaker
@@ -22,7 +23,7 @@ def _collate_awkward_array_fn(batch, *, collate_fn_map=None):
 _nan_warned_vars = set()
 
 
-def _finalize_inputs(table, data_config):
+def _finalize_inputs(table, data_config, jagged=False):
     output = {}
     # copy observer variables before transformation
     for k in data_config.z_variables:
@@ -44,7 +45,9 @@ def _finalize_inputs(table, data_config):
     for group_name, var_names in data_config.input_dicts.items():
         if data_config.preprocess_params[var_names[0]]["length"] is None:
             continue
-        result = _fused_pad_and_stack(table, var_names, data_config.preprocess_params)
+        # jagged: keep (tokens, vars) + offsets and leave the padding to the collate step
+        fuse = _fused_jagged_stack if jagged else _fused_pad_and_stack
+        result = fuse(table, var_names, data_config.preprocess_params)
         if result is not None:
             output["_" + group_name] = result
             fused_vars.update(var_names)
@@ -178,7 +181,7 @@ def _preprocess(table, data_config, options):
         else:
             np.random.shuffle(indices)
     # perform input variable standardization, clipping, padding and stacking
-    table = _finalize_inputs(table, data_config)
+    table = _finalize_inputs(table, data_config, jagged=options.get("jagged", False))
     return table, indices
 
 
@@ -251,6 +254,11 @@ class _SimpleIter(object):
             file_dict = new_file_dict
         self.worker_file_dict = file_dict
         self.worker_info = worker_info
+        self._collator = (
+            JaggedCollator(self._data_config, self._jagged_mode)
+            if self._batch_gather and self._jagged_mode
+            else None
+        )
         self.restart()
 
     def restart(self):
@@ -356,42 +364,94 @@ class _SimpleIter(object):
         self._try_get_next(init=True)
 
     def __next__(self):
-        # print(self.ipos, self.cursor)
+        if self._batch_gather:
+            return self._next_batch()
         if len(self.filelist) == 0:
             raise StopIteration
-        try:
-            i = self.indices[self.cursor]
-        except IndexError:
+        if self.cursor >= len(self.indices):
             # case 1: first entry, `self.indices` is still empty
             # case 2: running out of entries, `self.indices` is not empty
-            while True:
-                if self._in_memory and len(self.indices) > 0:
-                    # only need to re-shuffle the indices, if this is not the first entry
-                    if self._sampler_options["shuffle"]:
-                        np.random.shuffle(self.indices)
-                        _logger.info(f"Re-shuffled DataIter {self._name}")
-                    break
-                if self.prefetch is None:
-                    # reaching the end as prefetch got nothing
-                    self.table = None
-                    if self._async_load:
-                        self.executor.shutdown(wait=False)
-                    raise StopIteration
-                # get result from prefetch
-                if self._async_load:
-                    self.table, self.indices = self.prefetch.result()
-                else:
-                    self.table, self.indices = self.prefetch
-                # try to load the next ones asynchronously
-                self._try_get_next()
-                # check if any entries are fetched (i.e., passing selection) -- if not, do another fetch
-                if len(self.indices) > 0:
-                    break
-            # reset cursor
-            self.cursor = 0
-            i = self.indices[self.cursor]
+            self._advance()
+        i = self.indices[self.cursor]
         self.cursor += 1
         return self.get_data(i)
+
+    def _advance(self):
+        """Move on to the next shuffled pass: a re-shuffle of the resident table in
+        in-memory mode, otherwise the next fetched chunk. Raises StopIteration at the end."""
+        while True:
+            if self._in_memory and len(self.indices) > 0:
+                # only need to re-shuffle the indices, if this is not the first entry
+                if self._sampler_options["shuffle"]:
+                    np.random.shuffle(self.indices)
+                    _logger.info(f"Re-shuffled DataIter {self._name}")
+                break
+            if self.prefetch is None:
+                # reaching the end as prefetch got nothing
+                self.table = None
+                if self._async_load:
+                    self.executor.shutdown(wait=False)
+                raise StopIteration
+            # get result from prefetch
+            if self._async_load:
+                self.table, self.indices = self.prefetch.result()
+            else:
+                self.table, self.indices = self.prefetch
+            # try to load the next ones asynchronously
+            self._try_get_next()
+            # check if any entries are fetched (i.e., passing selection) -- if not, do another fetch
+            if len(self.indices) > 0:
+                break
+        # reset cursor
+        self.cursor = 0
+
+    def _next_batch(self):
+        """The next whole batch, gathered from the table in one go.
+
+        Takes the same events in the same order as ``batch_size`` calls of the per-sample
+        path followed by the DataLoader's collate: the next ``batch_size`` entries of the
+        shuffled index array, continuing into the next chunk (or re-shuffled pass) when
+        this one runs out, so a batch may come from two tables."""
+        if len(self.filelist) == 0:
+            raise StopIteration
+        parts = []
+        need = self._sampler_options["batch_size"]
+        while need > 0:
+            if self.cursor >= len(self.indices):
+                try:
+                    self._advance()
+                except StopIteration:
+                    break
+            # a copy: an in-memory re-shuffle permutes `self.indices` in place
+            idx = np.array(self.indices[self.cursor : self.cursor + need])
+            parts.append((self.table, idx))
+            self.cursor += len(idx)
+            need -= len(idx)
+        if need > 0 and (self._drop_last or not parts):
+            raise StopIteration
+        return self._gather_batch(parts)
+
+    def _gather_batch(self, parts):
+        """``(X, y, Z)`` of the events ``parts`` = [(table, indices), ...], with the types and
+        dtypes the DataLoader's collate would produce from the per-sample path."""
+
+        def cat(key, as_tensor=True):
+            arrays = [table[key][idx] for table, idx in parts]
+            if isinstance(arrays[0], ak.Array):
+                return ak.concatenate(arrays) if len(arrays) > 1 else arrays[0]
+            out = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
+            return torch.from_numpy(np.ascontiguousarray(out)) if as_tensor else out
+
+        X = {}
+        for k in self._data_config.input_names:
+            if isinstance(parts[0][0]["_" + k], JaggedArray):
+                values, offsets = gather_rows([(table["_" + k], idx) for table, idx in parts])
+                X[k] = self._collator.build(k, values, offsets)
+            else:
+                X[k] = cat("_" + k)
+        y = {k: cat(k) for k in self._data_config.label_names}
+        Z = {k: cat(k) for k in self._data_config.z_variables}
+        return X, y, Z
 
     def _try_get_next(self, init=False):
         end_of_list = self.ipos >= len(self.load_filelist_and_ranges)
@@ -471,6 +531,9 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         async_load=True,
         infinity_mode=False,
         in_memory=False,
+        jagged=False,
+        batch_gather=False,
+        drop_last=True,
         name="",
     ):
         self._iters = {} if infinity_mode or in_memory else None
@@ -484,6 +547,15 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._infinity_mode = infinity_mode
         self._in_memory = in_memory
         self._name = name
+        # jagged: False (padded storage), True (unpadded storage, batches assembled by a
+        # JaggedCollator in the DataLoader) or a JaggedCollator mode ("host"/"device"/"nested")
+        self._jagged_mode = jagged if isinstance(jagged, str) else None
+        # batch_gather: yield whole batches gathered from the table (use the DataLoader with
+        # batch_size=None); drop_last then applies to each worker's final short batch
+        self._batch_gather = batch_gather
+        self._drop_last = drop_last
+        if batch_gather and (batch_size is None or (jagged and self._jagged_mode is None)):
+            raise ValueError("batch_gather needs batch_size, and a jagged mode name if jagged")
 
         # ==== sampling parameters ====
         self._sampler_options = {
@@ -491,6 +563,9 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             "weight_scale": weight_scale,
             "max_resample": max_resample,
             "batch_size": batch_size,
+            # store the per-particle inputs unpadded; needs data.jagged.JaggedCollator as
+            # the DataLoader's collate_fn
+            "jagged": bool(jagged),
         }
 
         # ==== torch collate_fn map ====

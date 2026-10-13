@@ -13,9 +13,12 @@ Ported from the `lgatr` package v2.0.0 (https://github.com/heidelberg-hepml/lgat
 ``lgatr/nets/slim.py`` and ``lgatr/layers/slim_layers.py``) and the tagging wrapper of
 https://github.com/heidelberg-hepml/tagging-guide (``experiments/tagging/wrappers.py``
 and ``experiments/tagging/embedding.py``). The tagging setup uses identity frames, so
-none of the LLoCa frames machinery is required. The default attention backend is the
-native ``torch.nn.functional.scaled_dot_product_attention`` on the dense zero-padded
-layout; ``attention_backend="varlen"`` (torch >= 2.10 native flash-attention varlen
+none of the LLoCa frames machinery is required. The default attention backend,
+``"auto"``, picks per call from the device and the attention precision: on CUDA
+``"efficient"`` (exact fp32 packed attention) when attention runs in fp32 and ``"varlen"``
+under fp16/bf16 AMP; on CPU (and for ONNX export) ``"native"``, i.e.
+``torch.nn.functional.scaled_dot_product_attention`` on the dense zero-padded layout.
+``attention_backend="varlen"`` (torch >= 2.10 native flash-attention varlen
 kernel), ``"flash"`` (the flash-attn package), ``"xformers"``
 (``xformers.ops.memory_efficient_attention`` with a block-diagonal mask), or ``"flex"``
 (``torch.nn.attention.flex_attention`` with a block-diagonal ``BlockMask``) instead drop
@@ -288,7 +291,7 @@ def _post_attention_reshape(
 # block-diagonal ``attn_bias``).
 # ------------------------------------------------------------------------------------
 
-ATTENTION_BACKENDS = ("native", "varlen", "flash", "xformers", "flex")
+ATTENTION_BACKENDS = ("auto", "native", "varlen", "flash", "xformers", "flex", "efficient")
 # how the light-cone axis of an event is chosen; see LGATrSlimTagger's lightcone_frame
 LIGHTCONE_FRAMES = ("sum", "principal", "collinear")
 
@@ -299,6 +302,7 @@ _VARLEN_KWARGS = ("cu_seq_q", "cu_seq_k", "max_q", "max_k")
 _FLASH_KWARGS = ("cu_seqlens_q", "cu_seqlens_k", "max_seqlen_q", "max_seqlen_k")
 _XFORMERS_KWARGS = ("attn_bias",)
 _FLEX_KWARGS = ("block_mask",)
+_EFFICIENT_KWARGS = ("cu_seqlens", "max_seqlen")
 
 _flash_attn_varlen_func = None
 _xformers_ops = None
@@ -443,6 +447,15 @@ def _flash_attention(
         max_seqlen_k=max_seqlen_k,
     )
     return _run_varlen_kernel(kernel, query, key, value, kernel_kwargs, scale_kwarg="softmax_scale")
+
+
+def _has_varlen_attn() -> bool:
+    """Whether this torch has ``torch.nn.attention.varlen.varlen_attn`` (torch >= 2.10)."""
+    try:
+        from torch.nn.attention.varlen import varlen_attn  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def _varlen_attention(query, key, value, cu_seq_q=None, cu_seq_k=None, max_q=None, max_k=None):
@@ -687,6 +700,32 @@ def _flex_attention(query, key, value, block_mask=None):
     return flex_fn(query, key, value, block_mask=block_mask, scale=query.shape[-1] ** -0.5)
 
 
+@torch.compiler.disable()
+def _efficient_attention(query, key, value, cu_seqlens=None, max_seqlen=None):
+    """Block-diagonal attention via torch's memory-efficient (cutlass) varlen kernel.
+
+    The kernel ``F.scaled_dot_product_attention`` dispatches to for fp32 ``torch.nested``
+    inputs, called directly on the packed layout: like ``flex`` it runs in the dtype of
+    its inputs, so it has an exact fp32 path, but without a block mask it is ~2-3x faster
+    than ``flex`` in fp32 (1.2 vs 3.4 ms fwd+bwd on 42k jet tokens, 6.1 vs 13.6 ms on
+    121k event tokens, RTX 5090). Inductor cannot lower the op, hence the graph break.
+    """
+    in_shape = query.shape
+    # (1, heads, tokens, channels) -> (1, tokens, heads, channels)
+    query, key, value = (t.transpose(1, 2).contiguous() for t in (query, key, value))
+    channels = query.shape[-1]
+    pad = (-channels) % 8
+    if pad:
+        query, key, value = (F.pad(t, (0, pad)) for t in (query, key, value))
+    out = torch.ops.aten._efficient_attention_forward(
+        query, key, value, None, cu_seqlens, cu_seqlens, max_seqlen, max_seqlen,
+        0.0, 0, torch.is_grad_enabled(), scale=channels**-0.5,
+    )[0]
+    if pad:
+        out = out[..., :channels]
+    return out.transpose(1, 2).reshape(in_shape)
+
+
 def scaled_dot_product_attention(query, key, value, **attn_kwargs):
     """Attention with the backend selected by the given kwargs.
 
@@ -701,6 +740,8 @@ def scaled_dot_product_attention(query, key, value, **attn_kwargs):
         return _xformers_attention(query, key, value, **attn_kwargs)
     if any(attn_kwargs.get(key_) is not None for key_ in _FLEX_KWARGS):
         return _flex_attention(query, key, value, **attn_kwargs)
+    if any(attn_kwargs.get(key_) is not None for key_ in _EFFICIENT_KWARGS):
+        return _efficient_attention(query, key, value, **attn_kwargs)
     return F.scaled_dot_product_attention(query, key, value, **attn_kwargs)
 
 
@@ -797,6 +838,8 @@ def get_sparse_attention_kwargs(
         block_size = _flex_block_size(flex_head_dim, batch.device.type, flex_dtypes)
         return {"block_mask": _build_flex_block_mask(batch, block_size=block_size)}
     cu_seqlens = ptr.to(torch.int32)
+    if attention_backend == "efficient":
+        return {"cu_seqlens": cu_seqlens, "max_seqlen": maxlen}
     if attention_backend == "flash":
         return {
             "cu_seqlens_q": cu_seqlens,
@@ -1540,6 +1583,11 @@ def get_lightcone_frame(fourmomenta: torch.Tensor, mask: torch.Tensor) -> torch.
     # padded slots are allowed to hold anything
     keep = mask.to(torch.bool).unsqueeze(-1)
     p = torch.where(keep, momenta, torch.zeros_like(momenta)).sum(dim=1)[..., 1:]
+    return _lightcone_frame_from_sum(p)
+
+
+def _lightcone_frame_from_sum(p: torch.Tensor) -> torch.Tensor:
+    """The frame of :func:`get_lightcone_frame` from the summed momentum ``p`` ``(N, 3)``."""
     n = p / p.norm(dim=-1, keepdim=True).clamp_min(1e-12)
     nx, ny, nz = n.unbind(-1)
     rho = torch.sqrt(nx**2 + ny**2).clamp_min(1e-12)
@@ -1782,8 +1830,16 @@ class LGATrSlimTagger(nn.Module):
         The four-momenta are divided by this scale (e.g. 20.0 to convert GeV to units of 20 GeV);
         spurions are not rescaled.
     attention_backend
-        ``"native"`` (default) runs the dense zero-padded layout through
-        ``torch.nn.functional.scaled_dot_product_attention``. ``"varlen"`` (torch's native
+        ``"auto"`` (default) chooses per forward call: on CUDA ``"efficient"`` when attention
+        runs in fp32 (no AMP) and ``"varlen"`` under fp16/bf16 AMP (``"flex"`` if torch has no
+        ``varlen_attn``); on CPU and during ONNX export ``"native"``. The two CUDA defaults are
+        the fastest backend at each precision (JetClass / hh4b fp32 step: efficient 48.8 /
+        176.6 ms vs flex 64.4 / 245.7 ms; fp16: varlen 24.9 / 68.0 ms vs efficient 29.2 /
+        80.4 ms, RTX 5090, ``--compile``).
+        ``"native"`` runs the dense zero-padded layout through
+        ``torch.nn.functional.scaled_dot_product_attention``. ``"efficient"`` (torch's
+        memory-efficient cutlass kernel with ``cu_seqlens``; exact fp32 path, graph break
+        under compile), ``"varlen"`` (torch's native
         flash-attention varlen kernel, torch >= 2.10), ``"flash"`` (the flash-attn
         package, FlashAttention-3 interface preferred), ``"xformers"``
         (``xformers.ops.memory_efficient_attention`` with a block-diagonal mask), and
@@ -1891,7 +1947,7 @@ class LGATrSlimTagger(nn.Module):
         mean_aggregation: bool = False,
         vector_units: float = 1.0,
         # attention
-        attention_backend: str = "native",
+        attention_backend: str = "auto",
         # vector coordinates (see get_lightcone_frame)
         vector_coord: str = "lightcone",
         lightcone_frame: str = "sum",
@@ -2105,8 +2161,9 @@ class LGATrSlimTagger(nn.Module):
             [mask.new_ones(batch_size, spurions.size(1)), mask], dim=1
         )
 
-        if self.attention_backend != "native":
-            return self._forward_packed(vectors, scalars, mask)
+        backend = self._resolve_backend(x.device.type)
+        if backend != "native":
+            return self._forward_packed(vectors, scalars, mask, backend)
 
         if not self.mean_aggregation:
             # prepend a global class token: zero vector, one-hot flag in an extra scalar channel
@@ -2133,6 +2190,99 @@ class LGATrSlimTagger(nn.Module):
             output = torch.softmax(output, dim=1)
         return output
 
+    def forward_jagged(self, x, v, offsets, maxlen):
+        """Forward from unpadded inputs, as delivered by the ``--jagged nested`` loader.
+
+        x: (T, C) scalar features and v: (T, 4) [px,py,pz,energy] of all T particles of
+        the batch, event after event; offsets: (N + 1,) event boundaries; ``maxlen``: any
+        upper bound on the particles per event (a Python int, so that no device-to-host
+        sync is needed). Computes what :meth:`forward` computes with a packed attention
+        backend and ``trim=False``, without ever materializing the padded layout.
+        """
+        backend = self._resolve_backend(x.device.type)
+        if backend == "native":
+            if self.attention_backend != "auto":
+                raise ValueError("forward_jagged needs a packed attention backend, not 'native'.")
+            # "auto" on CPU: the packed layout falls back to a materialized block-diagonal mask
+            backend = "efficient"
+        if self.vector_coord == "lightcone" and self.lightcone_frame == "collinear":
+            raise NotImplementedError("the collinear axis needs the dense (N, P, P) pair kernel.")
+        self._check_amp(x.device.type)
+        num_events = offsets.numel() - 1
+        num_particles = x.shape[0]
+        batch = get_batch_from_ptr(offsets, num_items=num_particles)  # (T,) event index
+
+        scalars = x
+        fourmomenta = v[:, [3, 0, 1, 2]]  # (E, px, py, pz)
+        frame = None
+        if self.vector_coord == "lightcone":
+            with torch.no_grad():
+                momenta = fourmomenta.to(torch.float64)
+                if self.lightcone_frame == "sum":
+                    p = momenta.new_zeros(num_events, 3).index_add_(0, batch, momenta[:, 1:])
+                    frame = _lightcone_frame_from_sum(p)
+                else:
+                    spatial = momenta[:, 1:]
+                    magnitude = spatial.norm(dim=-1)
+                    directions = torch.where(
+                        (magnitude > 0).unsqueeze(-1),
+                        spatial / magnitude.clamp_min(_AXIS_EPS).unsqueeze(-1),
+                        torch.zeros_like(spatial),
+                    )
+                    total = magnitude.new_zeros(num_events).index_add_(0, batch, magnitude)
+                    weights = magnitude / total.clamp_min(_AXIS_EPS)[batch]
+                    outer = weights[:, None, None] * directions[:, :, None] * directions[:, None, :]
+                    tensor = outer.new_zeros(num_events, 3, 3).index_add_(0, batch, outer)
+                    frame = lightcone_frame_from_axis(leading_eigenvector(tensor))  # (N, 4, 4)
+            vectors = torch.einsum("tij,tj->ti", frame[batch], fourmomenta.to(torch.float64))
+        else:
+            vectors = fourmomenta
+        vectors = vectors.to(scalars.dtype) / self.vector_units
+
+        if self.auxiliary_scalars is not None:
+            if self.momentum_float64:
+                fourmomenta = fourmomenta.to(torch.float64)
+            jet = fourmomenta.new_zeros(num_events, 4).index_add_(0, batch, fourmomenta)
+            aux = get_auxiliary_scalars(fourmomenta, jet[batch], auxiliary_scalars=self.auxiliary_scalars)
+            scalars = torch.cat([aux.to(scalars.dtype), scalars], dim=-1)
+
+        # prepend the spurions of every event (zero scalar features), still packed
+        num_spurions = self.spurions.size(0)
+        if num_spurions > 0:
+            if frame is not None:
+                spurions = torch.einsum("nij,sj->nsi", frame, self.spurions.to(torch.float64))
+                spurions = spurions.to(scalars.dtype)
+            else:
+                spurions = self.spurions.to(scalars.dtype).unsqueeze(0).expand(num_events, -1, -1)
+            steps = torch.arange(num_events + 1, device=offsets.device) * num_spurions
+            ptr = offsets + steps
+            num_total = num_particles + num_events * num_spurions
+            particle_idxs = torch.arange(num_particles, device=offsets.device) + (batch + 1) * num_spurions
+            spurion_idxs = (
+                ptr[:-1].unsqueeze(1) + torch.arange(num_spurions, device=offsets.device)
+            ).flatten()
+            vectors = (
+                vectors.new_zeros(num_total, 4)
+                .index_put((particle_idxs,), vectors)
+                .index_put((spurion_idxs,), spurions.reshape(-1, 4))
+            )
+            scalars = scalars.new_zeros(num_total, scalars.shape[-1]).index_put((particle_idxs,), scalars)
+            batch = get_batch_from_ptr(ptr, num_items=num_total)
+        else:
+            ptr = offsets
+        return self._forward_tokens(vectors, scalars, batch, ptr, maxlen + num_spurions, backend)
+
+    def _resolve_backend(self, device_type: str) -> str:
+        """The attention backend for this call: ``attention_backend`` itself, or for
+        ``"auto"`` the fastest backend at the precision attention will run in."""
+        if self.attention_backend != "auto":
+            return self.attention_backend
+        if device_type != "cuda" or torch.onnx.is_in_onnx_export():
+            return "native"
+        if self._attention_dtypes(device_type)[0] == torch.float32:
+            return "efficient"
+        return "varlen" if _has_varlen_attn() else "flex"
+
     def _attention_dtypes(self, device_type: str) -> tuple[torch.dtype, ...]:
         """The precision attention will run in, for sizing the flex block mask (see
         :func:`_flex_block_size`): the trainer's autocast dtype under AMP, else fp32."""
@@ -2140,7 +2290,7 @@ class LGATrSlimTagger(nn.Module):
             return (torch.get_autocast_dtype(device_type),)
         return (torch.float32,)
 
-    def _forward_packed(self, vectors, scalars, mask):
+    def _forward_packed(self, vectors, scalars, mask, backend):
         """Packed (sparse) forward path: drop the padding and run block-diagonal varlen
         attention over the concatenated tokens (port of the tagging-guide
         ``LGATrWrapper._forward_sparse``)."""
@@ -2148,7 +2298,11 @@ class LGATrSlimTagger(nn.Module):
         # avoids a device-to-host sync
         maxlen = mask.size(1)
         [vectors, scalars], batch, ptr = dense_to_sparse([vectors, scalars], mask)
+        return self._forward_tokens(vectors, scalars, batch, ptr, maxlen, backend)
 
+    def _forward_tokens(self, vectors, scalars, batch, ptr, maxlen, backend):
+        """Packed ``(tokens, 4)`` vectors / ``(tokens, C)`` scalars (spurions included)
+        -> logits. ``maxlen`` is any upper bound on the per-event token count."""
         if not self.mean_aggregation:
             # prepend a global class token per event: zero vector, one-hot flag in an
             # extra scalar channel
@@ -2182,7 +2336,7 @@ class LGATrSlimTagger(nn.Module):
             ptr,
             batch,
             maxlen,
-            self.attention_backend,
+            backend,
             flex_head_dim=self._flex_head_dim,
             flex_dtypes=self._attention_dtypes(device_type),
         )
