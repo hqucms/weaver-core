@@ -181,5 +181,62 @@ class BatchGatherTest(unittest.TestCase):
         self._assert_same(ref, got, "num_workers=0")
 
 
+class TokenBatchTest(BatchGatherTest):
+    """``batch_tokens``: batches filled up to a token budget instead of a fixed event count."""
+
+    def _token_batches(self, jagged, budget, cap, for_training, workers=1):
+        np.random.seed(0)
+        ds = SimpleIterDataset(
+            {"a": self.files}, self.config, batch_size=cap, for_training=for_training,
+            load_range_and_fraction=((0, 1), 1, 1), fetch_by_files=True, fetch_step=1,
+            jagged=jagged, batch_gather=True, drop_last=for_training, batch_tokens=budget,
+            name="train" if for_training else "test",
+        )
+        dl = DataLoader(ds, num_workers=workers, batch_size=None, generator=torch.Generator().manual_seed(7))
+        return list(dl)
+
+    @staticmethod
+    def _tokens(batch):
+        # every input group here has length 16 and the same structure: tokens = min(nconst, 16)
+        return np.minimum(batch[2]["nconst"].numpy(), 16).astype(int)
+
+    def test_same_event_stream_as_event_batches(self):
+        for jagged in ("host", "device"):
+            with self.subTest(jagged=jagged):
+                ref = self._batches(True, jagged, False, workers=1, bs=10000)
+                got = self._token_batches(jagged, budget=200, cap=64, for_training=False)
+                ev_ref = np.concatenate([b[2]["evt"].numpy() for b in ref])
+                ev_got = np.concatenate([b[2]["evt"].numpy() for b in got])
+                np.testing.assert_array_equal(ev_got, ev_ref)
+
+    def test_budget_cap_and_greedy_fill(self):
+        budget, cap = 200, 40
+        batches = self._token_batches("device", budget, cap, for_training=False)
+        stream = np.concatenate([self._tokens(b) for b in batches])
+        pos = 0
+        for i, b in enumerate(batches):
+            t = self._tokens(b)
+            n = len(t)
+            self.assertLessEqual(n, cap)
+            if n > 1:
+                self.assertLessEqual(t.sum(), budget)
+            # greedy: the next event of the stream would not have fit (except at the end / file boundaries)
+            nxt = pos + n
+            if i + 1 < len(batches) and nxt < len(stream) and n < cap:
+                same_file = b[2]["evt"][-1] // 10000 == batches[i + 1][2]["evt"][0] // 10000
+                if same_file:
+                    self.assertGreater(t.sum() + stream[nxt], budget)
+            pos = nxt
+
+    def test_training_drop_last_and_shapes(self):
+        batches = self._token_batches("device", budget=150, cap=64, for_training=True, workers=2)
+        self.assertGreater(len(batches), 10)
+        for X, y, Z in batches:
+            values, offsets = X["pf_features"]
+            self.assertEqual(len(offsets) - 1, len(y["_label_"]))
+            self.assertEqual(int(offsets[-1]), values.shape[0])
+            self.assertLessEqual(int((offsets[1:] - offsets[:-1]).sum()), 150)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -55,9 +55,28 @@ def _repeat_pad_jagged_kernel(content, offsets, out):
             out[i, j] = content[start + j % length]
 
 
+def _content_and_offsets_of_options(a):
+    """Content + offsets of a jagged array with option types but no missing value (pyarrow writes nullable
+    columns by default, which awkward reads as option types even when nothing is missing); ``None`` if a
+    value is actually missing. Copies the content."""
+    if a.ndim != 2:
+        return None
+    try:
+        content = ak.to_numpy(ak.flatten(a, axis=1), allow_missing=False)
+        counts = ak.to_numpy(ak.num(a, axis=1), allow_missing=False)
+    except ValueError:  # missing values
+        return None
+    offsets = np.zeros(len(counts) + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    return content, offsets
+
+
 def _get_content_and_offsets(a):
     """Extract flat content and offsets from a 1-level jagged awkward array. Returns None if not applicable."""
     try:
+        typestr = str(a.type)
+        if "?" in typestr or "option[" in typestr:
+            return _content_and_offsets_of_options(a)
         layout = a.layout
         # IndexedArray reorders/filters its content (e.g., after `table[selected]`),
         # so naively unwrapping it would yield the underlying array's offsets and silently

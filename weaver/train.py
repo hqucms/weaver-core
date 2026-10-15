@@ -12,6 +12,13 @@ import math
 import copy
 import random
 import zlib
+
+# Expandable CUDA allocator segments: with inputs whose size changes every step (jagged / packed batches,
+# `--batch-tokens`), the caching allocator otherwise fragments into many fixed-size segments and can run
+# out of memory well below the true peak. Set before torch touches CUDA; an explicit
+# PYTORCH_CUDA_ALLOC_CONF (e.g. "expandable_segments:False") takes precedence.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 
 from torch.utils.data import DataLoader
@@ -82,6 +89,13 @@ parser.add_argument('--batch-gather', action=argparse.BooleanOptionalAction, def
                     help='let each dataloader worker gather a whole batch from its loaded table in one go, instead of '
                          'handing out events one by one to the DataLoader\'s collate; same batches, several times '
                          'less worker CPU per batch')
+parser.add_argument('--batch-tokens', type=int, default=None,
+                    help='fill each batch up to this many tokens (per event: the length of its longest jagged input '
+                         'group, after the `length` cap) instead of a fixed number of events, so that the batch '
+                         'memory stays roughly constant for inputs of very different sizes; `--batch-size` is then '
+                         'the maximum number of events per batch. Needs `--jagged` and `--batch-gather`. '
+                         '`--samples-per-epoch` still counts events: the steps per epoch are derived from the mean '
+                         'tokens per event of the first training file')
 parser.add_argument('--in-memory', action=argparse.BooleanOptionalAction, default=False,
                     help='load the whole dataset (and perform the preprocessing) only once and keep it in memory for the entire run')
 parser.add_argument('--in-memory-val', action=argparse.BooleanOptionalAction, default=None,
@@ -306,6 +320,9 @@ def batch_args(args, data_config, batch_size, drop_last):
     """DataLoader batching kwargs. With ``--batch-gather`` the dataset already yields whole
     batches (drop_last is applied there), so the DataLoader must not batch again; otherwise
     the DataLoader batches, through a JaggedCollator under ``--jagged``."""
+    if getattr(data_config, 'packed_inputs', ()) and args.jagged != 'device':
+        raise RuntimeError('Input groups %s are `packed` in the data config, which needs `--jagged device`'
+                           % (data_config.packed_inputs,))
     if args.batch_gather:
         return dict(batch_size=None)
     collate_fn = None
@@ -314,6 +331,37 @@ def batch_args(args, data_config, batch_size, drop_last):
 
         collate_fn = JaggedCollator(data_config, args.jagged)
     return dict(batch_size=batch_size, drop_last=drop_last, collate_fn=collate_fn)
+
+
+def _token_batch_steps(args, train_data, train_files):
+    """With ``--batch-tokens``, convert the event counts of ``--samples-per-epoch[-val]`` into steps: pack the
+    events of the first training file (shuffled) the way the loader does and take the mean events per batch."""
+    from weaver.utils.data.jagged import JaggedArray
+    from weaver.utils.dataset import _load_next
+
+    opts = dict(train_data._sampler_options, reweight=False)
+    table, indices = _load_next(train_data.config, [train_files[0]], [(0, 1)], opts)
+    lengths = [np.diff(table["_" + k].offsets) for k in train_data.config.input_names
+               if isinstance(table["_" + k], JaggedArray)]
+    tokens = np.maximum.reduce(lengths)[np.random.default_rng(0).permutation(np.asarray(indices))]
+    n_batches, n_tok, n_ev = 0, 0, 0
+    for t in tokens:
+        if n_ev > 0 and (n_tok + t > args.batch_tokens or n_ev >= args.batch_size):
+            n_batches += 1
+            n_tok, n_ev = 0, 0
+        n_tok += t
+        n_ev += 1
+    events_per_batch = len(tokens) / max(1, n_batches)
+    _logger.info(
+        "--batch-tokens %d: %.1f tokens/event on average (%s), %.1f events/batch (max %d)",
+        args.batch_tokens, tokens.mean(), train_files[0], events_per_batch, args.batch_size)
+    if args.samples_per_epoch is not None:
+        args.steps_per_epoch = max(1, round(args.samples_per_epoch / events_per_batch))
+        _logger.info("steps per epoch: %d (for %d events)", args.steps_per_epoch, args.samples_per_epoch)
+    if args.steps_per_epoch_val is not None:
+        val_events = args.samples_per_epoch_val or args.steps_per_epoch_val * args.batch_size_val
+        args.steps_per_epoch_val = max(1, round(val_events / events_per_batch))
+        _logger.info("steps per validation epoch: %d (for %d events)", args.steps_per_epoch_val, val_events)
 
 
 def train_load(args):
@@ -380,6 +428,7 @@ def train_load(args):
         in_memory=args.in_memory,
         jagged=args.jagged or False,
         batch_gather=args.batch_gather,
+        batch_tokens=args.batch_tokens,
         drop_last=True,
         name="train" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
@@ -397,9 +446,12 @@ def train_load(args):
         in_memory=args.in_memory_val,
         jagged=args.jagged or False,
         batch_gather=args.batch_gather,
+        batch_tokens=args.batch_tokens,
         drop_last=True,
         name="val" + ("" if args.local_rank is None else "_rank%d" % args.local_rank),
     )
+    if args.batch_tokens is not None:
+        _token_batch_steps(args, train_data, train_files)
     num_workers_train = min(args.num_workers, max(1, int(len(train_files) * args.file_fraction)))
     num_workers_val = min(args.num_workers, max(1, int(len(val_files) * args.file_fraction)))
     train_loader = DataLoader(
@@ -474,6 +526,7 @@ def test_load(args):
             fetch_step=1,
             jagged=args.jagged or False,
             batch_gather=args.batch_gather,
+            batch_tokens=args.batch_tokens,
             batch_size=args.batch_size_test,
             drop_last=False,
             name="test_" + name,

@@ -111,14 +111,16 @@ def unwrap_model(model):
 
 def inputs_to_device(X, data_config, dev, args):
     """The model inputs of batch ``X`` on ``dev``; under ``--jagged device`` the unpadded
-    groups are padded there, into the batch the stock loader would have produced."""
+    groups are padded there, into the batch the stock loader would have produced. Groups the
+    data config marks ``packed`` are handed over as they are, ``Unpadded(values, offsets)``."""
     inputs = [X[k].to(dev, non_blocking=True) for k in data_config.input_names]
     if getattr(args, 'jagged', None) == 'device':
         from weaver.utils.data.jagged import JaggedCollator, Unpadded
         padder = getattr(data_config, '_device_padder', None)
         if padder is None:
             padder = data_config._device_padder = JaggedCollator(data_config, 'device')
-        inputs = [padder.pad_on_device(k, x) if isinstance(x, Unpadded) else x
+        packed = getattr(data_config, 'packed_inputs', ())
+        inputs = [padder.pad_on_device(k, x) if isinstance(x, Unpadded) and k not in packed else x
                   for k, x in zip(data_config.input_names, inputs)]
     return inputs
 

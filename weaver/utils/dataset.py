@@ -48,6 +48,10 @@ def _finalize_inputs(table, data_config, jagged=False):
         # jagged: keep (tokens, vars) + offsets and leave the padding to the collate step
         fuse = _fused_jagged_stack if jagged else _fused_pad_and_stack
         result = fuse(table, var_names, data_config.preprocess_params)
+        if result is None and group_name in getattr(data_config, "packed_inputs", ()):
+            raise RuntimeError(
+                "Packed input group `%s`: its variables must be plain jagged arrays sharing one structure" % group_name
+            )
         if result is not None:
             output["_" + group_name] = result
             fused_vars.update(var_names)
@@ -414,6 +418,8 @@ class _SimpleIter(object):
         this one runs out, so a batch may come from two tables."""
         if len(self.filelist) == 0:
             raise StopIteration
+        if self._batch_tokens is not None:
+            return self._next_token_batch()
         parts = []
         need = self._sampler_options["batch_size"]
         while need > 0:
@@ -428,6 +434,52 @@ class _SimpleIter(object):
             self.cursor += len(idx)
             need -= len(idx)
         if need > 0 and (self._drop_last or not parts):
+            raise StopIteration
+        return self._gather_batch(parts)
+
+    def _event_tokens(self):
+        """Tokens per event of the current table: the longest jagged input group (cached on the table)."""
+        tokens = self.table.get("__tokens__") if isinstance(self.table, dict) else None
+        if tokens is None:
+            lengths = [
+                np.diff(self.table["_" + k].offsets)
+                for k in self._data_config.input_names
+                if isinstance(self.table["_" + k], JaggedArray)
+            ]
+            tokens = np.maximum.reduce(lengths) if lengths else np.ones(len(self.indices), dtype=np.int64)
+            self.table["__tokens__"] = tokens
+        return tokens
+
+    def _next_token_batch(self):
+        """The next batch of at most ``batch_tokens`` tokens (and ``batch_size`` events): the next entries of
+        the shuffled index array, in order, continuing into the next chunk when this one runs out. An event
+        longer than the budget alone forms a batch. With ``drop_last`` the final, unfilled batch is dropped."""
+        budget = self._batch_tokens
+        cap = self._sampler_options["batch_size"]
+        parts = []
+        n_events = n_tokens = 0
+        full = False
+        while True:
+            if self.cursor >= len(self.indices):
+                try:
+                    self._advance()
+                except StopIteration:
+                    break
+            # a copy: an in-memory re-shuffle permutes `self.indices` in place
+            cand = np.array(self.indices[self.cursor : self.cursor + cap - n_events])
+            cum = n_tokens + np.cumsum(self._event_tokens()[cand])
+            k = int(np.searchsorted(cum, budget, side="right"))
+            if k == 0 and n_events == 0:
+                k = 1  # an event above the budget goes alone
+            if k > 0:
+                parts.append((self.table, cand[:k]))
+                self.cursor += k
+                n_events += k
+                n_tokens = int(cum[k - 1])
+            if k < len(cand) or n_events >= cap:
+                full = True
+                break
+        if not parts or (not full and self._drop_last):
             raise StopIteration
         return self._gather_batch(parts)
 
@@ -534,6 +586,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         jagged=False,
         batch_gather=False,
         drop_last=True,
+        batch_tokens=None,
         name="",
     ):
         self._iters = {} if infinity_mode or in_memory else None
@@ -556,6 +609,12 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._drop_last = drop_last
         if batch_gather and (batch_size is None or (jagged and self._jagged_mode is None)):
             raise ValueError("batch_gather needs batch_size, and a jagged mode name if jagged")
+        # batch_tokens: fill each batch up to this many tokens (the per-event length of the longest jagged
+        # input group, after the `length` cap) instead of a fixed number of events; batch_size is then the
+        # maximum number of events per batch
+        self._batch_tokens = batch_tokens
+        if batch_tokens is not None and not (batch_gather and self._jagged_mode):
+            raise ValueError("batch_tokens needs batch_gather and a jagged mode")
 
         # ==== sampling parameters ====
         self._sampler_options = {

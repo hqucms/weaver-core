@@ -79,6 +79,9 @@ class DataConfig(object):
         self.input_names = tuple(opts["inputs"].keys())
         self.input_dicts = {k: [] for k in self.input_names}
         self.input_shapes = {}
+        # `packed: true` input groups reach the model unpadded, as `jagged.Unpadded(values (tokens, vars),
+        # offsets (B + 1,))`; `length` then only caps the number of tokens kept per event (needs `--jagged device`)
+        self.packed_inputs = tuple(k for k, o in opts["inputs"].items() if o.get("packed", False))
         for k, o in opts["inputs"].items():
             self.input_shapes[k] = (-1, len(o["vars"]), o["length"])
             for v in o["vars"]:
