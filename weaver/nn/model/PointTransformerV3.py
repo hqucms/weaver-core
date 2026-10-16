@@ -236,6 +236,21 @@ def encode(grid_coord, batch=None, depth=16, order="z"):
     return code
 
 
+@torch.no_grad()
+def time_encode(time, batch):
+    """Serialization code of the ``"time"`` order: the rank of each point in (batch, time) order.
+
+    Points of a point cloud are ordered by ``time`` (ties keep their input order), point clouds
+    stay contiguous in batch order. Not a space-filling curve: the code is only used for sorting
+    (pooling clusters on a spatial order and recomputes the time codes from the pooled times).
+    """
+    order = torch.argsort(time, stable=True)
+    order = order[torch.argsort(batch[order], stable=True)]
+    code = torch.empty_like(order)
+    code[order] = torch.arange(len(order), device=order.device)
+    return code
+
+
 # ---------------------------------------------------------------------------------------
 # Batch bookkeeping and the Point structure
 # ---------------------------------------------------------------------------------------
@@ -279,7 +294,8 @@ class Point(dict):
       from the other if missing;
     - ``feat``: point features;
     - ``serialized_depth`` / ``serialized_code`` / ``serialized_order`` /
-      ``serialized_inverse``: serialization, see :meth:`serialization`.
+      ``serialized_inverse`` / ``serialized_names``: serialization, see :meth:`serialization`;
+    - ``time`` (optional): per-point time, needed by the ``"time"`` serialization order.
     """
 
     def __init__(self, *args, **kwargs):
@@ -309,7 +325,15 @@ class Point(dict):
             ).int()
 
     def serialization(self, order="z", depth=None, shuffle_orders=False):
-        """Point cloud serialization. Relies on ``grid_coord`` (or ``coord`` + ``grid_size``) and ``batch``."""
+        """Point cloud serialization. Relies on ``grid_coord`` (or ``coord`` + ``grid_size``) and ``batch``.
+
+        ``order``: one or several of ``z``, ``z-trans``, ``hilbert``, ``hilbert-trans`` (space-filling
+        curves) and ``time`` (points sorted by ``self.time`` within each point cloud; at least one
+        spatial order is required, pooling clusters on it).
+        """
+        order = [order] if isinstance(order, str) else list(order)
+        assert any(o != "time" for o in order), "serialization needs at least one spatial order"
+        assert "time" not in order or "time" in self.keys(), "the 'time' order needs point.time"
         assert "batch" in self.keys()
         self._ensure_grid_coord()
         if depth is None:
@@ -320,7 +344,13 @@ class Point(dict):
         assert depth * 3 + len(self.offset).bit_length() <= 63
         assert depth <= 16
 
-        code = torch.stack([encode(self.grid_coord, self.batch, depth, order=order_) for order_ in order])
+        code = torch.stack(
+            [
+                time_encode(self.time, self.batch) if order_ == "time" else encode(self.grid_coord, self.batch, depth, order=order_)
+                for order_ in order
+            ]
+        )
+        names = tuple(order)
         # stable: points sharing a grid cell keep their input order (e.g. time-ordered pulses)
         order = torch.argsort(code, stable=True)
         inverse = torch.zeros_like(order).scatter_(
@@ -329,10 +359,12 @@ class Point(dict):
         if shuffle_orders:
             perm = torch.randperm(code.shape[0])
             code, order, inverse = code[perm], order[perm], inverse[perm]
+            names = tuple(names[i] for i in perm.tolist())
 
         self["serialized_code"] = code
         self["serialized_order"] = order
         self["serialized_inverse"] = inverse
+        self["serialized_names"] = names
 
 
 class PointModule(nn.Module):
@@ -907,13 +939,25 @@ class SerializedPooling(PointModule):
         ), "Run point.serialization() point cloud before SerializedPooling"
 
         code = point.serialized_code >> pooling_depth * 3
-        code_, cluster, counts = torch.unique(code[0], sorted=True, return_inverse=True, return_counts=True)
+        names = point.get("serialized_names") or ("z",) * code.shape[0]
+        # cluster on a spatial order (the "time" codes are ranks, not curves: recomputed below)
+        spatial = next(i for i, n in enumerate(names) if n != "time")
+        code_, cluster, counts = torch.unique(code[spatial], sorted=True, return_inverse=True, return_counts=True)
         # indices of points sorted by cluster
         _, indices = torch.sort(cluster, stable=True)
         idx_ptr = torch.cat([counts.new_zeros(1), torch.cumsum(counts, dim=0)])
         # head indices of each cluster, for reducing attributes such as code, batch
         head_indices = indices[idx_ptr[:-1]]
         code = code[:, head_indices]
+        num_clusters = len(code_)
+        batch = point.batch[head_indices]
+        time = None
+        if "time" in point.keys():
+            # a pooled point is as early as its earliest member
+            time = _segment_reduce(point.time, cluster, num_clusters, "min")
+            for i, n in enumerate(names):
+                if n == "time":
+                    code[i] = time_encode(time, batch)
         order = torch.argsort(code, stable=True)
         inverse = torch.zeros_like(order).scatter_(
             dim=1, index=order, src=torch.arange(0, code.shape[1], device=order.device).repeat(code.shape[0], 1)
@@ -921,9 +965,8 @@ class SerializedPooling(PointModule):
         if self.shuffle_orders and self.training:
             perm = torch.randperm(code.shape[0])
             code, order, inverse = code[perm], order[perm], inverse[perm]
+            names = tuple(names[i] for i in perm.tolist())
 
-        num_clusters = len(code_)
-        batch = point.batch[head_indices]
         point_dict = dict(
             feat=_segment_reduce(self.proj(point.feat), cluster, num_clusters, self.reduce),
             grid_coord=point.grid_coord[head_indices] >> pooling_depth,
@@ -931,12 +974,15 @@ class SerializedPooling(PointModule):
             serialized_order=order,
             serialized_inverse=inverse,
             serialized_depth=point.serialized_depth - pooling_depth,
+            serialized_names=tuple(names),
             batch=batch,
             # keep empty point clouds (if any) so that the batch layout is preserved
             offset=batch2offset(batch, num_batches=len(point.offset)),
         )
         if "coord" in point.keys():
             point_dict["coord"] = _segment_reduce(point.coord, cluster, num_clusters, "mean")
+        if time is not None:
+            point_dict["time"] = time
         if "condition" in point.keys():
             point_dict["condition"] = point.condition
         if "context" in point.keys():
@@ -995,12 +1041,32 @@ class Embedding(PointModule):
         return self.stem(point)
 
 
+class TimeEmbedding(PointModule):
+    """Adds a learned embedding of the point time to the point features: sin / cos of ``time`` at
+    ``num_freqs`` log-spaced frequencies (``min_freq`` * 2^k, in cycles per time unit), then a linear map.
+    The linear map starts at zero, so that the network starts out as without the embedding."""
+
+    def __init__(self, channels, num_freqs=10, min_freq=0.125):
+        super().__init__()
+        self.register_buffer("freqs", 2 * math.pi * min_freq * 2.0 ** torch.arange(num_freqs), persistent=False)
+        self.proj = nn.Linear(2 * num_freqs, channels)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, point: Point):
+        phase = point.time.float()[:, None] * self.freqs
+        point.feat = point.feat + self.proj(torch.cat([phase.sin(), phase.cos()], dim=1)).to(point.feat.dtype)
+        return point
+
+
 class PointTransformerV3(PointModule):
     """Point Transformer V3 backbone (Pointcept interface, see module docstring).
 
     Differences in the constructor w.r.t. the original: ``enable_flash`` defaults to
     ``False``; new ``attn_backend`` (``native`` | ``varlen`` | ``flash``) and
-    ``serialization_depth`` (``None`` = adaptive, as in the original).
+    ``serialization_depth`` (``None`` = adaptive, as in the original); ``time_embed`` = number of
+    frequencies of a ``TimeEmbedding`` added at the start of every encoder stage (0 = none; needs
+    ``point.time``, pooled points take the earliest time).
     """
 
     def __init__(
@@ -1037,6 +1103,7 @@ class PointTransformerV3(PointModule):
         pdnorm_conditions=("ScanNet", "S3DIS", "Structured3D"),
         attn_backend="native",
         serialization_depth=None,
+        time_embed=0,
     ):
         super().__init__()
         self.num_stages = len(enc_depths)
@@ -1115,6 +1182,8 @@ class PointTransformerV3(PointModule):
                     ),
                     name="down",
                 )
+            if time_embed:
+                enc.add(TimeEmbedding(enc_channels[s], time_embed), name="time_embed")
             for i in range(enc_depths[s]):
                 enc.add(
                     Block(
@@ -1204,6 +1273,11 @@ class PTv3EventRegressor(nn.Module):
 
     Returns (N, num_outputs). The backbone runs in ``cls_mode`` (encoder only) by default;
     with ``cls_mode=False`` the decoder output (at the input points) is pooled instead.
+
+    ``time_feature``: index of the point feature holding the point time (e.g. the pulse time), which
+    then enables the ``"time"`` serialization order, e.g.
+    ``order=("z", "time", "z-trans", "hilbert", "hilbert-trans")``, and / or the time embedding
+    (``time_embed=<number of frequencies>``).
     """
 
     def __init__(
@@ -1217,10 +1291,15 @@ class PTv3EventRegressor(nn.Module):
         head_channels=(256, 128),
         head_dropout=0.0,
         cls_mode=True,
+        time_feature=None,
         **ptv3_kwargs,
     ):
         super().__init__()
         assert pooling in ("mean", "max", "mean+max")
+        order = ptv3_kwargs.get("order", ())
+        uses_time = "time" in order or ptv3_kwargs.get("time_embed", 0)
+        assert bool(uses_time) == (time_feature is not None), "`time_feature` goes with the 'time' order / time_embed"
+        self.time_feature = time_feature
         self.grid_size = grid_size
         self.pooling = pooling
         self.backbone = PointTransformerV3(
@@ -1247,9 +1326,14 @@ class PTv3EventRegressor(nn.Module):
         # per point cloud origin, so that the voxelization of an event does not depend on the batch
         coord_min = _segment_reduce(coord, batch, mask.shape[0], "min")
         grid_coord = torch.div(coord - coord_min[batch], self.grid_size, rounding_mode="floor").int()
-        return dict(
-            coord=coord, grid_coord=grid_coord, feat=feat, batch=batch, offset=torch.cumsum(counts, 0).long()
+        return self._with_time(
+            dict(coord=coord, grid_coord=grid_coord, feat=feat, batch=batch, offset=torch.cumsum(counts, 0).long())
         )
+
+    def _with_time(self, data):
+        if self.time_feature is not None:
+            data["time"] = data["feat"][:, self.time_feature].float()
+        return data
 
     def pack_unpadded(self, points, features):
         """Packed ``(values, offsets)`` inputs -> Pointcept data dict."""
@@ -1263,7 +1347,9 @@ class PTv3EventRegressor(nn.Module):
         coord = coord.float()
         coord_min = _segment_reduce(coord, batch, num_events, "min")
         grid_coord = torch.div(coord - coord_min[batch], self.grid_size, rounding_mode="floor").int()
-        return dict(coord=coord, grid_coord=grid_coord, feat=feat, batch=batch, offset=offsets[1:].long())
+        return self._with_time(
+            dict(coord=coord, grid_coord=grid_coord, feat=feat, batch=batch, offset=offsets[1:].long())
+        )
 
     def forward(self, points, features, *args):
         if isinstance(points, tuple):  # packed: (points, features[, global_features])

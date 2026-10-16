@@ -24,7 +24,10 @@ from weaver.nn.model.PointTransformerV3 import (
     encode,
     hilbert_decode,
     hilbert_encode,
+    SerializedPooling,
     offset2bincount,
+    TimeEmbedding,
+    time_encode,
     z_order_decode,
     z_order_encode,
 )
@@ -335,6 +338,82 @@ class TestPTv3EventRegressor(unittest.TestCase):
         points, features, mask, glob = _padded_inputs([6, 19], 20)
         with torch.no_grad():
             self.assertEqual(model(points, features, mask, glob).shape, (2, 4))
+
+    def test_time_order(self):
+        time_order = ("z", "time", "z-trans", "hilbert", "hilbert-trans")
+        model = self._model(order=time_order, time_feature=3).eval()
+        counts = [4, 30, 9, 17]
+        points, features, mask, glob = _padded_inputs(counts, 32)
+        with torch.no_grad():
+            out = model(points, features, mask, glob)
+            single = torch.cat([model(points[i : i + 1], features[i : i + 1], mask[i : i + 1], glob[i : i + 1])
+                                for i in range(len(counts))])
+            # the time order changes the model: same weights without it give a different output
+            no_time = self._model()
+            no_time.load_state_dict(model.state_dict())
+            other = no_time.eval()(points, features, mask, glob)
+        torch.testing.assert_close(single, out, rtol=1e-4, atol=1e-5)
+        self.assertFalse(torch.allclose(other, out, atol=1e-4))
+        model.train()
+        model(points, features, mask, glob).square().mean().backward()
+        self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters()))
+        with self.assertRaises(AssertionError):
+            self._model(order=time_order)  # no time_feature
+
+    def test_time_embed(self):
+        model = self._model(time_embed=6, time_feature=3).eval()
+        self.assertEqual(sum(isinstance(m, TimeEmbedding) for m in model.modules()), len(model.backbone.enc))
+        counts = [4, 30, 9, 17]
+        points, features, mask, glob = _padded_inputs(counts, 32)
+        no_time = self._model().eval()
+        no_time.load_state_dict(model.state_dict(), strict=False)
+        with torch.no_grad():
+            out = model(points, features, mask, glob)
+            # zero-initialised: the same output as without the embedding
+            torch.testing.assert_close(no_time(points, features, mask, glob), out)
+            for m in model.modules():
+                if isinstance(m, TimeEmbedding):
+                    m.proj.weight.normal_()
+            single = torch.cat([model(points[i : i + 1], features[i : i + 1], mask[i : i + 1], glob[i : i + 1])
+                                for i in range(len(counts))])
+            self.assertFalse(torch.allclose(single, out, atol=1e-4))
+            torch.testing.assert_close(single, model(points, features, mask, glob), rtol=1e-4, atol=1e-5)
+        model.train()
+        model(points, features, mask, glob).square().mean().backward()
+        self.assertTrue(all(p.grad is not None and torch.isfinite(p.grad).all() for p in model.parameters()))
+        with self.assertRaises(AssertionError):
+            self._model(time_embed=6)  # no time_feature
+
+
+class TestTimeOrder(unittest.TestCase):
+    def test_time_encode_sorts_by_time_within_batch(self):
+        g = torch.Generator().manual_seed(0)
+        batch = torch.tensor([0] * 7 + [1] * 5 + [2] * 9)
+        time = torch.randn(len(batch), generator=g)
+        time[3] = time[4]  # a tie keeps the input order
+        order = torch.argsort(time_encode(time, batch))
+        self.assertTrue(torch.equal(batch[order], batch))
+        for b in range(3):
+            t = time[order][batch == b]
+            self.assertTrue(bool((t[1:] >= t[:-1]).all()))
+        self.assertLess(order.tolist().index(3), order.tolist().index(4))
+
+    def test_pooling_clusters_on_a_spatial_order(self):
+        # even when the shuffled "time" order comes first, pooling merges voxels, not time slices
+        point = _make_point([40, 25], grid=8, channels=4, seed=1)
+        point["time"] = torch.randn(len(point.batch))
+        point = Point(point)
+        point.serialization(order=("time", "z", "hilbert"), depth=4)
+        pool = SerializedPooling(4, 6, stride=2).eval()
+        pooled = pool(point)
+        parent_voxel = point.batch.long() << 12 | (point.grid_coord.long() >> 1) @ torch.tensor([1 << 8, 1 << 4, 1])
+        self.assertEqual(len(pooled.batch), len(torch.unique(parent_voxel)))
+        # the pooled time is the earliest member time, and the time order is recomputed from it
+        expected = torch.full((len(pooled.batch),), float("inf")).scatter_reduce(
+            0, pooled.pooling_inverse, point.time, "amin")
+        torch.testing.assert_close(pooled.time, expected)
+        i = pooled.serialized_names.index("time")
+        torch.testing.assert_close(pooled.serialized_code[i], time_encode(pooled.time, pooled.batch))
 
 
 def _ampere_cuda():
