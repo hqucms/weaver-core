@@ -214,6 +214,28 @@ def _split_load_range(load_range, fetch_step):
     return ranges
 
 
+def _draw_load_ranges(load_range, load_frac, shuffle, rng=np.random):
+    """The part of ``load_range`` to read in one pass, as a list of 1 or 2 (start, end) ranges.
+
+    Without shuffling it is the first ``load_frac`` of the range. With shuffling the start is drawn
+    uniformly over the whole range and the slice wraps round past its end, so every event is equally
+    likely to be read (a start drawn from [start, end - interval] would rarely reach the range's edges).
+    """
+    start_pos, end_pos = load_range
+    width = end_pos - start_pos
+    interval = width * load_frac
+    if not shuffle:
+        return [(start_pos, start_pos + interval)]
+    if load_frac >= 1:
+        return [(start_pos, end_pos)]
+    offset = rng.uniform(start_pos, end_pos)
+    if offset + interval <= end_pos:
+        return [(offset, offset + interval)]
+    ranges = [(offset, end_pos), (start_pos, start_pos + (offset + interval - end_pos))]
+    tolerance = 8 * math.ulp(max(abs(start_pos), abs(end_pos), 1.0))
+    return [(a, b) for a, b in ranges if b - a > tolerance]
+
+
 class _SimpleIter(object):
     r"""_SimpleIter
 
@@ -266,23 +288,19 @@ class _SimpleIter(object):
         self.file_dict = {name: [f for k, f in filelist if k == name] for name in set(k for k, _ in filelist)}
 
         if self._init_load_range_and_fraction is None:
-            self.load_range = (0, 1)
+            self.load_ranges = [(0, 1)]
             self.split_num = 1
         else:
-            (start_pos, end_pos), load_frac, self.split_num = self._init_load_range_and_fraction
-            interval = (end_pos - start_pos) * load_frac
-            if self._sampler_options["shuffle"]:
-                offset = np.random.uniform(start_pos, end_pos - interval)
-                self.load_range = (offset, offset + interval)
-            else:
-                self.load_range = (start_pos, start_pos + interval)
+            load_range, load_frac, self.split_num = self._init_load_range_and_fraction
+            self.load_ranges = _draw_load_ranges(load_range, load_frac, self._sampler_options["shuffle"])
 
         # determine the load files and their ranges for each iteration
         if self._fetch_by_files:
             if self.split_num > 1:
                 _logger.warning("`split_num` is fixed to 1 when fetching by files.")
+            # a wrapped slice reads each file in two parts
             self.load_filelist_and_ranges = [
-                (files, [self.load_range] * len(files))
+                ([f for f in files for _ in self.load_ranges], self.load_ranges * len(files))
                 for files in (
                     self.filelist[i : i + self._fetch_step]
                     for i in range(0, len(self.filelist), self._fetch_step)
@@ -297,7 +315,7 @@ class _SimpleIter(object):
                 # [[0, 0, 0, 0, 0], [1, 2/3, 0, 0, 0], [1, 1, 1, 1/3, 0], [1, 1, 1, 1, 1]]
                 return np.array([[np.clip(n * di / d - ni, 0, 1) for ni in range(n)] for di in range(d + 1)])
 
-            for start_pos, end_pos in _split_load_range(self.load_range, self._fetch_step):
+            for start_pos, end_pos in (r for lr in self.load_ranges for r in _split_load_range(lr, self._fetch_step)):
                 delta = end_pos - start_pos
                 _load_filelist_and_ranges = [([], []) for _ in range(self.split_num)]
                 for _, files in self.file_dict.items():
@@ -326,13 +344,13 @@ class _SimpleIter(object):
                 self.load_filelist_and_ranges += _load_filelist_and_ranges
 
         _logger.debug(
-            "Init iter [%d], will load %d (out of %d*%s=%d) files with load_range=%s:\n%s",
+            "Init iter [%d], will load %d (out of %d*%s=%d) files with load_ranges=%s:\n%s",
             0 if self.worker_info is None else self.worker_info.id,
             len(self.filelist),
             len(sum(self._init_file_dict.values(), [])),
             self._file_fraction,
             int(len(sum(self._init_file_dict.values(), [])) * self._file_fraction),
-            str(self.load_range),
+            str(self.load_ranges),
             "\n".join(self.filelist[:3]) + ("\n ... " + self.filelist[-1] if self.filelist else ""),
         )
 
@@ -344,8 +362,8 @@ class _SimpleIter(object):
         _logger.debug(debug_text)
 
         _logger.info(
-            "Restarted DataIter %s, load_range=%s, file_list:\n%s"
-            % (self._name, str(self.load_range), json.dumps(self.worker_file_dict, indent=2))
+            "Restarted DataIter %s, load_ranges=%s, file_list:\n%s"
+            % (self._name, str(self.load_ranges), json.dumps(self.worker_file_dict, indent=2))
         )
 
         # reset file fetching cursor
