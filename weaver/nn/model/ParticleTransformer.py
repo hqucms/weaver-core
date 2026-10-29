@@ -874,6 +874,33 @@ class Block(nn.Module):
         self.c_attn = nn.Parameter(torch.ones(num_heads), requires_grad=True) if scale_heads else None
         self.w_resid = nn.Parameter(torch.ones(embed_dim), requires_grad=True) if scale_resids else None
 
+    def _load_from_state_dict(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        # Checkpoints from weaver-core < 0.5 (nn.MultiheadAttention, keys `attn.in_proj_weight`) applied
+        # `c_attn` via einsum("tbhd,h->tbdh"), which left the attention output in (head_dim, num_heads)
+        # channel order. The current layout is (num_heads, head_dim), so fold that permutation and
+        # `c_attn` into `out_proj` and reset `c_attn` to 1, which reproduces the old outputs exactly.
+        # Runs before the children's hooks, so `Attention` has not renamed the legacy keys yet.
+        c_key = prefix + "c_attn"
+        if prefix + "attn.in_proj_weight" in state_dict and c_key in state_dict:
+            c_attn = state_dict[c_key]
+            num_heads, head_dim = c_attn.numel(), self.head_dim
+
+            def _fold(t):
+                t = t.view(num_heads, head_dim, *t.shape[1:]) * c_attn.view(-1, *([1] * t.dim()))
+                return t.transpose(0, 1).reshape(num_heads * head_dim, *t.shape[2:])
+
+            for k in ("weight", "bias"):
+                key = prefix + "attn.out_proj." + k
+                if key in state_dict:
+                    state_dict[key] = _fold(state_dict[key])
+            state_dict[c_key] = torch.ones_like(c_attn)
+
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
+
     def forward(self, x, x_cls=None, padding_mask=None, attn_mask=None):
         """
         Args:
