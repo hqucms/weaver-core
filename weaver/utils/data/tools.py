@@ -78,6 +78,12 @@ def _get_content_and_offsets(a):
         content = np.asarray(inner.data)
         if content.ndim != 1:
             return None
+        # A sliced array (e.g. a partial-file load range) keeps its parent's full buffer, with
+        # offsets pointing into it: trim to this array's span (a view, no copy) and rebase.
+        start, stop = int(offsets[0]), int(offsets[-1])
+        if start != 0 or stop != len(content):
+            content = content[start:stop]
+            offsets = offsets - start
         return content, offsets
     except Exception:
         return None
