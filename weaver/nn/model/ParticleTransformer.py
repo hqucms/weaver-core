@@ -292,10 +292,16 @@ class SequenceTrimmer(nn.Module):
                         uu = torch.gather(uu, -2, perm.unsqueeze(-1).expand_as(uu))
                         uu = torch.gather(uu, -1, perm.unsqueeze(-2).expand_as(uu))
                 else:
-                    maxlen = mask.sum(dim=-1).max()
+                    num_particles = mask.sum(dim=-1)
+                    maxlen = num_particles.max()
                 maxlen = maxlen.clamp(min=1)
                 if maxlen < seq_len:
                     mask = mask[:, :, :maxlen]
+                    if not self.training and not torch.equal(mask.sum(dim=-1), num_particles):
+                        raise RuntimeError(
+                            "SequenceTrimmer removed valid particles during evaluation. "
+                            "Ensure masked particles are at the end of the sequence or set trim=False."
+                        )
                     x = x[:, :, :maxlen]
                     if v is not None:
                         v = [_v[:, :, :maxlen] for _v in v]
@@ -994,6 +1000,12 @@ class ParticleTransformer(nn.Module):
 
         _logger.info("ParticleTransformer init-ed: %s", locals())
 
+        if trim and not for_inference and for_segmentation:
+            raise ValueError(
+                "Segmentation requires trim=False to keep predictions aligned with labels. "
+                "Or manually trim inputs, masks, and labels together in one SequenceTrimmer call."
+            )
+
         self.for_inference = for_inference
         self.for_segmentation = for_segmentation
         self.use_amp = use_amp
@@ -1339,6 +1351,12 @@ class ParticleTransformerTagger(nn.Module):
     ) -> None:
         super().__init__(**kwargs)
 
+        if trim and not for_inference and for_segmentation:
+            raise ValueError(
+                "Segmentation requires trim=False to keep predictions aligned with labels. "
+                "Or manually trim inputs, masks, and labels together in one SequenceTrimmer call."
+            )
+
         self.use_amp = use_amp
 
         self.pf_trimmer = SequenceTrimmer(enabled=trim and not for_inference)
@@ -1433,6 +1451,12 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+
+        if trim and not for_inference and for_segmentation:
+            raise ValueError(
+                "Segmentation requires trim=False to keep predictions aligned with labels. "
+                "Or manually trim inputs, masks, and labels together in one SequenceTrimmer call."
+            )
 
         self.use_amp = use_amp
         self.for_inference = for_inference

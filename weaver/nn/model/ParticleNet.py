@@ -164,6 +164,12 @@ class ParticleNet(nn.Module):
 
         _logger.info("ParticleNet init-ed: %s", locals())
 
+        if trim and not for_inference and for_segmentation:
+            raise ValueError(
+                "Segmentation requires trim=False to keep predictions aligned with labels. "
+                "Or manually trim inputs, masks, and labels together in one SequenceTrimmer call."
+            )
+
         self.trimmer = SequenceTrimmer(enabled=trim and not for_inference, round_to_32=compile_model)
 
         self.use_fts_bn = use_fts_bn
