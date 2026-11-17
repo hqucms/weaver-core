@@ -485,6 +485,12 @@ class ParticleNeXt(nn.Module):
                  **kwargs):
         super(ParticleNeXt, self).__init__(**kwargs)
 
+        if trim and not for_inference and for_segmentation:
+            raise ValueError(
+                "Segmentation requires trim=False to keep predictions aligned with labels. "
+                "Or manually trim inputs, masks, and labels together in one SequenceTrimmer call."
+            )
+
         # input augmentation
         self.input_dropout = nn.Dropout(input_dropout) if input_dropout else None
         self.pt_dropout = pt_dropout
@@ -680,10 +686,16 @@ class ParticleNeXt(nn.Module):
                         if edges is not None:
                             raise NotImplementedError
                     else:
-                        maxlen = mask.sum(dim=-1).max()
+                        num_particles = mask.sum(dim=-1)
+                        maxlen = num_particles.max()
                     maxlen = max(maxlen, self.num_neighbors)
                     if maxlen < mask.size(-1):
                         mask = mask[:, :, :maxlen]
+                        if not self.training and not torch.equal(mask.sum(dim=-1), num_particles):
+                            raise RuntimeError(
+                                "ParticleNeXt trimming removed valid particles during evaluation. "
+                                "Ensure masked particles are at the end of the sequence or set trim=False."
+                            )
                         points = points[:, :, :maxlen]
                         features = features[:, :, :maxlen]
                         if lorentz_vectors is not None:
