@@ -32,11 +32,11 @@ def _flatten_preds(model_output, label=None, mask=None, label_axis=1):
         # `label` and `mask` are provided as function arguments
         preds = model_output
     else:
-        if len(model_output == 2):
+        if len(model_output) == 2:
             # use `mask` from model_output instead
             # `label` still provided as function argument
             preds, mask = model_output
-        elif len(model_output == 3):
+        elif len(model_output) == 3:
             # use `label` and `mask` from model output
             preds, label, mask = model_output
 
