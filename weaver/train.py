@@ -10,6 +10,8 @@ import functools
 import numpy as np
 import math
 import copy
+import random
+import zlib
 import torch
 
 from torch.utils.data import DataLoader
@@ -140,7 +142,7 @@ parser.add_argument('--batch-size-test', type=int, default=None,
                     help='batch size for test dataset')
 parser.add_argument('--use-amp', action=argparse.BooleanOptionalAction, default=False,
                     help='use mixed precision training (fp16)')
-parser.add_argument('--amp-dtype', type=str, default='bf16', choices=['fp16', 'bf16'],
+parser.add_argument('--amp-dtype', type=str, default='fp16', choices=['fp16', 'bf16'],
                     help='dtype for mixed precision training (fp16 or bf16)')
 parser.add_argument('--compile', action=argparse.BooleanOptionalAction, default=False,
                     help='use torch.compile')
@@ -188,7 +190,48 @@ parser.add_argument('--start-from-fold', type=int, default=0,
                          'when it crashed')
 parser.add_argument('--auto-clean', action=argparse.BooleanOptionalAction, default=False,
                     help='automatically remove the previous checkpoints, keeping only the last epoch and the best epoch')
+parser.add_argument('--seed', type=int, default=None,
+                    help='random seed for reproducibility; seeds `random`, `numpy` and `torch` (model init, '
+                         'dropout, ...) and, through a dedicated generator, the DataLoader worker seeds that '
+                         'drive the file shuffling, the load-range offsets and the within-batch shuffling. '
+                         'The data generator is independent of the global torch RNG, so two runs with the same '
+                         'seed see the same events in the same order even if their model configurations differ. '
+                         'Kernel-level nondeterminism (atomics, cuDNN autotuning) is not addressed by this.')
 # fmt: on
+
+
+def set_seed(args):
+    """Seed `random`, `numpy` and `torch` from `--seed`; a no-op when it is unset.
+
+    This covers everything drawn in the main process: model initialisation, dropout, and the
+    file shuffling in `to_filelist`. All ranks are seeded identically so that a distributed run
+    still starts from the same weights; the per-rank data order is handled in `data_generator`.
+    """
+    if args.seed is None:
+        return
+    random.seed(args.seed)
+    np.random.seed(args.seed % (2**32))
+    torch.manual_seed(args.seed)
+    _logger.info("Random seed set to %d", args.seed)
+
+
+def data_generator(args, name):
+    """Deterministic generator for a DataLoader's worker seeds, or None when `--seed` is unset.
+
+    The seed is derived from `--seed`, the loader name and the rank alone, never from the global
+    torch RNG. That matters because the worker seeds are what drive the file shuffling, the
+    load-range offsets and the within-batch shuffling inside `SimpleIterDataset`: drawing them
+    from a dedicated generator keeps the event stream identical across runs that differ only in
+    the model configuration (which consumes a different amount of the global RNG at init).
+    """
+    if args.seed is None:
+        return None
+    rank = 0 if args.local_rank is None else args.local_rank
+    seed = (args.seed + 1000003 * (rank + 1) + zlib.crc32(name.encode())) % (2**31)
+    _logger.info("DataLoader '%s' seeded with %d", name, seed)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
 
 
 def to_filelist(args, mode="train"):
@@ -341,6 +384,7 @@ def train_load(args):
         num_workers=num_workers_train,
         persistent_workers=num_workers_train > 0,
         prefetch_factor=args.prefetch_factor if num_workers_train > 0 else None,
+        generator=data_generator(args, "train"),
     )
     val_loader = DataLoader(
         val_data,
@@ -350,6 +394,7 @@ def train_load(args):
         num_workers=num_workers_val,
         persistent_workers=num_workers_val > 0,
         prefetch_factor=args.prefetch_factor if num_workers_val > 0 else None,
+        generator=data_generator(args, "val"),
     )
     train_data_config = train_data.config
     val_data_config = val_data.config
@@ -413,6 +458,7 @@ def test_load(args):
             pin_memory=True,
             persistent_workers=num_workers > 0,
             prefetch_factor=args.prefetch_factor if num_workers > 0 else None,
+            generator=data_generator(args, "test_" + name),
         )
         return test_loader
 
@@ -830,10 +876,7 @@ def model_setup(args, data_config, device="cpu"):
             "\n - ".join([name for name, p in model.named_parameters() if not p.requires_grad]),
         )
     # _logger.info(model)
-    try:
-        flops(model, model_info, device=device)
-    except Exception as e:
-        _logger.error("Error in flops: %s", str(e))
+    # note: the flops/params report is deferred to `_main`, see `report_flops` there
     # loss function
     try:
         loss_func = network_module.get_loss(data_config, **network_options)
@@ -983,6 +1026,8 @@ def save_parquet(args, output_path, scores, labels, observers):
 def _main(args):
     _logger.info("args:\n - %s", "\n - ".join(str(it) for it in args.__dict__.items()))
 
+    set_seed(args)
+
     # export to ONNX
     if args.export_onnx:
         onnx(args)
@@ -1050,6 +1095,29 @@ def _main(args):
     # so we do not convert it to nn.DataParallel now
     orig_model = model
 
+    def report_flops(device):
+        """Report flops/params of the *uncompiled* model, after torch.compile is set up.
+
+        Two reasons this runs here rather than in `model_setup`:
+
+        - it must count the plain module, not the `torch.compile`/DataParallel wrapper;
+        - `weaver.utils.flops_counter` monkeypatches `torch.mm` & co. with objects that
+          have no `__name__`, and Inductor captures those names at *import* time
+          (`torch/_inductor/kernel/mm.py`: `ExternKernelChoice(torch.mm, ...)`). If the
+          first `import torch._inductor` of the process lands inside that window it dies,
+          and Python rolls the half-built modules back out of `sys.modules` -- silently,
+          because the flops error is caught below. `torch._inductor.kernel.flex` has
+          finished by then and *stays* cached, so the retry re-runs `lowering.py` with a
+          fresh `lowerings` dict but skips the flex submodule, permanently losing the
+          flex_attention lowering; a later compile then fails with the very confusing
+          `InductorError: AssertionError: flex_attention is not an OpOverload`. Running
+          after `torch.compile` above means Inductor is already imported and safe.
+        """
+        try:
+            flops(orig_model, model_info, device=device)
+        except Exception as e:
+            _logger.error("Error in flops: %s", str(e))
+
     if training_mode:
         model = orig_model.to(dev)
 
@@ -1074,6 +1142,8 @@ def _main(args):
             compiler_options = {k: ast.literal_eval(v) for k, v in args.compiler_option}
             _logger.info("Use torch.compile with options: %s" % str(compiler_options))
             model = torch.compile(model, **compiler_options)
+
+        report_flops(dev)
 
         # lr finder: keep it after all other setups
         if args.lr_finder is not None:
@@ -1207,6 +1277,10 @@ def _main(args):
             if gpus is not None and len(gpus) > 1:
                 model = torch.nn.DataParallel(model, device_ids=gpus)
             model = model.to(dev)
+
+        if not training_mode:
+            # in training runs this has already been reported before the training loop
+            report_flops(dev)
 
         for name, get_test_loader in test_loaders.items():
             test_loader = get_test_loader()

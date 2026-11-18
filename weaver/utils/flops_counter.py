@@ -41,6 +41,10 @@ def get_model_complexity_info(
     flops_model.eval()
     flops_model.start_flops_count(ost=ost, verbose=verbose, ignore_list=ignore_modules)
 
+    # exact count, unlike the k/M/G-rounded string returned below; reported up front so it
+    # is still available when the flops estimation itself fails
+    _logger.info("{:<30}  {:<8}".format("Number of parameters (exact): ", get_model_parameters_number(model)))
+
     enable_func_ops_patching = extra_config.get("count_functional", True)
     torch_functional_flops = []
     torch_tensor_ops_flops = []

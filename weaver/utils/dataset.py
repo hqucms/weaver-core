@@ -156,7 +156,8 @@ def _preprocess(table, data_config, options):
     if options["shuffle"]:
         # sequence bucketing
         if data_config.bucketing:
-            rng = np.random.default_rng()
+            # seed from the legacy global state so that bucketing follows the worker seed
+            rng = np.random.default_rng(np.random.randint(0, 2**32))
             bucket_indices = []
             remainder_indices = []
             counts = ak.to_numpy(table[data_config.bucketing_var][indices])

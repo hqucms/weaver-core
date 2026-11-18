@@ -174,5 +174,76 @@ class TestFusedPadAndStackAfterSelection(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestSlicedArrays(unittest.TestCase):
+    """A row slice (what a partial-file load range produces, e.g. weaver's default
+    ``--fetch-step 0.01`` without ``--fetch-by-files``) keeps its parent's full content
+    buffer, with offsets pointing into it.
+
+    Bug: `_get_content_and_offsets` returned the parent's whole buffer. For a slice starting
+    at row 0 the offsets still equal a computed variable's, so `_fused_pad_and_stack` accepted
+    the group and then failed to copy the oversized buffer ("could not broadcast input array
+    from shape (N,) into shape (n,)"). Hit whenever a raw loaded branch is used directly as an
+    input next to computed ones.
+    """
+
+    def setUp(self):
+        self.rng = np.random.default_rng(2)
+        self.rows = [4, 0, 6, 3, 9, 2, 5, 7]
+        self.arr = _make_jagged(self.rows, self.rng)
+
+    def _check_slice(self, sl):
+        sliced = self.arr[sl]
+        rows = self.rows[sl]
+        # sanity-check the fixture really carries the parent's full buffer
+        self.assertEqual(len(sliced.layout.content), sum(self.rows))
+
+        content, offsets = _get_content_and_offsets(sliced)
+        self.assertEqual(int(offsets[0]), 0)
+        np.testing.assert_array_equal(np.diff(offsets), rows)
+        np.testing.assert_array_equal(content, ak.to_numpy(ak.flatten(sliced)))
+        # trimmed as a view of the parent buffer, not copied
+        self.assertTrue(np.shares_memory(content, np.asarray(self.arr.layout.content.data)))
+
+    def test_head_slice(self):
+        self._check_slice(slice(0, 5))
+
+    def test_middle_slice(self):
+        self._check_slice(slice(2, 6))
+
+    def test_tail_slice(self):
+        self._check_slice(slice(3, None))
+
+    def test_pad_and_repeat_pad_on_slice(self):
+        for sl in (slice(0, 5), slice(2, 6)):
+            sliced = self.arr[sl]
+            packed = ak.to_packed(sliced)
+            np.testing.assert_array_equal(_pad(sliced, 8, value=-1.0), _pad(packed, 8, value=-1.0))
+            np.testing.assert_array_equal(_repeat_pad(sliced, 8), _repeat_pad(packed, 8))
+
+    def test_fused_stack_mixes_slice_and_computed(self):
+        for sl in (slice(0, 5), slice(2, 6)):
+            raw = self.arr[sl]  # loaded branch, sliced by the load range
+            computed = _make_jagged(self.rows[sl], self.rng)  # computed variable: fresh, packed buffer
+            table = {"computed": computed, "raw": raw}
+            for pad_mode in ("constant", "wrap"):
+                params = {
+                    k: {
+                        "length": 10,
+                        "pad_mode": pad_mode,
+                        "center": None,
+                        "scale": 1.0,
+                        "min": -5.0,
+                        "max": 5.0,
+                        "pad_value": 0.0,
+                    }
+                    for k in table
+                }
+                result = _fused_pad_and_stack(table, ["computed", "raw"], params)
+                self.assertIsNotNone(result, f"fused path must accept a sliced input ({sl}, {pad_mode})")
+                expected = _fused_pad_and_stack({k: ak.to_packed(v) for k, v in table.items()},
+                                                ["computed", "raw"], params)
+                np.testing.assert_array_equal(result, expected)
+
+
 if __name__ == "__main__":
     unittest.main()
