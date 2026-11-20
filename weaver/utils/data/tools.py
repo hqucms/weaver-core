@@ -144,7 +144,7 @@ def _knn(support, query, k, n_jobs=1):
     from scipy.spatial import cKDTree
 
     kdtree = cKDTree(support)
-    d, idx = kdtree.query(query, k, n_jobs=n_jobs)
+    d, idx = kdtree.query(query, k, workers=n_jobs)
     return idx
 
 
